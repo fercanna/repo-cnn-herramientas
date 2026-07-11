@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif; margin: 0; padding: 20px;
+      background: #f8f9fa; font-size: 14px;
+    }
+    h3 { margin: 0 0 6px; color: #1F4E79; font-size: 16px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 20px; }
+
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px;
+            color: #333; font-size: 13px; }
+    input, textarea, select {
+      width: 100%; padding: 8px 10px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 14px;
+    }
+    textarea { resize: vertical; min-height: 60px; }
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: #4285f4;
+      box-shadow: 0 0 0 2px #e8f0fe;
+    }
+
+    #resumen {
+      background: #e8f5e9; border: 1px solid #34a853;
+      border-radius: 6px; padding: 10px 14px;
+      font-size: 12px; color: #137333; margin-bottom: 16px;
+      max-height: 100px; overflow-y: auto;
+    }
+
+    .actions { display: flex; gap: 10px; margin-top: 18px; }
+    .btn {
+      flex: 1; padding: 10px; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 14px; font-weight: bold;
+    }
+    .btn-primary { background: #34a853; color: white; }
+    .btn-primary:hover { background: #2d9248; }
+    .btn-cancel { background: #e0e0e0; color: #333; }
+    .btn-cancel:hover { background: #d0d0d0; }
+
+    .loading { display: none; text-align: center; padding: 20px;
+               color: #4285f4; font-weight: bold; }
+    .success { display: none; background: #d4edda; color: #155724;
+               border: 1px solid #c3e6cb; border-radius: 6px;
+               padding: 12px; margin-top: 10px; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+  <h3>🛒 Confirmar Orden de Compra</h3>
+  <p class="subtitle">Completá los datos finales — los insumos ya están seleccionados</p>
+
+  <div id="resumen">⏳ Cargando resumen...</div>
+
+  <div id="formSection">
+    <div class="form-group">
+      <label for="solicitadoPor">Solicitado por</label>
+      <select id="solicitadoPor">
+        <option value="">— Seleccioná —</option>
+        <option> Christian</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="fechaEntrega">Fecha de entrega estimada</label>
+      <input type="date" id="fechaEntrega">
+    </div>
+    <div class="form-group">
+      <label for="observaciones">Observaciones <span style="font-weight:normal;color:#888">(opcional)</span></label>
+      <textarea id="observaciones" placeholder="Notas para el proveedor..."></textarea>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="confirmar()">✅ Generar Orden</button>
+      <button class="btn btn-cancel" onclick="google.script.host.close()">Cancelar</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Generando orden de compra...</div>
+  <div class="success" id="success"></div>
+
+  <script>
+    // ── Datos inyectados desde el servidor (sin round-trip) ──
+    const _datos = <?= datosOC ?>;
+
+    window.onload = function() {
+      // Fecha por defecto: 7 días desde hoy
+      const d = new Date();
+      d.setDate(d.getDate() + 7);
+      document.getElementById('fechaEntrega').value = d.toISOString().split('T')[0];
+
+      // Resumen inmediato — sin llamada al servidor
+      let html = '';
+      _datos.proveedores.forEach(function(codProv) {
+        const items  = _datos.items[codProv];
+        const nombre = _datos.mapa[codProv].nombre;
+        html += '<strong>' + nombre + '</strong> (' + items.length + ' item' + (items.length > 1 ? 's' : '') + '):<br>';
+        items.forEach(function(it) {
+          const precio = it.precio_unitario || 0;
+          const sub    = (it.cantidad * precio).toFixed(2);
+          html += '&nbsp;&nbsp;• ' + it.descripcion +
+                  ' — ' + it.cantidad + ' u. × $' + precio.toFixed(2) +
+                  ' = <strong>$' + sub + '</strong><br>';
+        });
+        html += '<br>';
+      });
+      document.getElementById('resumen').innerHTML = html;
+    };
+
+    function confirmar() {
+      const solicitadoPor = document.getElementById('solicitadoPor').value;
+      const fecha         = document.getElementById('fechaEntrega').value;
+      const obs           = document.getElementById('observaciones').value;
+
+      if (!solicitadoPor) {
+        alert('Por favor seleccioná quién solicita la orden.');
+        return;
+      }
+
+      document.getElementById('formSection').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(ordenesCreadas) {
+          document.getElementById('loading').style.display = 'none';
+          const div = document.getElementById('success');
+          div.style.display = 'block';
+          const plural = ordenesCreadas.length > 1;
+          div.innerHTML = '✅ <strong>Orden' + (plural ? 'es' : '') +
+                          ' generada' + (plural ? 's' : '') + ':</strong><br>' +
+                          ordenesCreadas.map(function(o) { return '• ' + o; }).join('<br>');
+          setTimeout(function() { google.script.host.close(); }, 2500);
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('formSection').style.display = 'block';
+          alert('Error: ' + err.message);
+        })
+        .confirmarOrdenDesdeStock(fecha, obs, solicitadoPor);
+    }
+  </script>
+</body>
+</html>
+

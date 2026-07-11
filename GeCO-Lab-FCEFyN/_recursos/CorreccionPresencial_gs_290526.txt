@@ -1,0 +1,692 @@
+// ============================================================
+// INSTRUCCIÓN: Reemplazar el archivo completo CorreccionPresencial.gs
+// por este contenido. Supersede PRESENCIAL_2 — si ya aplicaste
+// PRESENCIAL_2, simplemente volvé a reemplazar todo el archivo
+// con este texto.
+//
+// CAMBIOS RESPECTO A PRESENCIAL_2:
+//   • iniciarEvaluacionPresencial() — ahora lee el documento Drive
+//     del puesto (si Drive_ID está cargado) y pasa:
+//       - textoDescripcionPuesto → a generarRubricaPresencial()
+//       - contextoOrg            → desde getContextoOrganizacional()
+//   • registrarEvaluacionRubrica() — ahora:
+//       - llama exportarResultadoEvaluacion() para generar el PDF
+//       - pasa modo:'presencial' y nivel al enviarMailEvaluado()
+//       - devuelve pdfUrl en el resultado
+// ============================================================
+
+// ============================================================
+// GeCO Lab — CorreccionPresencial.gs
+// Flujo 1 (original): corrección manual de evaluaciones presenciales
+//                     generadas desde el wizard autónomo.
+// Flujo 2 (nuevo):    evaluación directa por rúbrica conductual,
+//                     sin documento fuente ni Google Form.
+//
+// DEPENDENCIAS:
+//   - Config.gs         → calcularEscala(), requierePlanAccion(),
+//                         getNormaAplicable(), getContextoOrganizacional()
+//   - ClaudeApi.gs      → generarRubricaPresencial()
+//   - Drive.gs          → leerTextoDeArchivo()
+//   - ExportPDF.gs      → exportarResultadoEvaluacion()
+//   - PlanAcciones.gs   → crearPlanAccion()
+//   - MailEvaluado.gs   → enviarMailEvaluado()
+// ============================================================
+
+
+// ==============================================================
+// FLUJO 1 (ORIGINAL) — Corrección de evaluaciones presenciales
+// ==============================================================
+
+function abrirDialogoPresencial() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoPresencial')
+    .setWidth(600)
+    .setHeight(680);
+  SpreadsheetApp.getUi().showModalDialog(html, '✏️ Evaluación presencial');
+}
+
+function abrirDialogoPresencialParaEval(idEvaluacion) {
+  const html = HtmlService.createTemplateFromFile('DialogoPresencial');
+  html.idEvaluacionInicial = idEvaluacion || '';
+  const output = html.evaluate().setWidth(600).setHeight(680);
+  SpreadsheetApp.getUi().showModalDialog(output, '✏️ Evaluación presencial');
+}
+
+function getEvaluacionesPendientesPresencial() {
+  try {
+    const ss   = SpreadsheetApp.getActiveSpreadsheet();
+    const hoja = ss.getSheetByName('Registro_Competencias');
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const modo   = String(datos[i][13] || '').toLowerCase();
+      const estado = String(datos[i][22] || '');
+      if (modo === 'presencial' && (estado === 'Pendiente' || estado === 'En Curso')) {
+        resultado.push({
+          idEvaluacion:    String(datos[i][0]),
+          evaluado:        String(datos[i][3]),
+          dominio:         String(datos[i][8]),
+          documento:       String(datos[i][11]),
+          fechaGeneracion: datos[i][1]
+            ? Utilities.formatDate(new Date(datos[i][1]),
+                Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')
+            : '—',
+          nroPreguntas: Number(datos[i][14]) || 0
+        });
+      }
+    }
+
+    resultado.sort(function(a, b) {
+      return String(b.fechaGeneracion).localeCompare(String(a.fechaGeneracion));
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[CorreccionPresencial] Error cargando pendientes: ' + e.message);
+    return [];
+  }
+}
+
+function corregirEvaluacionPresencial(datos) {
+  try {
+    if (!datos.idEvaluacion || datos.idEvaluacion.trim() === '') {
+      return { ok: false, error: 'No se recibió el ID de evaluación.' };
+    }
+
+    const correctas = Number(datos.correctas);
+    const total     = Number(datos.total);
+
+    if (isNaN(correctas) || isNaN(total) || total <= 0) {
+      return { ok: false, error: 'Los valores de correctas/total no son válidos.' };
+    }
+    if (correctas < 0 || correctas > total) {
+      return { ok: false, error: 'Correctas debe estar entre 0 y ' + total + '.' };
+    }
+
+    const pct    = Math.round((correctas / total) * 100);
+    const escala = calcularEscala(pct);
+    const generaAccion = requierePlanAccion(escala);
+    const ahora  = new Date();
+
+    const ss      = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró la hoja Registro_Competencias.' };
+
+    const datosReg = hojaReg.getDataRange().getValues();
+    let filaIdx  = -1;
+    let datosFila = null;
+
+    for (let i = 1; i < datosReg.length; i++) {
+      if (String(datosReg[i][0]).trim() === datos.idEvaluacion.trim()) {
+        filaIdx   = i + 1;
+        datosFila = datosReg[i];
+        break;
+      }
+    }
+
+    if (filaIdx < 0) {
+      return { ok: false, error: 'No se encontró la evaluación: ' + datos.idEvaluacion };
+    }
+
+    const evaluadoNombre = String(datosFila[3]  || '');
+    const idPersona      = String(datosFila[4]  || '');
+    const dominioEval    = String(datosFila[8]  || '');
+    const documentoEval  = String(datosFila[11] || '');
+    const nroPreguntas   = Number(datosFila[14] || total);
+    const evaluadorEmail = String(datosFila[18] || '');
+
+    const totalReal     = nroPreguntas > 0 ? nroPreguntas : total;
+    const correctasReal = Math.min(correctas, totalReal);
+    const pctReal       = Math.round((correctasReal / totalReal) * 100);
+    const escalaReal    = calcularEscala(pctReal);
+    const generaAccionReal = requierePlanAccion(escalaReal);
+
+    hojaReg.getRange(filaIdx, 3).setValue(ahora);
+    hojaReg.getRange(filaIdx, 16).setValue(correctasReal);
+    hojaReg.getRange(filaIdx, 17).setValue(pctReal);
+    hojaReg.getRange(filaIdx, 18).setValue(escalaReal);
+    hojaReg.getRange(filaIdx, 23).setValue('Completado');
+    hojaReg.getRange(filaIdx, 24).setValue(generaAccionReal);
+
+    const obsActual = String(datosFila[24] || '');
+    const obsNueva  = datos.observaciones ? datos.observaciones.trim() : '';
+    const obsTotal  = obsNueva
+      ? (obsActual ? obsActual + ' | ' + obsNueva : obsNueva)
+      : obsActual;
+    hojaReg.getRange(filaIdx, 25).setValue(obsTotal);
+
+    if (generaAccionReal) {
+      crearPlanAccion({
+        ss:           ss,
+        idEvaluacion: datos.idEvaluacion,
+        evaluado:     evaluadoNombre,
+        dominio:      dominioEval,
+        puntajePct:   pctReal,
+        escala:       escalaReal
+      });
+    }
+
+    const mailEvaluado = _buscarMailPersonaPresencial(ss, idPersona, evaluadoNombre);
+    if (mailEvaluado) {
+      enviarMailEvaluado({
+        nombre:      evaluadoNombre,
+        mail:        mailEvaluado,
+        documento:   documentoEval,
+        dominio:     dominioEval,
+        fecha:       ahora,
+        puntaje:     pctReal,
+        escala:      escalaReal,
+        correctas:   correctasReal,
+        total:       totalReal,
+        evaluador:   evaluadorEmail || Session.getActiveUser().getEmail(),
+        registroUrl: ss.getUrl(),
+        preguntas:   _generarDetallePresencial(correctasReal, totalReal)
+      });
+    }
+
+    Logger.log('[CorreccionPresencial] OK — ' + evaluadoNombre +
+               ': ' + correctasReal + '/' + totalReal +
+               ' (' + pctReal + '% — ' + escalaReal + ')' +
+               (generaAccionReal ? ' → Plan de acción creado.' : ''));
+
+    return { ok: true, puntaje: pctReal, escala: escalaReal, generaAccion: generaAccionReal };
+
+  } catch (e) {
+    Logger.log('[CorreccionPresencial] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+
+// ==============================================================
+// FLUJO 2 (NUEVO) — Evaluación directa por rúbrica conductual
+// ==============================================================
+
+function getPersonasActivas() {
+  try {
+    const ss   = SpreadsheetApp.getActiveSpreadsheet();
+    const hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const nombre = String(datos[i][1] || '').trim();
+      if (!nombre) continue;
+      const activo = datos[i][5];
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+
+      resultado.push({
+        id:     String(datos[i][0]).trim(),
+        nombre: nombre,
+        puesto: String(datos[i][3] || '').trim(),
+        area:   String(datos[i][4] || '').trim(),
+        mail:   String(datos[i][2] || '').trim()
+      });
+    }
+
+    return resultado.sort(function(a, b) {
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
+
+  } catch (e) {
+    Logger.log('[getPersonasActivas] ERROR: ' + e.message);
+    return [];
+  }
+}
+
+function getCompetenciasTacitasPendientes(idPersona, puesto) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    const hojaComp = ss.getSheetByName('Puestos_Competencias');
+    if (!hojaComp || hojaComp.getLastRow() < 2) return [];
+    const datosComp = hojaComp.getDataRange().getValues();
+
+    const puestoNorm = String(puesto || '').trim().toLowerCase();
+    const comps = [];
+
+    for (let i = 1; i < datosComp.length; i++) {
+      if (!datosComp[i][0]) continue;
+
+      const puestoComp = String(datosComp[i][1] || '').trim().toLowerCase();
+      const activo     = datosComp[i][9];
+      const naturaleza = String(datosComp[i][4] || '').trim();
+      const driveId    = String(datosComp[i][6] || '').trim();
+
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+      if (puestoComp !== puestoNorm) continue;
+
+      const esPresencial = (naturaleza === 'Tácito') || (!driveId);
+      if (!esPresencial) continue;
+
+      comps.push({
+        id:          String(datosComp[i][0]).trim(),
+        dominio:     String(datosComp[i][2] || '').trim(),
+        categoria:   String(datosComp[i][3] || '').trim(),
+        naturaleza:  naturaleza,
+        criticidad:  String(datosComp[i][5] || '').trim(),
+        driveId:     driveId,
+        driveNombre: String(datosComp[i][7] || '').trim(),
+        frecMeses:   Number(datosComp[i][8]) || 12,
+        vencida:     true,
+        diasVencida: null,
+        ultimaEval:  null
+      });
+    }
+
+    if (comps.length === 0) return [];
+
+    const hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (hojaReg && hojaReg.getLastRow() > 1) {
+      const datosReg = hojaReg.getDataRange().getValues();
+      const ahora    = new Date();
+
+      comps.forEach(function(c) {
+        var ultimaFecha = null;
+        for (var i = 1; i < datosReg.length; i++) {
+          var idPer  = String(datosReg[i][4]  || '').trim();
+          var idComp = String(datosReg[i][7]  || '').trim();
+          var estado = String(datosReg[i][22] || '').trim();
+          var fechaC = datosReg[i][2];
+
+          if (idPer === idPersona && idComp === c.id &&
+              estado === 'Completado' && fechaC) {
+            var f = new Date(fechaC);
+            if (!ultimaFecha || f > ultimaFecha) ultimaFecha = f;
+          }
+        }
+
+        if (!ultimaFecha) {
+          c.vencida     = true;
+          c.diasVencida = null;
+        } else {
+          var diasDesde = Math.floor((ahora - ultimaFecha) / (1000 * 60 * 60 * 24));
+          var limite    = c.frecMeses * 30;
+          c.ultimaEval  = Utilities.formatDate(ultimaFecha,
+                            Session.getScriptTimeZone(), 'dd/MM/yyyy');
+          c.diasVencida = diasDesde - limite;
+          c.vencida     = diasDesde >= limite;
+        }
+      });
+    }
+
+    comps.sort(function(a, b) {
+      if (a.vencida && !b.vencida) return -1;
+      if (!a.vencida && b.vencida) return  1;
+      if (a.vencida && b.vencida) {
+        if (a.diasVencida === null) return -1;
+        if (b.diasVencida === null) return  1;
+        return b.diasVencida - a.diasVencida;
+      }
+      return 0;
+    });
+
+    return comps;
+
+  } catch (e) {
+    Logger.log('[getCompetenciasTacitasPendientes] ERROR: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Inicia una evaluación presencial por rúbrica:
+ *   1. Lee datos de persona y competencia.
+ *   2. Lee descripción de puesto desde Drive (si hay Drive_ID).
+ *   3. Llama a Claude con contexto enriquecido para generar la rúbrica.
+ *   4. Crea la fila en Registro_Competencias con Estado 'En Curso'.
+ *   5. Devuelve todo al diálogo HTML para mostrarlo en el Paso 3.
+ */
+function iniciarEvaluacionPresencial(params) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // ── 1. Leer persona ──────────────────────────────────────────
+    const hojaPer = ss.getSheetByName('Personas');
+    if (!hojaPer) return { ok: false, error: 'No se encontró la hoja Personas.' };
+    const datosPer = hojaPer.getDataRange().getValues();
+
+    var persona = null;
+    for (var i = 1; i < datosPer.length; i++) {
+      if (String(datosPer[i][0]).trim() === params.idPersona) {
+        persona = {
+          id:     String(datosPer[i][0]).trim(),
+          nombre: String(datosPer[i][1] || '').trim(),
+          mail:   String(datosPer[i][2] || '').trim(),
+          puesto: String(datosPer[i][3] || '').trim(),
+          area:   String(datosPer[i][4] || '').trim()
+        };
+        break;
+      }
+    }
+    if (!persona) {
+      return { ok: false, error: 'No se encontró la persona con ID: ' + params.idPersona };
+    }
+
+    // ── 2. Leer competencia ──────────────────────────────────────
+    const hojaComp = ss.getSheetByName('Puestos_Competencias');
+    if (!hojaComp) return { ok: false, error: 'No se encontró Puestos_Competencias.' };
+    const datosComp = hojaComp.getDataRange().getValues();
+
+    var competencia = null;
+    for (var j = 1; j < datosComp.length; j++) {
+      if (String(datosComp[j][0]).trim() === params.idCompetencia) {
+        competencia = {
+          id:          String(datosComp[j][0]).trim(),
+          puesto:      String(datosComp[j][1] || '').trim(),
+          dominio:     String(datosComp[j][2] || '').trim(),
+          categoria:   String(datosComp[j][3] || '').trim(),
+          naturaleza:  String(datosComp[j][4] || '').trim(),
+          criticidad:  String(datosComp[j][5] || '').trim(),
+          driveId:     String(datosComp[j][6] || '').trim(),
+          driveNombre: String(datosComp[j][7] || '').trim()
+        };
+        break;
+      }
+    }
+    if (!competencia) {
+      return { ok: false, error: 'No se encontró la competencia con ID: ' + params.idCompetencia };
+    }
+
+    // ── 3. Leer descripción de puesto desde Drive (si hay Drive_ID) ──
+    var textoDescripcionPuesto = '';
+    if (competencia.driveId) {
+      try {
+        textoDescripcionPuesto = leerTextoDeArchivo(competencia.driveId);
+        Logger.log('[iniciarEvaluacionPresencial] Descripción de puesto leída desde Drive: ' +
+                   textoDescripcionPuesto.length + ' chars.');
+      } catch (e) {
+        // No bloqueante: si el doc no se puede leer, Claude genera la rúbrica
+        // con el nombre de la competencia y el puesto solamente.
+        Logger.log('[iniciarEvaluacionPresencial] No se pudo leer el doc Drive (' +
+                   competencia.driveId + '): ' + e.message + '. Continuando sin descripción.');
+      }
+    }
+
+    // ── 4. Generar rúbrica via Claude (contexto enriquecido) ─────
+    var rubrica;
+    try {
+      rubrica = generarRubricaPresencial({
+        dominio:                competencia.dominio,
+        puesto:                 persona.puesto,
+        normaAplicable:         getNormaAplicable(),
+        contextoOrg:            getContextoOrganizacional(),
+        textoDescripcionPuesto: textoDescripcionPuesto
+      });
+    } catch (e) {
+      return { ok: false, error: 'Error al generar la rúbrica: ' + e.message };
+    }
+
+    // ── 5. Generar ID de evaluación ──────────────────────────────
+    var now     = new Date();
+    var pad     = function(n) { return String(n).padStart(2, '0'); };
+    var fechaStr = now.getFullYear() +
+                   pad(now.getMonth() + 1) +
+                   pad(now.getDate());
+    var horaStr  = pad(now.getHours()) +
+                   pad(now.getMinutes()) +
+                   pad(now.getSeconds());
+    var apellido = persona.nombre.split(' ').pop()
+                    .toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ]/g, '').substring(0, 10);
+    var idEvaluacion = 'EVAL-' + fechaStr + '-' + horaStr + '-' + apellido;
+
+    // ── 6. Crear fila en Registro_Competencias ───────────────────
+    var hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró Registro_Competencias.' };
+
+    var evaluador = Session.getActiveUser().getEmail();
+    var fila = [
+      idEvaluacion,                                   // A ID_Evaluacion
+      now,                                            // B Fecha_Generacion
+      '',                                             // C Fecha_Completado
+      persona.nombre,                                 // D Evaluado
+      persona.id,                                     // E ID_Persona
+      persona.area,                                   // F Área
+      persona.puesto,                                 // G Puesto
+      competencia.id,                                 // H ID_Competencia
+      competencia.dominio,                            // I Dominio
+      competencia.categoria,                          // J Categoría
+      competencia.criticidad,                         // K Criticidad
+      competencia.driveNombre || 'Rúbrica conductual',// L Documento
+      competencia.driveId,                            // M Drive_ID
+      'Presencial',                                   // N Modo
+      0,                                              // O Nro_Preguntas
+      '',                                             // P Correctas
+      '',                                             // Q Puntaje_Pct
+      '',                                             // R Escala
+      evaluador,                                      // S Evaluador
+      '',                                             // T Form_URL
+      '',                                             // U Form_Edit_URL
+      '',                                             // V Respuestas_URL
+      'En Curso',                                     // W Estado
+      '',                                             // X Genera_Accion
+      ''                                              // Y Observaciones
+    ];
+    hojaReg.appendRow(fila);
+
+    Logger.log('[iniciarEvaluacionPresencial] Iniciada — ID: ' + idEvaluacion +
+               ' | ' + persona.nombre + ' / ' + competencia.dominio +
+               (textoDescripcionPuesto ? ' [con descripción de puesto]' : ' [sin descripción]'));
+
+    return {
+      ok:           true,
+      idEvaluacion: idEvaluacion,
+      persona:      persona,
+      competencia:  competencia,
+      rubrica:      rubrica
+    };
+
+  } catch (e) {
+    Logger.log('[iniciarEvaluacionPresencial] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Registra el resultado de una evaluación presencial por rúbrica.
+ * Genera el PDF del resultado y envía mail al evaluado.
+ */
+function registrarEvaluacionRubrica(params) {
+  try {
+    if (!params.idEvaluacion || !params.nivel) {
+      return { ok: false, error: 'Falta el ID de evaluación o el nivel seleccionado.' };
+    }
+
+    var pct          = _nivelAPuntaje(params.nivel);
+    var escala       = calcularEscala(pct);
+    var generaAccion = requierePlanAccion(escala);
+    var ahora        = new Date();
+
+    var ss      = SpreadsheetApp.getActiveSpreadsheet();
+    var hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró Registro_Competencias.' };
+
+    var datosReg = hojaReg.getDataRange().getValues();
+    var filaIdx  = -1;
+    var datosFila = null;
+
+    for (var i = 1; i < datosReg.length; i++) {
+      if (String(datosReg[i][0]).trim() === params.idEvaluacion.trim()) {
+        filaIdx   = i + 1;
+        datosFila = datosReg[i];
+        break;
+      }
+    }
+
+    if (filaIdx < 0) {
+      return { ok: false, error: 'No se encontró la evaluación: ' + params.idEvaluacion };
+    }
+
+    var evaluadoNombre = String(datosFila[3]  || '');
+    var idPersona      = String(datosFila[4]  || '');
+    var dominioEval    = String(datosFila[8]  || '');
+    var documentoEval  = String(datosFila[11] || '');
+
+    // Actualizar Registro_Competencias
+    hojaReg.getRange(filaIdx, 3).setValue(ahora);         // C Fecha_Completado
+    hojaReg.getRange(filaIdx, 16).setValue(1);             // P Correctas (simbólico: 1/1)
+    hojaReg.getRange(filaIdx, 17).setValue(pct);           // Q Puntaje_Pct
+    hojaReg.getRange(filaIdx, 18).setValue(escala);        // R Escala
+    hojaReg.getRange(filaIdx, 23).setValue('Completado');  // W Estado
+    hojaReg.getRange(filaIdx, 24).setValue(generaAccion);  // X Genera_Accion
+
+    var obsNivel = 'Nivel: ' + params.nivel;
+    var obsEval  = params.observaciones ? params.observaciones.trim() : '';
+    var obsTotal = obsEval ? obsNivel + ' | ' + obsEval : obsNivel;
+    hojaReg.getRange(filaIdx, 25).setValue(obsTotal);      // Y Observaciones
+
+    // Plan de acción automático si corresponde
+    if (generaAccion) {
+      crearPlanAccion({
+        ss:           ss,
+        idEvaluacion: params.idEvaluacion,
+        evaluado:     evaluadoNombre,
+        dominio:      dominioEval,
+        puntajePct:   pct,
+        escala:       escala
+      });
+    }
+
+    // ── Generar PDF del resultado ────────────────────────────────
+    // No es bloqueante: si el PDF falla, el registro ya quedó guardado.
+    var pdfUrl = '';
+    try {
+      var resPdf = exportarResultadoEvaluacion(params.idEvaluacion);
+      if (resPdf && resPdf.ok) {
+        pdfUrl = resPdf.pdfUrl || '';
+        Logger.log('[registrarEvaluacionRubrica] PDF generado: ' + pdfUrl);
+      } else {
+        Logger.log('[registrarEvaluacionRubrica] PDF no generado: ' +
+                   (resPdf ? resPdf.error : 'sin respuesta'));
+      }
+    } catch (e) {
+      Logger.log('[registrarEvaluacionRubrica] Error al generar PDF: ' + e.message);
+    }
+
+    // ── Mail al evaluado ─────────────────────────────────────────
+    var mailEvaluado = _buscarMailPersonaPresencial(ss, idPersona, evaluadoNombre);
+    if (mailEvaluado) {
+      enviarMailEvaluado({
+        nombre:      evaluadoNombre,
+        mail:        mailEvaluado,
+        documento:   documentoEval,
+        dominio:     dominioEval,
+        fecha:       ahora,
+        puntaje:     pct,
+        escala:      escala,
+        correctas:   1,
+        total:       1,
+        modo:        'presencial',        // indica al mail que use layout de rúbrica
+        nivel:       params.nivel,        // Inicial / Básico / Competente / Referente
+        evaluador:   Session.getActiveUser().getEmail(),
+        registroUrl: ss.getUrl(),
+        preguntas:   _generarDetalleRubrica(params.nivel, obsEval)
+      });
+    }
+
+    Logger.log('[registrarEvaluacionRubrica] OK — ' + evaluadoNombre +
+               ': ' + params.nivel + ' (' + pct + '% — ' + escala + ')' +
+               (generaAccion ? ' → Plan de acción creado.' : '') +
+               (pdfUrl ? ' → PDF: ' + pdfUrl : ''));
+
+    return {
+      ok:          true,
+      puntaje:     pct,
+      escala:      escala,
+      generaAccion: generaAccion,
+      pdfUrl:      pdfUrl         // vacío si no se pudo generar
+    };
+
+  } catch (e) {
+    Logger.log('[registrarEvaluacionRubrica] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+
+// ==============================================================
+// HELPERS INTERNOS
+// ==============================================================
+
+function _buscarMailPersonaPresencial(ss, idPersona, nombre) {
+  try {
+    var hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return '';
+    var datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 3).getValues();
+    if (idPersona) {
+      for (var i = 0; i < datos.length; i++) {
+        if (String(datos[i][0]).trim() === idPersona) return String(datos[i][2]).trim();
+      }
+    }
+    var nombreNorm = nombre.trim().toLowerCase();
+    for (var j = 0; j < datos.length; j++) {
+      if (String(datos[j][1]).trim().toLowerCase() === nombreNorm) {
+        return String(datos[j][2]).trim();
+      }
+    }
+  } catch (e) {
+    Logger.log('[_buscarMailPersonaPresencial] Error: ' + e.message);
+  }
+  return '';
+}
+
+function _generarDetallePresencial(correctas, total) {
+  return [{
+    numero:        1,
+    enunciado:     'Evaluación presencial — resultado ingresado por el evaluador.',
+    opciones:      [],
+    elegida:       '',
+    correcta:      '',
+    esCorrecta:    true,
+    justificacion: correctas + ' de ' + total + ' respuestas correctas.'
+  }];
+}
+
+function _generarDetalleRubrica(nivel, observaciones) {
+  return [{
+    numero:        1,
+    enunciado:     'Evaluación por rúbrica conductual.',
+    opciones:      [],
+    elegida:       nivel,
+    correcta:      nivel,
+    esCorrecta:    true,
+    justificacion: observaciones || ''
+  }];
+}
+
+function _nivelAPuntaje(nivel) {
+  var mapa = {
+    'Inicial':    20,
+    'Básico':     45,
+    'Competente': 70,
+    'Referente':  90
+  };
+  return mapa[nivel] !== undefined ? mapa[nivel] : 50;
+}
+
+
+// ==============================================================
+// FUNCIÓN DE PRUEBA
+// ==============================================================
+
+function TEST_correccionPresencial() {
+  var pendientes = getEvaluacionesPendientesPresencial();
+  if (pendientes.length === 0) {
+    Logger.log('TEST: No hay evaluaciones presenciales (flujo legado) pendientes.');
+    return;
+  }
+  var eval_ = pendientes[0];
+  Logger.log('TEST: Corrigiendo evaluación: ' + eval_.idEvaluacion + ' — ' + eval_.evaluado);
+  var resultado = corregirEvaluacionPresencial({
+    idEvaluacion:  eval_.idEvaluacion,
+    correctas:     Math.floor(eval_.nroPreguntas * 0.8),
+    total:         eval_.nroPreguntas,
+    observaciones: 'TEST — corrección de prueba'
+  });
+  Logger.log('TEST resultado: ' + JSON.stringify(resultado));
+}

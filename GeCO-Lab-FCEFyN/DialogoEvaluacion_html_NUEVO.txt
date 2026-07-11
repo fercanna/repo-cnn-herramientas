@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+    background: #f5f7fa;
+    color: #2d3748;
+    overflow: hidden;
+  }
+
+  .wizard-header {
+    background: #1a56db;
+    padding: 12px 16px 0;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .wizard-header h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+
+  .pasos { display: flex; gap: 0; }
+  .paso-tab {
+    flex: 1; padding: 7px 0; text-align: center;
+    font-size: 11px; font-weight: 600; color: rgba(255,255,255,.5);
+    border-bottom: 3px solid transparent; cursor: default;
+    user-select: none; white-space: nowrap;
+  }
+  .paso-tab.activo   { color: #fff; border-bottom-color: #fff; }
+  .paso-tab.completado { color: rgba(255,255,255,.8); }
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  .wizard-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+
+  .paso { display: none; }
+  .paso.visible { display: block; }
+
+  .wizard-footer {
+    padding: 10px 16px; border-top: 1px solid #e2e8f0; background: #fff;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; flex-shrink: 0;
+  }
+
+  .btn {
+    padding: 7px 16px; border: none; border-radius: 5px;
+    cursor: pointer; font-size: 13px; font-weight: 500; white-space: nowrap;
+  }
+  .btn-primary  { background: #1a56db; color: #fff; }
+  .btn-success  { background: #0e9f6e; color: #fff; }
+  .btn-ghost    { background: #f3f4f6; color: #374151; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn-primary:hover:not(:disabled) { background: #1e429f; }
+  .btn-success:hover:not(:disabled) { background: #057a55; }
+
+  .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .form-group label {
+    font-size: 11px; font-weight: 700; color: #374151;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .form-group select, .form-group input {
+    padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 5px;
+    font-size: 13px; background: #fff; font-family: inherit; width: 100%;
+  }
+  .form-group select:focus, .form-group input:focus {
+    outline: none; border-color: #1a56db; box-shadow: 0 0 0 2px #bfdbfe;
+  }
+  .form-group input[readonly] { background: #f9fafb; color: #6b7280; }
+  .form-group .hint { font-size: 11px; color: #9ca3af; }
+  .req { color: #f05252; }
+
+  /* ── Toggle modo selección ──────────────────────────────── */
+  .modo-sel-toggle {
+    display: flex; gap: 0; border: 1px solid #d1d5db; border-radius: 6px;
+    overflow: hidden; margin-bottom: 14px;
+  }
+  .modo-sel-btn {
+    flex: 1; padding: 7px 0; text-align: center; font-size: 12px;
+    font-weight: 600; cursor: pointer; background: #fff; color: #6b7280;
+    border: none; border-right: 1px solid #d1d5db; transition: all .15s;
+  }
+  .modo-sel-btn:last-child { border-right: none; }
+  .modo-sel-btn.activo { background: #1a56db; color: #fff; }
+
+  /* ── Card de persona individual ────────────────────────── */
+  .persona-card {
+    display: none; background: #eff6ff; border: 1px solid #bfdbfe;
+    border-radius: 8px; padding: 10px 14px; margin-top: 8px;
+    font-size: 12px; line-height: 1.8; color: #1e40af;
+  }
+  .persona-card.visible { display: block; }
+  .persona-card strong { font-weight: 700; }
+
+  /* ── Selector de puesto ─────────────────────────────────── */
+  .puesto-info {
+    display: none; background: #f0fdf4; border: 1px solid #bbf7d0;
+    border-radius: 8px; padding: 10px 14px; margin-top: 8px;
+    font-size: 12px; color: #166534;
+  }
+  .puesto-info.visible { display: block; }
+
+  /* ── Lista de personas con checkboxes ───────────────────── */
+  .personas-multi {
+    display: none; margin-top: 10px;
+  }
+  .personas-multi.visible { display: block; }
+  .personas-multi-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .personas-multi-header span { font-size: 11px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: .5px; }
+  .sel-all-btn { font-size: 11px; color: #1a56db; cursor: pointer; background: none; border: none; padding: 0; text-decoration: underline; }
+
+  .persona-check-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
+    margin-bottom: 4px; background: #fff; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .persona-check-item:hover { border-color: #93c5fd; background: #f0f7ff; }
+  .persona-check-item.seleccionada { border-color: #1a56db; background: #eff6ff; }
+  .persona-check-item input[type=checkbox] { width: 15px; height: 15px; accent-color: #1a56db; flex-shrink: 0; }
+  .persona-check-info { flex: 1; }
+  .persona-check-nombre { font-weight: 600; font-size: 13px; }
+  .persona-check-sub { font-size: 11px; color: #6b7280; }
+
+  .sel-count {
+    font-size: 12px; color: #1e40af; background: #eff6ff;
+    border: 1px solid #bfdbfe; border-radius: 12px;
+    padding: 2px 10px; margin-top: 6px; display: none;
+  }
+  .sel-count.visible { display: inline-block; }
+
+  /* ── Competencias ───────────────────────────────────────── */
+  .section-title {
+    font-size: 12px; font-weight: 700; color: #374151;
+    text-transform: uppercase; letter-spacing: .5px;
+    margin: 14px 0 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .badge-count {
+    background: #1a56db; color: #fff; padding: 1px 6px;
+    border-radius: 10px; font-size: 11px; font-weight: 700;
+  }
+  .comp-lista { display: flex; flex-direction: column; gap: 4px; }
+  .comp-item {
+    border: 2px solid #e2e8f0; border-radius: 8px; padding: 9px 12px;
+    cursor: pointer; background: #fff; transition: border-color .15s, background .15s; position: relative;
+  }
+  .comp-item:hover { border-color: #93c5fd; background: #f0f7ff; }
+  .comp-item.seleccionado { border-color: #1a56db; background: #eff6ff; }
+  .comp-item.vencido      { border-left: 4px solid #f05252; }
+  .comp-item.nunca-eval   { border-left: 4px solid #fbbf24; }
+  .comp-item.al-dia       { border-left: 4px solid #34d399; }
+  .comp-nombre { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .comp-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11px; }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .badge-alta      { background: #fee2e2; color: #991b1b; }
+  .badge-media     { background: #fef3c7; color: #92400e; }
+  .badge-baja      { background: #d1fae5; color: #065f46; }
+  .badge-explicito { background: #e0f2fe; color: #0369a1; }
+  .badge-tacito    { background: #f3e8ff; color: #6b21a8; }
+  .badge-vencido   { background: #fee2e2; color: #991b1b; }
+  .badge-nunca     { background: #fef3c7; color: #92400e; }
+  .badge-doc       { background: #dcfce7; color: #166534; }
+  .badge-sin-doc   { background: #f1f5f9; color: #94a3b8; font-style:italic; }
+  .comp-seleccionada-icon {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    color: #1a56db; font-size: 18px; display: none;
+  }
+  .comp-item.seleccionado .comp-seleccionada-icon { display: block; }
+  .toggle-todas { font-size: 12px; color: #1a56db; cursor: pointer; text-decoration: underline; margin-top: 8px; display: inline-block; background: none; border: none; padding: 0; }
+  .todas-lista { display: none; margin-top: 6px; }
+  .todas-lista.visible { display: flex; flex-direction: column; gap: 4px; }
+
+  /* ── Paso 3 ─────────────────────────────────────────────── */
+  .resumen-card {
+    background: #f0fdf4; border: 1px solid #bbf7d0;
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 12px; color: #166534; line-height: 1.8; margin-bottom: 14px;
+  }
+  .resumen-card strong { font-weight: 700; }
+  .modo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modo-card {
+    border: 2px solid #e2e8f0; border-radius: 8px; padding: 10px 12px;
+    cursor: pointer; background: #fff; transition: all .15s; text-align: center;
+  }
+  .modo-card:hover { border-color: #93c5fd; }
+  .modo-card.seleccionado { border-color: #1a56db; background: #eff6ff; }
+  .modo-card .modo-icon { font-size: 22px; display: block; margin-bottom: 4px; }
+  .modo-card .modo-titulo { font-weight: 600; font-size: 13px; }
+  .modo-card .modo-desc { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .modo-sugerido { font-size: 11px; color: #1a56db; margin-top: 4px; display: none; }
+  .modo-sugerido.visible { display: block; }
+  .cantidad-row { display: flex; gap: 10px; align-items: center; }
+  .cantidad-row input[type=range] { flex: 1; accent-color: #1a56db; }
+  .cantidad-valor { min-width: 32px; text-align: center; font-weight: 700; font-size: 15px; color: #1a56db; }
+
+  /* ── Spinner / alerta ───────────────────────────────────── */
+  .spinner {
+    display: none; width: 16px; height: 16px;
+    border: 2px solid #bfdbfe; border-top-color: #1a56db;
+    border-radius: 50%; animation: spin .6s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner.visible { display: inline-block; }
+
+  .alert { padding: 8px 12px; border-radius: 6px; font-size: 12px; display: none; margin-top: 8px; }
+  .alert.error   { background: #fee2e2; color: #991b1b; display: block; }
+  .alert.success { background: #d1fae5; color: #065f46; display: block; }
+  .alert.info    { background: #eff6ff; color: #1e40af; display: block; }
+
+  .empty-hint { font-size: 12px; color: #9ca3af; text-align: center; padding: 16px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Wizard header ─────────────────────────────────────── -->
+  <div class="wizard-header">
+    <h2>📝 Nueva evaluación de competencia</h2>
+    <div class="pasos">
+      <div class="paso-tab activo" id="tab1">① Persona(s)</div>
+      <div class="paso-tab"        id="tab2">② Competencia</div>
+      <div class="paso-tab"        id="tab3">③ Configurar</div>
+    </div>
+  </div>
+
+  <!-- ── Body ──────────────────────────────────────────────── -->
+  <div class="wizard-body">
+
+    <!-- ══ PASO 1 — Persona(s) ══════════════════════════════ -->
+    <div class="paso visible" id="paso1">
+
+      <!-- Toggle modo de selección -->
+      <div class="form-group">
+        <label>Modo de selección</label>
+        <div class="modo-sel-toggle">
+          <button class="modo-sel-btn activo" id="btnModoIndividual"  onclick="cambiarModoSel('individual')">Individual</button>
+          <button class="modo-sel-btn"        id="btnModoPuesto"      onclick="cambiarModoSel('puesto')">Por puesto</button>
+          <button class="modo-sel-btn"        id="btnModoTransversal" onclick="cambiarModoSel('transversal')">Transversal</button>
+        </div>
+      </div>
+
+      <!-- INDIVIDUAL -->
+      <div id="bloqueIndividual">
+        <div class="form-group">
+          <label>Persona a evaluar <span class="req">*</span></label>
+          <select id="selectPersona" onchange="onPersonaChange()">
+            <option value="">— Seleccioná una persona —</option>
+          </select>
+        </div>
+        <div class="persona-card" id="personaCard"></div>
+      </div>
+
+      <!-- POR PUESTO -->
+      <div id="bloquePuesto" style="display:none">
+        <div class="form-group">
+          <label>Puesto <span class="req">*</span></label>
+          <select id="selectPuesto" onchange="onPuestoChange()">
+            <option value="">— Seleccioná un puesto —</option>
+          </select>
+        </div>
+        <div class="puesto-info" id="puestoInfo"></div>
+
+        <div class="personas-multi" id="personasMulti">
+          <div class="personas-multi-header">
+            <span>Personas del puesto</span>
+            <button class="sel-all-btn" onclick="seleccionarTodas()">Seleccionar todas</button>
+          </div>
+          <div id="listaPersonasMulti"></div>
+          <div class="sel-count" id="selCount"></div>
+        </div>
+      </div>
+
+      <!-- TRANSVERSAL -->
+      <div id="bloqueTransversal" style="display:none">
+        <div class="form-group" style="margin-bottom:6px">
+          <label>Buscar persona</label>
+          <input type="text" id="buscarTransversal" placeholder="Escribí nombre o puesto para filtrar…" oninput="filtrarTransversal()">
+        </div>
+        <div class="personas-multi-header">
+          <span style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;">Todas las personas activas</span>
+          <button class="sel-all-btn" onclick="seleccionarTodasTransversal()">Seleccionar todas</button>
+        </div>
+        <div id="listaTransversal" style="max-height:220px;overflow-y:auto;margin-top:6px;"></div>
+        <div class="sel-count" id="selCountTransversal"></div>
+      </div>
+
+      <div id="alertaPaso1" class="alert"></div>
+    </div>
+
+    <!-- ══ PASO 2 — Competencia o Documento (transversal) ════ -->
+    <div class="paso" id="paso2">
+
+      <!-- Sub-paso competencias (individual / por puesto) -->
+      <div id="bloquePaso2Comp">
+        <div class="section-title">
+          Pendientes / vencidas
+          <span class="badge-count" id="cntPendientes">0</span>
+        </div>
+        <div class="comp-lista" id="listaPendientes">
+          <div class="empty-hint" id="emptyPendientes">Cargando…</div>
+        </div>
+        <button class="toggle-todas" onclick="toggleTodas()" id="btnToggleTodas">
+          ▸ Ver todas las competencias del puesto
+        </button>
+        <div class="todas-lista" id="listaTodas"></div>
+      </div>
+
+
+      <div id="alertaPaso2" class="alert"></div>
+    </div>
+
+    <!-- ══ PASO 3 — Configuración ════════════════════════════ -->
+    <div class="paso" id="paso3">
+      <div class="resumen-card" id="resumenCard">
+        <strong>Persona(s):</strong> <span id="resPersonas">—</span><br>
+        <strong>Competencia:</strong> <span id="resCompetencia">—</span><br>
+        <strong>Documento:</strong> <span id="resDocumento">—</span>
+      </div>
+
+      <div class="form-group" id="grupoDocManual" style="display:none">
+        <label>Documento en Drive</label>
+        <select id="selectDocDrive">
+          <option value="">— Sin documento vinculado —</option>
+        </select>
+        <span class="hint">Esta competencia no tiene documento vinculado. Elegí uno de Drive o dejá vacío para evaluación presencial.</span>
+      </div>
+
+      <div class="form-group">
+        <label>Modo de evaluación</label>
+        <p class="modo-sugerido" id="modoSugerido">💡 Sugerido por naturaleza de la competencia</p>
+        <div class="modo-grid">
+          <div class="modo-card" id="modoAutonomo" onclick="seleccionarModo('autonomo')">
+            <span class="modo-icon">💻</span>
+            <div class="modo-titulo">Autónomo</div>
+            <div class="modo-desc">Google Form — el evaluado responde cuando quiera</div>
+          </div>
+          <div class="modo-card" id="modoPresencial" onclick="seleccionarModo('presencial')">
+            <span class="modo-icon">👤</span>
+            <div class="modo-titulo">Presencial / Rúbrica</div>
+            <div class="modo-desc">El evaluador registra el nivel directamente</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Cantidad de preguntas <span style="font-weight:400;color:#9ca3af">(solo autónomo)</span></label>
+        <div class="cantidad-row">
+          <input type="range" id="sliderCantidad" min="3" max="20" value="5" oninput="onSlider()">
+          <div class="cantidad-valor" id="valorCantidad">5</div>
+        </div>
+        <span class="hint">Recomendado: 5–10 preguntas.</span>
+      </div>
+
+      <div id="alertaPaso3" class="alert"></div>
+    </div>
+
+  </div><!-- /wizard-body -->
+
+  <!-- ── Footer ─────────────────────────────────────────────── -->
+  <div class="wizard-footer">
+    <button class="btn btn-ghost" id="btnVolver" onclick="irPaso(pasoActual - 1)" style="display:none">← Volver</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+      <div class="spinner" id="spinGen"></div>
+      <button class="btn btn-ghost"   onclick="google.script.host.close()">Cancelar</button>
+      <button class="btn btn-primary" id="btnSiguiente" onclick="siguiente()" disabled>Siguiente →</button>
+      <button class="btn btn-success" id="btnGenerar"   onclick="generar()" style="display:none" disabled>⚡ Generar evaluación</button>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── Estado global ─────────────────────────────────────────────────
+var personas       = [];      // todas las personas activas
+var puestosMap     = {};      // puesto → [personas]
+
+var modoSeleccion  = 'individual';  // 'individual' | 'puesto'
+
+// Selección individual
+var personaSel     = null;
+
+// Selección por puesto
+var puestoSel      = '';      // nombre del puesto seleccionado
+var personasSelMulti = [];    // array de objetos persona seleccionadas
+
+var compPendientes = [];
+var compTodas      = [];
+var compSel        = null;
+var modoSel        = null;
+var docsDrive      = [];
+var pasoActual     = 1;
+
+// ── Init ──────────────────────────────────────────────────────────
+window.onload = function() { cargarPersonas(); };
+
+// ── Cargar personas y construir mapa por puesto ───────────────────
+function cargarPersonas() {
+  google.script.run
+    .withSuccessHandler(function(data) {
+      personas = data || [];
+
+      // Construir mapa puesto → personas
+      puestosMap = {};
+      personas.forEach(function(p) {
+        var puesto = p.puesto || '(Sin puesto)';
+        if (!puestosMap[puesto]) puestosMap[puesto] = [];
+        puestosMap[puesto].push(p);
+      });
+
+      // Poblar select individual
+      var sel = document.getElementById('selectPersona');
+      personas.forEach(function(p) {
+        var o = document.createElement('option');
+        o.value = p.idPersona;
+        o.text  = p.nombre + (p.puesto ? ' — ' + p.puesto : '') + (p.area ? ' (' + p.area + ')' : '');
+        sel.appendChild(o);
+      });
+
+      // Poblar select de puestos
+      var selP = document.getElementById('selectPuesto');
+      Object.keys(puestosMap).sort().forEach(function(puesto) {
+        var o = document.createElement('option');
+        o.value = puesto;
+        o.text  = puesto + ' (' + puestosMap[puesto].length + ' personas)';
+        selP.appendChild(o);
+      });
+    })
+    .withFailureHandler(function(err) {
+      mostrarAlerta('alertaPaso1', 'error', 'Error cargando personas: ' + err.message);
+    })
+    .getPersonas();
+}
+
+// ── Toggle modo de selección ──────────────────────────────────────
+function cambiarModoSel(modo) {
+  modoSeleccion = modo;
+  personaSel = null;
+  personasSelMulti = [];
+  puestoSel = '';
+
+  document.getElementById('btnModoIndividual').classList.toggle('activo',  modo === 'individual');
+  document.getElementById('btnModoPuesto').classList.toggle('activo',      modo === 'puesto');
+  document.getElementById('btnModoTransversal').classList.toggle('activo', modo === 'transversal');
+
+  document.getElementById('bloqueIndividual').style.display  = modo === 'individual'  ? 'block' : 'none';
+  document.getElementById('bloquePuesto').style.display      = modo === 'puesto'      ? 'block' : 'none';
+  document.getElementById('bloqueTransversal').style.display = modo === 'transversal' ? 'block' : 'none';
+
+  // Resetear selecciones
+  document.getElementById('selectPersona').value = '';
+  document.getElementById('personaCard').classList.remove('visible');
+  document.getElementById('selectPuesto').value = '';
+  document.getElementById('puestoInfo').classList.remove('visible');
+  document.getElementById('personasMulti').classList.remove('visible');
+  document.getElementById('selCount').classList.remove('visible');
+  document.getElementById('selCountTransversal').classList.remove('visible');
+
+  // Cargar lista transversal al activar
+  if (modo === 'transversal') renderListaTransversal('');
+
+  document.getElementById('btnSiguiente').disabled = true;
+  ocultarAlerta('alertaPaso1');
+}
+
+// ── TRANSVERSAL — lista de todas las personas ────────────────────
+function renderListaTransversal(filtro) {
+  var lista = document.getElementById('listaTransversal');
+  var filtroNorm = filtro.toLowerCase();
+  var visibles = personas.filter(function(p) {
+    return !filtroNorm ||
+      p.nombre.toLowerCase().includes(filtroNorm) ||
+      (p.puesto || '').toLowerCase().includes(filtroNorm);
+  });
+
+  lista.innerHTML = visibles.map(function(p) {
+    var estaSeleccionada = personasSelMulti.some(function(s) { return s.idPersona === p.idPersona; });
+    return '<label class="persona-check-item' + (estaSeleccionada ? ' seleccionada' : '') +
+      '" id="pct-' + esc(p.idPersona) + '">' +
+      '<input type="checkbox" value="' + esc(p.idPersona) + '"' +
+      (estaSeleccionada ? ' checked' : '') +
+      ' onchange="onCheckTransversal(this)">' +
+      '<div class="persona-check-info">' +
+        '<div class="persona-check-nombre">' + esc(p.nombre) + '</div>' +
+        '<div class="persona-check-sub">' + esc(p.puesto || '') + (p.area ? ' · ' + esc(p.area) : '') + '</div>' +
+      '</div></label>';
+  }).join('');
+}
+
+function filtrarTransversal() {
+  var filtro = document.getElementById('buscarTransversal').value;
+  renderListaTransversal(filtro);
+}
+
+function onCheckTransversal(checkbox) {
+  var id = checkbox.value;
+  var persona = personas.find(function(p) { return p.idPersona === id; });
+  var item = document.getElementById('pct-' + id);
+
+  if (checkbox.checked) {
+    if (persona && !personasSelMulti.find(function(p) { return p.idPersona === id; })) {
+      personasSelMulti.push(persona);
+    }
+    if (item) item.classList.add('seleccionada');
+  } else {
+    personasSelMulti = personasSelMulti.filter(function(p) { return p.idPersona !== id; });
+    if (item) item.classList.remove('seleccionada');
+  }
+
+  var count = personasSelMulti.length;
+  var selCount = document.getElementById('selCountTransversal');
+  if (count > 0) {
+    selCount.textContent = count + ' persona(s) seleccionada(s)';
+    selCount.classList.add('visible');
+  } else {
+    selCount.classList.remove('visible');
+  }
+  document.getElementById('btnSiguiente').disabled = (count === 0);
+  ocultarAlerta('alertaPaso1');
+}
+
+function seleccionarTodasTransversal() {
+  personasSelMulti = personas.slice();
+  document.querySelectorAll('#listaTransversal input[type=checkbox]').forEach(function(cb) {
+    cb.checked = true;
+    var item = document.getElementById('pct-' + cb.value);
+    if (item) item.classList.add('seleccionada');
+  });
+  var selCount = document.getElementById('selCountTransversal');
+  selCount.textContent = personasSelMulti.length + ' persona(s) seleccionada(s)';
+  selCount.classList.add('visible');
+  document.getElementById('btnSiguiente').disabled = false;
+}
+
+// ── INDIVIDUAL: cambio de persona ────────────────────────────────
+function onPersonaChange() {
+  var id = document.getElementById('selectPersona').value;
+  personaSel = id ? personas.find(function(p) { return p.idPersona === id; }) : null;
+
+  var card = document.getElementById('personaCard');
+  if (personaSel) {
+    card.innerHTML =
+      '<strong>' + esc(personaSel.nombre) + '</strong><br>' +
+      (personaSel.puesto ? '📌 ' + esc(personaSel.puesto) + '<br>' : '') +
+      (personaSel.area   ? '🏢 ' + esc(personaSel.area)   + '<br>' : '') +
+      (personaSel.mail   ? '✉️ ' + esc(personaSel.mail)             : '');
+    card.classList.add('visible');
+    ocultarAlerta('alertaPaso1');
+  } else {
+    card.classList.remove('visible');
+  }
+  document.getElementById('btnSiguiente').disabled = !personaSel;
+}
+
+// ── POR PUESTO: cambio de puesto ──────────────────────────────────
+function onPuestoChange() {
+  puestoSel = document.getElementById('selectPuesto').value;
+  personasSelMulti = [];
+
+  var info     = document.getElementById('puestoInfo');
+  var multi    = document.getElementById('personasMulti');
+  var lista    = document.getElementById('listaPersonasMulti');
+  var selCount = document.getElementById('selCount');
+
+  if (!puestoSel || !puestosMap[puestoSel]) {
+    info.classList.remove('visible');
+    multi.classList.remove('visible');
+    selCount.classList.remove('visible');
+    document.getElementById('btnSiguiente').disabled = true;
+    return;
+  }
+
+  var personasDePuesto = puestosMap[puestoSel] || [];
+  info.textContent = personasDePuesto.length + ' persona(s) en este puesto.';
+  info.classList.add('visible');
+
+  // Renderizar checkboxes
+  lista.innerHTML = personasDePuesto.map(function(p) {
+    return '<label class="persona-check-item" id="pci-' + esc(p.idPersona) + '">' +
+      '<input type="checkbox" value="' + esc(p.idPersona) + '" onchange="onCheckPersona(this)">' +
+      '<div class="persona-check-info">' +
+        '<div class="persona-check-nombre">' + esc(p.nombre) + '</div>' +
+        '<div class="persona-check-sub">' + esc(p.area || '') + (p.mail ? ' · ' + esc(p.mail) : '') + '</div>' +
+      '</div>' +
+    '</label>';
+  }).join('');
+
+  multi.classList.add('visible');
+  selCount.classList.remove('visible');
+  document.getElementById('btnSiguiente').disabled = true;
+}
+
+function onCheckPersona(checkbox) {
+  var id = checkbox.value;
+  var persona = personas.find(function(p) { return p.idPersona === id; });
+  var item = document.getElementById('pci-' + id);
+
+  if (checkbox.checked) {
+    if (persona && !personasSelMulti.find(function(p) { return p.idPersona === id; })) {
+      personasSelMulti.push(persona);
+    }
+    if (item) item.classList.add('seleccionada');
+  } else {
+    personasSelMulti = personasSelMulti.filter(function(p) { return p.idPersona !== id; });
+    if (item) item.classList.remove('seleccionada');
+  }
+
+  var count = personasSelMulti.length;
+  var selCount = document.getElementById('selCount');
+  if (count > 0) {
+    selCount.textContent = count + ' persona(s) seleccionada(s)';
+    selCount.classList.add('visible');
+  } else {
+    selCount.classList.remove('visible');
+  }
+
+  document.getElementById('btnSiguiente').disabled = (count === 0);
+  ocultarAlerta('alertaPaso1');
+}
+
+function seleccionarTodas() {
+  var personasDePuesto = puestosMap[puestoSel] || [];
+  personasSelMulti = personasDePuesto.slice();
+
+  // Marcar todos los checkboxes
+  document.querySelectorAll('#listaPersonasMulti input[type=checkbox]').forEach(function(cb) {
+    cb.checked = true;
+    var item = document.getElementById('pci-' + cb.value);
+    if (item) item.classList.add('seleccionada');
+  });
+
+  var count = personasSelMulti.length;
+  var selCount = document.getElementById('selCount');
+  selCount.textContent = count + ' persona(s) seleccionada(s)';
+  selCount.classList.add('visible');
+  document.getElementById('btnSiguiente').disabled = (count === 0);
+}
+
+// ── Helper: puesto activo (para cargar competencias) ─────────────
+function getPuestoActivo() {
+  if (modoSeleccion === 'transversal') return 'Todos';
+  if (modoSeleccion === 'individual')  return personaSel ? personaSel.puesto : '';
+  return puestoSel || '';
+}
+
+// ── Helper: personas activas como array ──────────────────────────
+function getPersonasSeleccionadas() {
+  if (modoSeleccion === 'individual') {
+    return personaSel ? [personaSel] : [];
+  } else {
+    return personasSelMulti;
+  }
+}
+
+// ── PASO 2 — Competencias ─────────────────────────────────────────
+function cargarCompetencias() {
+  var puesto = getPuestoActivo();
+  if (!puesto) return;
+
+  // Tomar una persona de referencia para verificar pendientes
+  var personaRef = modoSeleccion === 'individual'
+    ? personaSel
+    : (personasSelMulti[0] || null);
+
+  document.getElementById('emptyPendientes').textContent = 'Cargando…';
+  document.getElementById('listaPendientes').innerHTML = '<div class="empty-hint" id="emptyPendientes">Cargando…</div>';
+  document.getElementById('listaTodas').innerHTML = '';
+  document.getElementById('listaTodas').classList.remove('visible');
+  document.getElementById('btnToggleTodas').textContent = '▸ Ver todas las competencias del puesto';
+  compSel = null;
+
+  var cargados = 0;
+  function check() { cargados++; if (cargados === 2) document.getElementById('btnSiguiente').disabled = !compSel; }
+
+  if (personaRef && modoSeleccion !== 'transversal') {
+    google.script.run
+      .withSuccessHandler(function(data) {
+        compPendientes = data || [];
+        renderCompLista('listaPendientes', compPendientes, true);
+        document.getElementById('cntPendientes').textContent = compPendientes.length;
+        if (compPendientes.length === 0) {
+          document.getElementById('listaPendientes').innerHTML =
+            '<div class="empty-hint">Sin competencias vencidas o pendientes.</div>';
+        }
+        check();
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('listaPendientes').innerHTML =
+          '<div class="empty-hint" style="color:#c5221f">Error: ' + esc(err.message) + '</div>';
+        check();
+      })
+      .getCompetenciasPendientesPorPersona(personaRef.idPersona, puesto);
+  } else {
+    // Transversal o sin referencia: no hay pendientes por persona
+    document.getElementById('listaPendientes').innerHTML =
+      modoSeleccion === 'transversal'
+        ? '<div class="empty-hint">Seleccioná la evaluación transversal a aplicar.</div>'
+        : '<div class="empty-hint">Sin competencias vencidas.</div>';
+    document.getElementById('cntPendientes').textContent = '—';
+    check();
+  }
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      compTodas = data || [];
+      renderCompLista('listaTodas', compTodas, false);
+      if (compTodas.length === 0) {
+        document.getElementById('listaTodas').innerHTML =
+          '<div class="empty-hint">No hay competencias definidas para "' + esc(puesto) + '".</div>';
+      }
+      check();
+    })
+    .withFailureHandler(function() { check(); })
+    .getCompetencias(puesto);
+}
+
+function renderCompLista(contenedorId, lista, esPendiente) {
+  var cont = document.getElementById(contenedorId);
+  if (!lista || lista.length === 0) return;
+
+  cont.innerHTML = lista.map(function(c) {
+    var claseTipo = '', badgePendiente = '';
+    if (esPendiente) {
+      if (c.diasVencida !== null && c.diasVencida !== undefined) {
+        claseTipo = 'vencido';
+        badgePendiente = '<span class="badge badge-vencido">Vencida ' + c.diasVencida + 'd</span>';
+      } else {
+        claseTipo = 'nunca-eval';
+        badgePendiente = '<span class="badge badge-nunca">Nunca evaluada</span>';
+      }
+    }
+
+    var badgeCrit = 'badge-' + (c.criticidad || 'media').toLowerCase();
+    var badgeNat  = (c.naturaleza || '').toLowerCase().includes('tácit') ? 'badge-tacito' : 'badge-explicito';
+    var badgeDoc  = c.driveId
+      ? '<span class="badge badge-doc">📄 ' + esc(c.driveNombre || c.dominio) + '</span>'
+      : '<span class="badge badge-sin-doc">Sin doc</span>';
+    var nivelEsp  = c.nivelEsperado
+      ? '<span style="font-size:11px;color:#6b7280">Nivel esp.: ' + esc(c.nivelEsperado) + '</span>'
+      : '';
+    var ultEval   = c.ultimaEvaluacion
+      ? '<span style="font-size:11px;color:#6b7280">Última: ' + esc(c.ultimaEvaluacion) + '</span>'
+      : '';
+
+    var idComp = c.idCompetencia || (c.dominio + '|' + (c.puesto || ''));
+
+    return '<div class="comp-item ' + claseTipo + '" id="ci-' + esc(idComp) + '"' +
+           ' onclick=\'seleccionarComp(' + esc(JSON.stringify(c)) + ')\'>' +
+      '<div class="comp-nombre">' + esc(c.dominio) + '</div>' +
+      '<div class="comp-meta">' +
+        '<span class="badge ' + badgeCrit + '">' + esc(c.criticidad) + '</span>' +
+        '<span class="badge ' + badgeNat  + '">' + esc(c.naturaleza) + '</span>' +
+        badgeDoc + badgePendiente + nivelEsp + ultEval +
+      '</div>' +
+      '<div class="comp-seleccionada-icon">✓</div>' +
+    '</div>';
+  }).join('');
+}
+
+function seleccionarComp(comp) {
+  compSel = comp;
+  document.querySelectorAll('.comp-item').forEach(function(el) { el.classList.remove('seleccionado'); });
+  var idComp = comp.idCompetencia || (comp.dominio + '|' + (comp.puesto || ''));
+  var el = document.getElementById('ci-' + idComp);
+  if (el) el.classList.add('seleccionado');
+  document.getElementById('btnSiguiente').disabled = false;
+  ocultarAlerta('alertaPaso2');
+}
+
+function toggleTodas() {
+  var lista = document.getElementById('listaTodas');
+  var btn   = document.getElementById('btnToggleTodas');
+  var visible = lista.classList.toggle('visible');
+  btn.textContent = visible ? '▴ Ocultar todas' : '▸ Ver todas las competencias del puesto';
+}
+
+// ── PASO 3 — Configuración ────────────────────────────────────────
+function prepararPaso3() {
+  var personasSel = getPersonasSeleccionadas();
+  var resPersonas;
+  if (modoSeleccion === 'individual') {
+    resPersonas = personaSel ? personaSel.nombre + (personaSel.puesto ? ' — ' + personaSel.puesto : '') : '—';
+  } else if (modoSeleccion === 'puesto') {
+    resPersonas = personasSel.length + ' personas (puesto: ' + puestoSel + ')';
+  } else {
+    resPersonas = personasSel.length + ' personas (evaluación transversal)';
+  }
+
+  document.getElementById('resPersonas').textContent    = resPersonas;
+  document.getElementById('resCompetencia').textContent = compSel.dominio +
+    (compSel.criticidad ? ' (' + compSel.criticidad + ')' : '') +
+    (modoSeleccion === 'transversal' ? ' — transversal' : '');
+  document.getElementById('resDocumento').textContent   = compSel.driveNombre || compSel.driveId || '— Sin documento vinculado';
+
+  var grupoDoc = document.getElementById('grupoDocManual');
+  if (!compSel.driveId) {
+    grupoDoc.style.display = 'flex';
+    cargarDocsDrive();
+  } else {
+    grupoDoc.style.display = 'none';
+  }
+
+  // Sugerir modo según naturaleza (transversal sigue la misma lógica)
+  var naturaleza = (compSel.naturaleza || '').toLowerCase();
+  if (naturaleza.includes('tácit')) {
+    seleccionarModo('presencial');
+    document.getElementById('modoSugerido').classList.add('visible');
+    document.getElementById('modoSugerido').textContent = 'Sugerido: Presencial/Rubrica (competencia tacita)';
+  } else {
+    seleccionarModo('autonomo');
+    document.getElementById('modoSugerido').classList.add('visible');
+    document.getElementById('modoSugerido').textContent = 'Sugerido: Autonomo (competencia explicita)';
+  }
+
+  document.getElementById('btnGenerar').disabled = false;
+}
+
+function cargarDocsDrive() {
+  var sel = document.getElementById('selectDocDrive');
+  while (sel.options.length > 1) sel.remove(1);
+  google.script.run
+    .withSuccessHandler(function(docs) {
+      docsDrive = docs || [];
+      docs.forEach(function(d) {
+        var o = document.createElement('option');
+        o.value = d.id; o.text = d.nombre; sel.appendChild(o);
+      });
+    })
+    .getDocumentosDrive();
+}
+
+function seleccionarModo(modo) {
+  modoSel = modo;
+  document.getElementById('modoAutonomo').classList.toggle('seleccionado',  modo === 'autonomo');
+  document.getElementById('modoPresencial').classList.toggle('seleccionado', modo === 'presencial');
+}
+
+function onSlider() {
+  document.getElementById('valorCantidad').textContent = document.getElementById('sliderCantidad').value;
+}
+
+// ── Navegación ────────────────────────────────────────────────────
+function siguiente() {
+  if (pasoActual === 1) {
+    if (modoSeleccion === 'individual' && !personaSel) {
+      mostrarAlerta('alertaPaso1', 'error', 'Seleccioná una persona primero.'); return;
+    }
+    if ((modoSeleccion === 'puesto' || modoSeleccion === 'transversal') && personasSelMulti.length === 0) {
+      mostrarAlerta('alertaPaso1', 'error', 'Seleccioná al menos una persona.'); return;
+    }
+    irPaso(2);
+    // Para todos los modos se cargan competencias del puesto activo
+    // (transversal → puesto 'Todos', los demás → puesto de la persona/selector)
+    document.getElementById('bloquePaso2Comp').style.display = 'block';
+    cargarCompetencias();
+  } else if (pasoActual === 2) {
+    if (!compSel) { mostrarAlerta('alertaPaso2', 'error', 'Seleccioná una competencia.'); return; }
+    irPaso(3);
+    prepararPaso3();
+  }
+}
+
+function irPaso(n) {
+  if (n < 1 || n > 3) return;
+  document.getElementById('paso' + pasoActual).classList.remove('visible');
+  document.getElementById('paso' + n).classList.add('visible');
+  pasoActual = n;
+
+  [1, 2, 3].forEach(function(i) {
+    var tab = document.getElementById('tab' + i);
+    tab.classList.remove('activo', 'completado');
+    if (i < pasoActual)       tab.classList.add('completado');
+    else if (i === pasoActual) tab.classList.add('activo');
+  });
+
+  document.getElementById('btnVolver').style.display = pasoActual > 1 ? 'inline-block' : 'none';
+
+  if (pasoActual === 3) {
+    document.getElementById('btnSiguiente').style.display = 'none';
+    document.getElementById('btnGenerar').style.display   = 'inline-block';
+  } else {
+    document.getElementById('btnSiguiente').style.display = 'inline-block';
+    document.getElementById('btnGenerar').style.display   = 'none';
+    document.getElementById('btnSiguiente').disabled = (pasoActual === 2 && !compSel);
+  }
+}
+
+// ── Generar ───────────────────────────────────────────────────────
+function generar() {
+  var personasSel = getPersonasSeleccionadas();
+  if (personasSel.length === 0 || !compSel || !modoSel) {
+    mostrarAlerta('alertaPaso3', 'error', 'Faltan datos obligatorios.'); return;
+  }
+
+  var cantidad = parseInt(document.getElementById('sliderCantidad').value) || 5;
+
+  var driveId     = compSel.driveId || '';
+  var driveNombre = compSel.driveNombre || compSel.dominio;
+
+  if (!driveId) {
+    var selDoc2 = document.getElementById('selectDocDrive');
+    if (selDoc2 && selDoc2.value) {
+      driveId = selDoc2.value;
+      driveNombre = selDoc2.options[selDoc2.selectedIndex].text;
+    }
+  }
+
+  if (modoSel === 'autonomo' && !driveId) {
+    mostrarAlerta('alertaPaso3', 'error',
+      'Para el modo autónomo es necesario un documento Drive. Vinculá uno en la hoja Puestos_Competencias o cambiá al modo presencial.');
+    return;
+  }
+
+  var params = {
+    personas: personasSel.map(function(p) {
+      return { idPersona: p.idPersona, nombre: p.nombre, mail: p.mail, puesto: p.puesto, area: p.area };
+    }),
+    competencia: {
+      idCompetencia:   compSel.idCompetencia   || '',
+      dominio:         compSel.dominio,
+      categoria:       compSel.categoria        || '',
+      naturaleza:      compSel.naturaleza        || '',
+      criticidad:      compSel.criticidad        || '',
+      driveId:         driveId,
+      driveNombre:     driveNombre,
+      frecuenciaMeses: compSel.frecuenciaMeses  || 12,
+      nivelEsperado:   compSel.nivelEsperado    || ''
+    },
+    cantidad:    cantidad,
+    modo:        modoSel,
+    transversal: modoSeleccion === 'transversal'
+  };
+
+  // Bloquear UI
+  document.getElementById('btnGenerar').disabled  = true;
+  document.getElementById('btnVolver').disabled   = true;
+  spin('spinGen', true);
+
+  var nPersonas = personasSel.length;
+  var msgEspera = modoSel === 'autonomo'
+    ? '⏳ Generando preguntas con IA y creando el formulario… puede tardar unos segundos.'
+    : '⏳ Registrando evaluación presencial' + (nPersonas > 1 ? ' para ' + nPersonas + ' personas' : '') + '…';
+  mostrarAlerta('alertaPaso3', 'info', msgEspera);
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      spin('spinGen', false);
+      if (res.ok) {
+        var msg = modoSel === 'autonomo'
+          ? '✅ Evaluación generada para ' + nPersonas + ' persona(s). Borrador de Gmail creado.'
+          : '✅ Evaluación presencial registrada para ' + nPersonas + ' persona(s).';
+        mostrarAlerta('alertaPaso3', 'success', msg);
+        setTimeout(function() { google.script.host.close(); }, 2200);
+      } else {
+        document.getElementById('btnGenerar').disabled = false;
+        document.getElementById('btnVolver').disabled  = false;
+        mostrarAlerta('alertaPaso3', 'error', '❌ ' + (res.error || 'Error desconocido.'));
+      }
+    })
+    .withFailureHandler(function(err) {
+      spin('spinGen', false);
+      document.getElementById('btnGenerar').disabled = false;
+      document.getElementById('btnVolver').disabled  = false;
+      mostrarAlerta('alertaPaso3', 'error', '❌ Error: ' + err.message);
+    })
+    .generarEvaluacion(params);
+}
+
+// ── Utilidades ────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function spin(id, on) { var el = document.getElementById(id); if (el) el.classList.toggle('visible', on); }
+function mostrarAlerta(id, tipo, msg) {
+  var el = document.getElementById(id); if (!el) return;
+  el.className = 'alert ' + tipo; el.textContent = msg;
+}
+function ocultarAlerta(id) {
+  var el = document.getElementById(id); if (el) { el.className = 'alert'; el.textContent = ''; }
+}
+</script>
+</body>
+</html>

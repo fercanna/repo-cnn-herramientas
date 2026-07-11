@@ -1,0 +1,624 @@
+/**
+ * =================================================================================================
+ * SCRIPT DE GESTIÓN DE HALLAZGOS - ANALYTICS NOA
+ * Versión 1.0
+ *
+ * FLUJO:
+ *   1. Form submit → Sheets (trigger automático)
+ *   2. Lee hallazgo desde hoja Form_Responses
+ *   3. Lee contexto del responsable desde hoja CONTEXTO_RESPONSABLE
+ *   4. Fusiona descripción + contexto → envía a Gemini para análisis de causa raíz + clasificación 6M
+ *   5. Escribe resultados en columnas de salida
+ *   6. Crea tarjeta en Trello (si está habilitado)
+ *   7. Genera copia de plantilla GoogleDoc completada (si está habilitado)
+ * =================================================================================================
+ */
+
+// =================================================================================================
+// CONFIGURACIÓN PRINCIPAL
+// =================================================================================================
+
+const CONFIG = {
+
+  // --- HOJAS ---
+  HOJAS: {
+    RESPUESTAS:  'Respuestas de formulario 1',       // Hoja vinculada al Google Form
+    CONTEXTO:    'CONTEXTO_RESPONSABLE', // Hoja de contexto por área
+    PROMPTS:     'ADMIN_PROMPTS',        // Hoja de prompts editables
+  },
+
+  // --- COLUMNAS DE ENTRADA (Form_Responses) ---
+  // Índice base 0. A=0, B=1, C=2...
+  ENTRADA: {
+    TIMESTAMP:   0,  // A - Marca temporal
+    EMAIL:       1,  // B - Email notificador
+    NOTIFICADOR: 2,  // C - Quién notifica
+    AREA:        3,  // D - Área o proceso afectado
+    TIPO:        4,  // E - Tipo de hallazgo
+    PRIORIDAD:   5,  // F - Prioridad
+    DESCRIPCION: 6,  // G - Descripción del hallazgo
+    ADJUNTO:     7,  // H - Archivo adjunto (opcional)
+  },
+
+  // --- COLUMNAS DE SALIDA (se escriben en Form_Responses) ---
+  SALIDA: {
+    CATEGORIA_6M:  8,   // I - Categoría 6M
+    CONTEXTO_AREA: 9,   // J - Contexto leído (para auditoría)
+    ID_TRELLO:     10,  // K - ID de la tarjeta Trello
+    URL_TRELLO:    11,  // L - Link a la tarjeta Trello
+    URL_DOC:       12,  // M - Link al GoogleDoc generado
+    ESTADO:        13,  // N - Estado del procesamiento
+  },
+
+  // --- COLUMNAS DE CONTEXTO_RESPONSABLE ---
+  CONTEXTO_COLS: {
+    AREA:        0,  // A - Área o proceso
+    RESPONSABLE: 1,  // B - Responsable
+    EMAIL:       2,  // C - Email del responsable
+    CRITICIDAD:  3,  // D - Nivel de criticidad (Alto/Medio/Bajo)
+    CONTEXTO:    4,  // E - Texto de contexto
+  },
+
+  // --- MÓDULOS ACTIVOS (true/false según cliente) ---
+  MODULOS: {
+    TRELLO: true,
+    GDOC:   true,
+    EMAIL:  true,
+  },
+};
+
+// =================================================================================================
+// 1. MENÚ
+// =================================================================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('⚙️ Gestión Calidad')
+    .addItem('▶️ Procesar Fila Seleccionada', 'procesarFilaManual')
+    .addSeparator()
+    .addItem('🏗️ Crear Hoja CONTEXTO_RESPONSABLE', 'crearHojaContexto')
+    .addItem('🏗️ Crear Hoja ADMIN_PROMPTS', 'crearHojaPrompts')
+    .addSeparator()
+    .addItem('🔑 Configurar Credenciales', 'mostrarConfigDialog')
+    .addToUi();
+}
+
+// =================================================================================================
+// 2. TRIGGERS
+// =================================================================================================
+
+function onFormSubmit(e) {
+  try {
+    const hoja = SpreadsheetApp.getActiveSpreadsheet()
+      .getSheetByName(CONFIG.HOJAS.RESPUESTAS);
+    const ultimaFila = hoja.getLastRow();
+    console.log(`[onFormSubmit] Nuevo hallazgo en fila: ${ultimaFila}`);
+    procesarHallazgo(ultimaFila);
+  } catch (error) {
+    console.error(`[Error Fatal onFormSubmit] ${error.message}`);
+  }
+}
+
+function procesarFilaManual() {
+  const hoja = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName(CONFIG.HOJAS.RESPUESTAS);
+  const fila = hoja.getActiveCell().getRow();
+
+  if (fila < 2) {
+    SpreadsheetApp.getUi().alert('Seleccioná una fila con datos (no el encabezado).');
+    return;
+  }
+
+  SpreadsheetApp.getActiveSpreadsheet().toast(`Procesando fila ${fila}...`, 'Iniciando');
+  procesarHallazgo(fila);
+  SpreadsheetApp.getActiveSpreadsheet().toast(`Fila ${fila} procesada.`, '✅ Finalizado');
+}
+
+// =================================================================================================
+// 3. LÓGICA PRINCIPAL
+// =================================================================================================
+
+function procesarHallazgo(fila) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = ss.getSheetByName(CONFIG.HOJAS.RESPUESTAS);
+
+  // --- Validación básica ---
+  const datos = leerDatos(hoja, fila);
+  if (!datos.descripcion) {
+    escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error: Descripción vacía');
+    return;
+  }
+
+  // --- Credenciales ---
+  const props      = PropertiesService.getScriptProperties();
+  const geminiKey  = props.getProperty('GEMINI_API_KEY');
+  const trelloKey  = props.getProperty('TRELLO_API_KEY');
+  const trelloToken = props.getProperty('TRELLO_TOKEN');
+  const templateId = props.getProperty('GDOC_TEMPLATE_ID');
+  const folderId = props.getProperty('GDRIVE_OUTPUT_FOLDER');
+
+  if (!geminiKey) {
+    escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error: Falta GEMINI_API_KEY');
+    return;
+  }
+
+  escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '⏳ Procesando...');
+
+  // Variables de salida (declaradas aquí para ser visibles en todo el scope)
+  let resultTrello = null;
+  let urlDoc       = null;
+
+  // --- PASO 1: Leer contexto del responsable ---
+  const contextoArea = leerContextoArea(ss, datos.area);
+  if (contextoArea) {
+    escribirCelda(hoja, fila, CONFIG.SALIDA.CONTEXTO_AREA, contextoArea ? '✅' : '');
+  }
+
+  // --- PASO 2: Construir descripción enriquecida ---
+  const descripcionEnriquecida = construirDescripcionEnriquecida(datos, contextoArea);
+
+  // --- PASO 3: Clasificación 6M con Gemini ---
+  const prompts     = obtenerPrompts(ss);
+  let categoria6M   = 'Pendiente';
+  try {
+    categoria6M = consultarGemini(
+      prompts.CRITERIO_6M || PROMPT_6M_DEFAULT,
+      `Área: ${datos.area}\nTipo: ${datos.tipo}\nDescripción: ${datos.descripcion}`,
+      geminiKey
+    );
+    escribirCelda(hoja, fila, CONFIG.SALIDA.CATEGORIA_6M, categoria6M);
+  } catch (e) {
+    console.error('[Error 6M] ' + e.message);
+    escribirCelda(hoja, fila, CONFIG.SALIDA.CATEGORIA_6M, 'Error IA');
+  }
+
+  // --- PASO 4: Análisis de causa raíz con Gemini ---
+  let analisisCausaRaiz = '';
+  try {
+    const contextoParaIA = contextoArea
+      ? `Área: ${datos.area}\nCriticidad del área: ${contextoArea.criticidad}\nContexto del área: ${contextoArea.texto}\nTipo de hallazgo: ${datos.tipo}\nCategoría 6M: ${categoria6M}\nDescripción: ${datos.descripcion}`
+      : `Área: ${datos.area}\nTipo de hallazgo: ${datos.tipo}\nCategoría 6M: ${categoria6M}\nDescripción: ${datos.descripcion}`;
+
+    analisisCausaRaiz = consultarGemini(
+      prompts.ANALISIS_CAUSA_RAIZ || PROMPT_CAUSA_RAIZ_DEFAULT,
+      contextoParaIA,
+      geminiKey
+    );
+    analisisCausaRaiz = limpiarMarkdown(analisisCausaRaiz);
+  } catch (e) {
+    console.error('[Error Causa Raíz] ' + e.message);
+    analisisCausaRaiz = 'No se pudo generar análisis automático.';
+  }
+
+  // --- PASO 5: Output Trello ---
+  if (CONFIG.MODULOS.TRELLO) {
+    if (!trelloKey || !trelloToken) {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error: Faltan credenciales Trello');
+      return;
+    }
+    resultTrello = crearTarjetaTrello(
+      datos, categoria6M, descripcionEnriquecida, analisisCausaRaiz, trelloKey, trelloToken
+    );
+    if (resultTrello) {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.ID_TRELLO,  resultTrello.id);
+      escribirCelda(hoja, fila, CONFIG.SALIDA.URL_TRELLO, resultTrello.url);
+      try {
+        agregarChecklistTrello(resultTrello.id, trelloKey, trelloToken);
+      } catch (e) {
+        console.error('[Error Checklist Trello] ' + e.message);
+      }
+    } else {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error al crear tarjeta Trello');
+      return;
+    }
+  }
+
+  // --- PASO 6: Output GoogleDoc ---
+  if (CONFIG.MODULOS.GDOC) {
+    if (!templateId || !folderId) {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error: Faltan GDOC_TEMPLATE_ID o GDRIVE_FOLDER_ID');
+      return;
+    }
+    urlDoc = generarGoogleDoc(datos, categoria6M, descripcionEnriquecida, analisisCausaRaiz, templateId, folderId);
+    if (urlDoc) {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.URL_DOC, urlDoc);
+    } else {
+      escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '❌ Error al generar GoogleDoc');
+      return;
+    }
+  }
+
+  escribirCelda(hoja, fila, CONFIG.SALIDA.ESTADO, '✅ Procesado');
+
+  // --- PASO 7: Notificación por email ---
+  if (CONFIG.MODULOS.EMAIL && contextoArea && contextoArea.email) {
+    enviarEmailResponsable(datos, categoria6M, contextoArea, resultTrello, urlDoc);
+  }
+}
+
+// =================================================================================================
+// 12. EMAIL
+// =================================================================================================
+
+function enviarEmailResponsable(datos, categoria6M, contextoArea, resultTrello, urlDoc) {
+  const asunto = `[ANOA] Nuevo hallazgo en ${datos.area} — Prioridad ${datos.prioridad}`;
+  
+  let cuerpo = `Hola ${contextoArea.responsable},\n\n`;
+  cuerpo += `Se registró un nuevo hallazgo en el área a tu cargo.\n\n`;
+  cuerpo += `Área: ${datos.area}\n`;
+  cuerpo += `Tipo: ${datos.tipo}\n`;
+  cuerpo += `Prioridad: ${datos.prioridad}\n`;
+  cuerpo += `Categoría 6M: ${categoria6M}\n\n`;
+  cuerpo += `Descripción:\n${datos.descripcion}\n\n`;
+  
+  if (resultTrello) cuerpo += `Ver en Trello: ${resultTrello.url}\n`;
+  if (urlDoc)       cuerpo += `Ver documento: ${urlDoc}\n`;
+  
+  cuerpo += `\nPor favor revisá y completá el plan de acción según la prioridad indicada.\n`;
+  
+  MailApp.sendEmail(contextoArea.email, asunto, cuerpo);
+}
+
+// =================================================================================================
+// 4. LECTURA DE DATOS
+// =================================================================================================
+
+function leerDatos(hoja, fila) {
+  const valores = hoja.getRange(fila, 1, 1, hoja.getLastColumn()).getValues()[0];
+  const E = CONFIG.ENTRADA;
+  return {
+    timestamp:   valores[E.TIMESTAMP],
+    email:       valores[E.EMAIL],
+    notificador: valores[E.NOTIFICADOR],
+    area:        valores[E.AREA],
+    tipo:        valores[E.TIPO],
+    prioridad:   valores[E.PRIORIDAD],
+    descripcion: valores[E.DESCRIPCION],
+    adjunto:     valores[E.ADJUNTO] || '',
+  };
+}
+
+function leerContextoArea(ss, area) {
+  const hoja = ss.getSheetByName(CONFIG.HOJAS.CONTEXTO);
+  if (!hoja) return null;
+
+  const datos = hoja.getDataRange().getValues();
+  const C = CONFIG.CONTEXTO_COLS;
+
+  for (let i = 1; i < datos.length; i++) {
+    const fila = datos[i];
+    if (fila[C.AREA] && fila[C.AREA].toString().trim().toLowerCase() === area.toString().trim().toLowerCase()) {
+      return {
+        area:        fila[C.AREA],
+        responsable: fila[C.RESPONSABLE],
+        email:       fila[C.EMAIL],
+        criticidad:  fila[C.CRITICIDAD],
+        texto:       fila[C.CONTEXTO],
+      };
+    }
+  }
+  return null; // No se encontró contexto para esta área
+}
+
+function construirDescripcionEnriquecida(datos, contextoArea) {
+  let desc = `${datos.descripcion}`;
+  if (contextoArea && contextoArea.texto) {
+    desc += `\n\n--- Contexto del área (${datos.area}) ---\n${contextoArea.texto}`;
+    if (contextoArea.responsable) {
+      desc += `\nResponsable del área: ${contextoArea.responsable}`;
+    }
+  }
+  return desc;
+}
+
+// =================================================================================================
+// 5. INTEGRACIÓN GEMINI
+// =================================================================================================
+
+const PROMPT_6M_DEFAULT = `Eres un experto en gestión de calidad para laboratorios de análisis ambiental y minero.
+Tu tarea es clasificar el hallazgo en una única categoría de las 6M (Mano de obra, Máquina/Equipo, Método, Material/Insumo, Medio ambiente, Medición).
+Respondé ÚNICAMENTE con el nombre de la categoría, sin explicación ni texto adicional.`;
+
+const PROMPT_CAUSA_RAIZ_DEFAULT = `Eres un experto en gestión de calidad para laboratorios de análisis ambiental y minero (contexto: ISO 17025).
+Analizá el hallazgo y generá un análisis preliminar de causa raíz conciso y útil.
+Considerá el contexto del área y su nivel de criticidad al formular el análisis.
+Estructurá tu respuesta en tres partes: 1) Posibles causas raíz, 2) Factores contribuyentes, 3) Recomendación inicial de acción.
+Usá lenguaje técnico pero claro. Evitá markdown con # o ***.`;
+
+function consultarGemini(instruccion, datos, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`;
+  const payload = {
+    system_instruction: { parts: [{ text: instruccion }] },
+    contents: [{ parts: [{ text: datos }] }]
+  };
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`Gemini HTTP ${response.getResponseCode()}: ${response.getContentText()}`);
+  }
+
+  const json = JSON.parse(response.getContentText());
+  return json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Sin respuesta de IA.';
+}
+
+function limpiarMarkdown(texto) {
+  if (!texto) return '';
+  return texto
+    .replace(/^#+\s/gm, '')
+    .replace(/\*\*\*/g, '')
+    .replace(/\*\*/g, '')
+    .trim();
+}
+
+// =================================================================================================
+// 6. INTEGRACIÓN TRELLO
+// =================================================================================================
+
+function crearTarjetaTrello(datos, categoria6M, descripcionEnriquecida, analisis, key, token) {
+  const props  = PropertiesService.getScriptProperties();
+  const listId = props.getProperty('TRELLO_LIST_ID');
+  if (!listId) {
+    console.error('[Trello] Falta TRELLO_LIST_ID');
+    return null;
+  }
+
+  const fechaFormateada = Utilities.formatDate(
+    new Date(datos.timestamp || new Date()),
+    Session.getScriptTimeZone(),
+    'dd/MM/yyyy'
+  );
+
+  const titulo = `[${categoria6M}] ${datos.area} - ${datos.tipo} (${fechaFormateada})`;
+
+  const descripcionTrello = `
+**Notificado por:** ${datos.notificador || 'N/A'} (${datos.email || ''})
+**Área:** ${datos.area}
+**Tipo:** ${datos.tipo}
+**Prioridad:** ${datos.prioridad}
+**Fecha:** ${fechaFormateada}
+
+---
+**📝 Descripción**
+${datos.descripcion}
+
+---
+**🤖 Análisis de Causa Raíz preliminar (IA)**
+${analisis}
+`.trim();
+
+  const url     = `https://api.trello.com/1/cards?idList=${listId}&key=${key}&token=${token}`;
+  const payload = { name: titulo, desc: descripcionTrello, pos: 'top' };
+
+  try {
+    const response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+    if (response.getResponseCode() !== 200) {
+      console.error('[Trello] Error HTTP: ' + response.getContentText());
+      return null;
+    }
+    const json = JSON.parse(response.getContentText());
+    return { id: json.id, url: json.shortUrl };
+  } catch (e) {
+    console.error('[Trello] ' + e.message);
+    return null;
+  }
+}
+
+function agregarChecklistTrello(cardId, key, token) {
+  const urlChecklist = `https://api.trello.com/1/checklists?idCard=${cardId}&key=${key}&token=${token}&name=Plan de acción`;
+  const resp = UrlFetchApp.fetch(urlChecklist, { method: 'post', muteHttpExceptions: true });
+  if (resp.getResponseCode() !== 200) return;
+
+  const checklistId = JSON.parse(resp.getContentText()).id;
+  const items = [
+    'Acción inmediata',
+    'Acción correctiva 1',
+    'Acción correctiva 2',
+    'Acción correctiva 3',
+    'Acción correctiva 4',
+    'Verificación de eficacia',
+  ];
+
+  items.forEach(item => {
+    const urlItem = `https://api.trello.com/1/checklists/${checklistId}/checkItems?key=${key}&token=${token}&name=${encodeURIComponent(item)}`;
+    UrlFetchApp.fetch(urlItem, { method: 'post', muteHttpExceptions: true });
+  });
+}
+
+// =================================================================================================
+// 7. GENERACIÓN DE GOOGLEDOC
+// =================================================================================================
+
+function generarGoogleDoc(datos, categoria6M, descripcionEnriquecida, analisis, templateId, folderId) {
+  try {
+    // Copiar la plantilla
+    const plantilla = DriveApp.getFileById(templateId);
+    const fechaStr  = Utilities.formatDate(
+      new Date(datos.timestamp || new Date()),
+      Session.getScriptTimeZone(),
+      'dd/MM/yyyy'
+    );
+    const nombreDoc = `Hallazgo - ${datos.area} - ${fechaStr}`;
+    const copia     = plantilla.makeCopy(nombreDoc, DriveApp.getFolderById(folderId));
+    const doc       = DocumentApp.openById(copia.getId());
+    const body      = doc.getBody();
+
+    // Reemplazar marcadores
+    body.replaceText('{{FECHA}}',                    fechaStr);
+    body.replaceText('{{AREA}}',                     datos.area       || '');
+    body.replaceText('{{TIPO}}',                     datos.tipo       || '');
+    body.replaceText('{{NOTIFICADOR}}',              datos.notificador || '');
+    body.replaceText('{{DESCRIPCION_Y_CONTEXTO}}',   datos.descripcion || '');
+    body.replaceText('{{ANALISIS_CAUSA_RAIZ}}',      analisis         || '');
+    body.replaceText('{{CATEGORIA_6M}}',             categoria6M      || '');
+    body.replaceText('{{PRIORIDAD}}',                datos.prioridad  || '');
+
+    doc.saveAndClose();
+    return copia.getUrl();
+  } catch (e) {
+    console.error('[GoogleDoc] ' + e.message);
+    return null;
+  }
+}
+
+// =================================================================================================
+// 8. PROMPTS DESDE HOJA
+// =================================================================================================
+
+function obtenerPrompts(ss) {
+  const hoja = ss.getSheetByName(CONFIG.HOJAS.PROMPTS);
+  if (!hoja) return {};
+  const datos   = hoja.getDataRange().getValues();
+  const prompts = {};
+  datos.forEach(fila => { if (fila[0]) prompts[fila[0]] = fila[1]; });
+  return prompts;
+}
+
+// =================================================================================================
+// 9. HELPERS
+// =================================================================================================
+
+function escribirCelda(hoja, fila, colIndex, valor) {
+  hoja.getRange(fila, colIndex + 1).setValue(valor);
+}
+
+// =================================================================================================
+// 10. CONFIGURACIÓN DE CREDENCIALES (DIALOG HTML)
+// =================================================================================================
+
+function mostrarConfigDialog() {
+  const props = PropertiesService.getScriptProperties();
+  const html  = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html><html><head><base target="_top">
+    <style>
+      body { font-family: Arial, sans-serif; padding: 16px; font-size: 13px; }
+      label { font-weight: bold; display: block; margin-top: 12px; }
+      input { width: 100%; padding: 7px; margin-top: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+      button { margin-top: 16px; background: #1a73e8; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; width: 100%; font-size: 14px; }
+      button:hover { background: #1558b0; }
+      .section { background: #f8f9fa; border-radius: 6px; padding: 10px; margin-top: 12px; }
+      h4 { margin: 0 0 6px 0; color: #444; }
+    </style></head><body>
+    <h3>⚙️ Configuración Analytics NOA</h3>
+
+    <div class="section">
+      <h4>🤖 Gemini AI</h4>
+      <label>API Key:</label>
+      <input type="password" id="geminiKey" placeholder="AIza...">
+    </div>
+
+    <div class="section" id="trelloSection">
+      <h4>📋 Trello</h4>
+      <label>API Key:</label><input type="text" id="trelloKey" placeholder="Trello API Key">
+      <label>Token:</label><input type="password" id="trelloToken" placeholder="Trello Token">
+      <label>ID Lista:</label><input type="text" id="trelloList" placeholder="ID de la lista destino">
+    </div>
+
+    <div class="section">
+  <h4>📄 Google Drive</h4>
+  <label>ID Plantilla GoogleDoc:</label>
+  <input type="text" id="templateId" placeholder="ID del documento plantilla">
+  <label>ID Carpeta de la plantilla:</label>
+  <input type="text" id="templateFolderId" placeholder="ID carpeta donde está la plantilla">
+  <label>ID Carpeta destino de hallazgos:</label>
+  <input type="text" id="outputFolderId" placeholder="ID carpeta donde se guardarán los docs">
+</div>
+
+    <button onclick="guardar()">💾 Guardar Credenciales</button>
+
+    <script>
+      function guardar() {
+        var btn = document.querySelector('button');
+        btn.textContent = 'Guardando...'; btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function() {
+            alert('✅ Credenciales guardadas correctamente.');
+            google.script.host.close();
+          })
+          .withFailureHandler(function(e) {
+            alert('❌ Error: ' + e.message);
+            btn.textContent = '💾 Guardar Credenciales'; btn.disabled = false;
+          })
+          .guardarCredenciales({
+            geminiKey:   document.getElementById('geminiKey').value,
+            trelloKey:   document.getElementById('trelloKey').value,
+            trelloToken: document.getElementById('trelloToken').value,
+            trelloList:  document.getElementById('trelloList').value,
+            templateId:  document.getElementById('templateId').value,
+            templateFolderId: document.getElementById('templateFolderId').value,
+            outputFolderId:   document.getElementById('outputFolderId').value,
+          });
+      }
+    </script>
+    </body></html>
+  `).setWidth(420).setHeight(560);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Configuración de Credenciales');
+}
+
+function guardarCredenciales(data) {
+  const props = PropertiesService.getScriptProperties();
+  if (data.geminiKey)   props.setProperty('GEMINI_API_KEY',      data.geminiKey.trim());
+  if (data.trelloKey)   props.setProperty('TRELLO_API_KEY',      data.trelloKey.trim());
+  if (data.trelloToken) props.setProperty('TRELLO_TOKEN',        data.trelloToken.trim());
+  if (data.trelloList)  props.setProperty('TRELLO_LIST_ID',      data.trelloList.trim());
+  if (data.templateId)  props.setProperty('GDOC_TEMPLATE_ID',   data.templateId.trim());
+  if (data.templateFolderId) props.setProperty('GDRIVE_FOLDER_ID',    data.templateFolderId.trim());
+  if (data.outputFolderId)   props.setProperty('GDRIVE_OUTPUT_FOLDER', data.outputFolderId.trim());
+}
+
+// =================================================================================================
+// 11. SETUP: CREAR HOJAS AUXILIARES
+// =================================================================================================
+
+function crearHojaContexto() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName(CONFIG.HOJAS.CONTEXTO)) {
+    SpreadsheetApp.getUi().alert('La hoja CONTEXTO_RESPONSABLE ya existe.');
+    return;
+  }
+  const hoja = ss.insertSheet(CONFIG.HOJAS.CONTEXTO);
+  const encabezados = [
+    'Área o proceso',
+    'Responsable',
+    'Email del responsable',
+    'Nivel de criticidad (Alto/Medio/Bajo)',
+    'Contexto del área',
+  ];
+  hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados])
+    .setFontWeight('bold')
+    .setBackground('#1a73e8')
+    .setFontColor('#ffffff');
+  hoja.setColumnWidth(5, 400); // Columna Contexto más ancha
+  SpreadsheetApp.getUi().alert('✅ Hoja CONTEXTO_RESPONSABLE creada. Completá los datos de cada área.');
+}
+
+function crearHojaPrompts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName(CONFIG.HOJAS.PROMPTS)) {
+    SpreadsheetApp.getUi().alert('La hoja ADMIN_PROMPTS ya existe.');
+    return;
+  }
+  const hoja = ss.insertSheet(CONFIG.HOJAS.PROMPTS);
+  const encabezados = [['NOMBRE_PROMPT', 'TEXTO_PROMPT']];
+  const datos = [
+    ['CRITERIO_6M',         PROMPT_6M_DEFAULT],
+    ['ANALISIS_CAUSA_RAIZ', PROMPT_CAUSA_RAIZ_DEFAULT],
+  ];
+  hoja.getRange(1, 1, 1, 2).setValues(encabezados)
+    .setFontWeight('bold')
+    .setBackground('#1a73e8')
+    .setFontColor('#ffffff');
+  hoja.getRange(2, 1, datos.length, 2).setValues(datos);
+  hoja.setColumnWidth(2, 600);
+  SpreadsheetApp.getUi().alert('✅ Hoja ADMIN_PROMPTS creada con prompts por defecto.');
+}

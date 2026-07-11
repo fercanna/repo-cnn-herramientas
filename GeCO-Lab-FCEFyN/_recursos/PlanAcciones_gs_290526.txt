@@ -1,0 +1,477 @@
+// ============================================================
+// GeCO Lab — PlanAcciones.gs
+// Módulo 4 — APLICAR: Gestión de planes de acción.
+// (Fase 3)
+//
+// DEPENDENCIAS:
+//   - Config.gs   → getSpreadsheetId()
+//   - Trigger.gs  → la función crearPlanAccion() de Trigger.gs
+//                   debe ser REEMPLAZADA por la de este archivo.
+//                   Dejar en Trigger.gs solo el stub:
+//                     function crearPlanAccion(params) {
+//                       return _crearPlanAccionImpl(params);
+//                     }
+//                   o mover la llamada directamente a este archivo.
+//
+// COLUMNAS Plan_Acciones (0-based):
+//   A(0)  ID_Accion        — 'ACC-YYYYMMDD-NNN'
+//   B(1)  ID_Evaluacion    — FK Registro_Competencias
+//   C(2)  Fecha_Generacion
+//   D(3)  Evaluado
+//   E(4)  Dominio
+//   F(5)  Puntaje_Pct
+//   G(6)  Escala           — Regular | Insuficiente
+//   H(7)  Tipo_Accion      — Capacitación | Re-evaluación | Mentoring | Observación | Otro
+//   I(8)  Descripción
+//   J(9)  Responsable
+//   K(10) Fecha_Objetivo
+//   L(11) Estado           — Pendiente | En Curso | Cerrado
+//   M(12) Fecha_Cierre
+//   N(13) ID_Reevaluacion  — FK evaluación de seguimiento
+//   O(14) Resultado_Final  — escala de la re-evaluación
+//   P(15) Notas
+// ============================================================
+
+// ------------------------------------------------------------------
+// CREACIÓN — llamada desde Trigger.gs y CorreccionPresencial.gs
+// ------------------------------------------------------------------
+
+/**
+ * Crea una fila en Plan_Acciones.
+ * Reemplaza la función homónima de Trigger.gs a partir de Fase 3.
+ *
+ * @param {Object} params
+ *   - ss           {Spreadsheet}  — instancia activa (para no reabrir)
+ *   - idEvaluacion {string}
+ *   - evaluado     {string}
+ *   - dominio      {string}
+ *   - puntajePct   {number}
+ *   - escala       {string}       — 'Regular' | 'Insuficiente'
+ * @returns {string} ID_Accion generado
+ */
+function crearPlanAccion(params) {
+  try {
+    const ss    = params.ss || _getSS_PA();
+    const hoja  = ss.getSheetByName('Plan_Acciones');
+    if (!hoja) throw new Error('No existe la hoja Plan_Acciones. Ejecutar setupCompleto().');
+
+    const ahora   = new Date();
+    const idAccion = _generarIdAccion(hoja, ahora);
+
+    // Fecha objetivo por defecto: 30 días para Insuficiente, 60 para Regular
+    const diasPlazo = params.escala === 'Insuficiente' ? 30 : 60;
+    const fechaObj  = new Date(ahora.getTime() + diasPlazo * 24 * 60 * 60 * 1000);
+
+    // Tipo y descripción por defecto según escala
+    const tipo = params.escala === 'Insuficiente' ? 'Capacitación' : 'Re-evaluación';
+    const desc = params.escala === 'Insuficiente'
+      ? 'Refuerzo de competencia en dominio: ' + params.dominio + '. Puntaje obtenido: ' + params.puntajePct + '%.'
+      : 'Re-evaluación programada luego de repaso en dominio: ' + params.dominio + '. Puntaje previo: ' + params.puntajePct + '%.';
+
+    // Buscar primera fila vacía en col A (evita caer en fila 500+ por validaciones pre-aplicadas)
+    const colA = hoja.getRange(2, 1, Math.max(hoja.getLastRow() + 1, 2), 1).getValues();
+    let filaDestino = 2;
+    for (let r = 0; r < colA.length; r++) {
+      if (!colA[r][0]) { filaDestino = r + 2; break; }
+      filaDestino = r + 3;
+    }
+    hoja.getRange(filaDestino, 1, 1, 16).setValues([[
+      idAccion,            // A
+      params.idEvaluacion, // B
+      ahora,               // C
+      params.evaluado,     // D
+      params.dominio,      // E
+      params.puntajePct,   // F
+      params.escala,       // G
+      tipo,                // H
+      desc,                // I
+      '',                  // J — Responsable (a completar por el evaluador)
+      fechaObj,            // K
+      'Pendiente',         // L
+      '',                  // M — Fecha_Cierre
+      '',                  // N — ID_Reevaluacion
+      '',                  // O — Resultado_Final
+      ''                   // P — Notas
+    ]]);
+
+    Logger.log('[PlanAcciones] Plan creado: ' + idAccion +
+               ' — ' + params.evaluado + ' / ' + params.dominio);
+    return idAccion;
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] crearPlanAccion error: ' + e.message);
+    throw e;
+  }
+}
+
+// ------------------------------------------------------------------
+// LECTURA
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve planes de acción con filtros opcionales.
+ * Llamada desde el HTML y desde el Dashboard (Fase 5).
+ *
+ * @param {Object} [filtros]
+ *   - estado    {string}  — 'Pendiente' | 'En Curso' | 'Cerrado' | '' (todos)
+ *   - evaluado  {string}  — nombre parcial (búsqueda contiene)
+ *   - dominio   {string}  — parcial
+ *   - soloVencidos {boolean} — sólo planes cuya Fecha_Objetivo ya pasó
+ * @returns {Array<Object>}
+ */
+function getPlanesAccion(filtros) {
+  filtros = filtros || {};
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const hoy   = new Date();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const fila = datos[i];
+      if (!fila[0]) continue; // fila vacía
+
+      const obj = _filaAObjPA(fila);
+
+      if (filtros.estado && obj.estado !== filtros.estado) continue;
+      if (filtros.evaluado && !obj.evaluado.toLowerCase().includes(filtros.evaluado.toLowerCase())) continue;
+      if (filtros.dominio  && !obj.dominio.toLowerCase().includes(filtros.dominio.toLowerCase()))   continue;
+
+      if (filtros.soloVencidos) {
+        if (obj.estado === 'Cerrado') continue;
+        const fechaObj = obj.fechaObjetivo ? new Date(obj.fechaObjetivo) : null;
+        if (!fechaObj || fechaObj >= hoy) continue;
+      }
+
+      resultado.push(obj);
+    }
+
+    // Más recientes primero
+    resultado.sort(function(a, b) {
+      return new Date(b.fechaGeneracion) - new Date(a.fechaGeneracion);
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] getPlanesAccion error: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Devuelve planes activos (Pendiente + En Curso) con señal de vencimiento.
+ * Agrega campo `diasRestantes`: negativo = vencido, 0 = hoy, positivo = días hasta vencer.
+ * @returns {Array<Object>}
+ */
+function getPlanesActivos() {
+  const planes = getPlanesAccion({ estado: '' });
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  return planes
+    .filter(function(p) { return p.estado !== 'Cerrado'; })
+    .map(function(p) {
+      if (p.fechaObjetivo) {
+        const fo = new Date(p.fechaObjetivo);
+        fo.setHours(0, 0, 0, 0);
+        p.diasRestantes = Math.round((fo - hoy) / (1000 * 60 * 60 * 24));
+      } else {
+        p.diasRestantes = null;
+      }
+      return p;
+    })
+    .sort(function(a, b) {
+      // Vencidos primero (diasRestantes más negativo)
+      const ar = a.diasRestantes === null ? 9999 : a.diasRestantes;
+      const br = b.diasRestantes === null ? 9999 : b.diasRestantes;
+      return ar - br;
+    });
+}
+
+/**
+ * Devuelve planes vinculados a una evaluación específica.
+ * @param {string} idEvaluacion
+ * @returns {Array<Object>}
+ */
+function getPlanesDeEvaluacion(idEvaluacion) {
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+    const datos = hoja.getDataRange().getValues();
+    return datos.slice(1)
+      .filter(function(f) { return String(f[1]).trim() === idEvaluacion.trim(); })
+      .map(_filaAObjPA);
+  } catch (e) {
+    return [];
+  }
+}
+
+// ------------------------------------------------------------------
+// ACTUALIZACIÓN DE ESTADO
+// ------------------------------------------------------------------
+
+/**
+ * Actualiza el estado de un plan de acción.
+ * Al cerrar, registra la fecha de cierre automáticamente.
+ *
+ * @param {string} idAccion
+ * @param {Object} cambios  — { estado?, responsable?, tipoAccion?,
+ *                              descripcion?, fechaObjetivo?, notas? }
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function actualizarPlanAccion(idAccion, cambios) {
+  try {
+    if (!idAccion) return { ok: false, error: 'ID_Accion requerido.' };
+
+    const hoja = _hojaPlanAcciones();
+    const datos = hoja.getDataRange().getValues();
+    let filaIdx = -1;
+
+    for (let i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idAccion.trim()) {
+        filaIdx = i + 1; // 1-based
+        break;
+      }
+    }
+    if (filaIdx < 0) return { ok: false, error: 'No se encontró el plan: ' + idAccion };
+
+    // Mapa campo → columna 1-based
+    const mapa = {
+      tipoAccion:   8,   // H
+      descripcion:  9,   // I
+      responsable:  10,  // J
+      fechaObjetivo:11,  // K
+      estado:       12,  // L
+      fechaCierre:  13,  // M
+      idReevaluacion:14, // N
+      resultadoFinal:15, // O
+      notas:        16   // P
+    };
+
+    Object.keys(cambios).forEach(function(campo) {
+      const col = mapa[campo];
+      if (col) hoja.getRange(filaIdx, col).setValue(cambios[campo]);
+    });
+
+    // Si cambia a Cerrado → sellar fecha de cierre automáticamente
+    if (cambios.estado === 'Cerrado' && !cambios.fechaCierre) {
+      hoja.getRange(filaIdx, 13).setValue(new Date());
+    }
+
+    // Si cambia a Pendiente/En Curso → limpiar fecha de cierre
+    if ((cambios.estado === 'Pendiente' || cambios.estado === 'En Curso') && !cambios.fechaCierre) {
+      hoja.getRange(filaIdx, 13).setValue('');
+    }
+
+    Logger.log('[PlanAcciones] Plan actualizado: ' + idAccion + ' → ' + JSON.stringify(cambios));
+    return { ok: true };
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] actualizarPlanAccion error: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Cierra un plan de acción con notas opcionales.
+ * @param {string} idAccion
+ * @param {string} [notas]
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function cerrarPlanAccion(idAccion, notas) {
+  const cambios = { estado: 'Cerrado' };
+  if (notas) cambios.notas = notas;
+  return actualizarPlanAccion(idAccion, cambios);
+}
+
+/**
+ * Vincula una re-evaluación a un plan de acción existente.
+ * Llamar desde onFormSubmit o corregirEvaluacionPresencial cuando
+ * el evaluado ya tiene un plan abierto para ese dominio.
+ *
+ * @param {string} idAccion
+ * @param {string} idReevaluacion  — ID_Evaluacion del Registro_Competencias
+ * @param {string} resultadoFinal  — escala obtenida en la re-evaluación
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function vincularReevaluacionAPlan(idAccion, idReevaluacion, resultadoFinal) {
+  const cambios = {
+    idReevaluacion: idReevaluacion,
+    resultadoFinal: resultadoFinal
+  };
+  // Si la re-evaluación mejoró, cerrar el plan automáticamente
+  if (resultadoFinal === 'Bueno' || resultadoFinal === 'Excelente') {
+    cambios.estado = 'Cerrado';
+    cambios.notas  = 'Cerrado automáticamente tras re-evaluación con resultado: ' + resultadoFinal + '.';
+  }
+  return actualizarPlanAccion(idAccion, cambios);
+}
+
+/**
+ * Busca planes abiertos para una persona y dominio dados.
+ * Usado por onFormSubmit para vincular automáticamente re-evaluaciones.
+ *
+ * @param {string} evaluadoNombre
+ * @param {string} dominio
+ * @returns {Object|null} — el plan más reciente Pendiente/En Curso, o null
+ */
+function buscarPlanAbierto(evaluadoNombre, dominio) {
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return null;
+    const datos = hoja.getDataRange().getValues();
+
+    const nombreNorm  = evaluadoNombre.trim().toLowerCase();
+    const dominioNorm = dominio.trim().toLowerCase();
+    let ultimo = null;
+    let ultimaFecha = null;
+
+    for (let i = 1; i < datos.length; i++) {
+      const fila   = datos[i];
+      const estado = String(fila[11]);
+      if (estado === 'Cerrado') continue;
+      if (String(fila[3]).trim().toLowerCase() !== nombreNorm)  continue;
+      if (String(fila[4]).trim().toLowerCase() !== dominioNorm) continue;
+
+      const fecha = fila[2] ? new Date(fila[2]) : null;
+      if (!ultimaFecha || (fecha && fecha > ultimaFecha)) {
+        ultimaFecha = fecha;
+        ultimo = _filaAObjPA(fila);
+      }
+    }
+
+    return ultimo;
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] buscarPlanAbierto error: ' + e.message);
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------
+// ESTADÍSTICAS (para Dashboard — Fase 5)
+// ------------------------------------------------------------------
+
+/**
+ * Resumen de planes por estado y vencimiento.
+ * @returns {{ pendientes: number, enCurso: number, cerrados: number,
+ *             vencidos: number, porVencer7dias: number }}
+ */
+function getResumenPlanesAccion() {
+  const activos = getPlanesActivos();
+  const todos   = getPlanesAccion({});
+  const hoy     = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  return {
+    pendientes:    todos.filter(function(p) { return p.estado === 'Pendiente'; }).length,
+    enCurso:       todos.filter(function(p) { return p.estado === 'En Curso';  }).length,
+    cerrados:      todos.filter(function(p) { return p.estado === 'Cerrado';   }).length,
+    vencidos:      activos.filter(function(p) { return p.diasRestantes !== null && p.diasRestantes < 0; }).length,
+    porVencer7dias: activos.filter(function(p) { return p.diasRestantes !== null && p.diasRestantes >= 0 && p.diasRestantes <= 7; }).length
+  };
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+function _hojaPlanAcciones() {
+  return _getSS_PA().getSheetByName('Plan_Acciones');
+}
+
+function _getSS_PA() {
+  try {
+    const id = getSpreadsheetId();
+    if (id) return SpreadsheetApp.openById(id);
+  } catch (e) {}
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function _filaAObjPA(fila) {
+  return {
+    idAccion:        String(fila[0]  || ''),
+    idEvaluacion:    String(fila[1]  || ''),
+    fechaGeneracion: fila[2]  ? _formatFecha(new Date(fila[2]))  : '',
+    evaluado:        String(fila[3]  || ''),
+    dominio:         String(fila[4]  || ''),
+    puntajePct:      Number(fila[5]) || 0,
+    escala:          String(fila[6]  || ''),
+    tipoAccion:      String(fila[7]  || ''),
+    descripcion:     String(fila[8]  || ''),
+    responsable:     String(fila[9]  || ''),
+    fechaObjetivo:   fila[10] ? _formatFecha(new Date(fila[10])) : '',
+    estado:          String(fila[11] || 'Pendiente'),
+    fechaCierre:     fila[12] ? _formatFecha(new Date(fila[12])) : '',
+    idReevaluacion:  String(fila[13] || ''),
+    resultadoFinal:  String(fila[14] || ''),
+    notas:           String(fila[15] || '')
+  };
+}
+
+function _generarIdAccion(hoja, ahora) {
+  const fecha = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'yyyyMMdd');
+  const prefijo = 'ACC-' + fecha + '-';
+
+  if (hoja.getLastRow() < 2) return prefijo + '001';
+
+  const ids = hoja.getRange(2, 1, hoja.getLastRow() - 1, 1).getValues()
+    .map(function(r) { return String(r[0]); })
+    .filter(function(id) { return id.indexOf(prefijo) === 0; });
+
+  let max = 0;
+  ids.forEach(function(id) {
+    const n = parseInt(id.split('-').pop(), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+
+  return prefijo + String(max + 1).padStart(3, '0');
+}
+
+function _formatFecha(d) {
+  try {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy');
+  } catch (e) { return ''; }
+}
+
+// ------------------------------------------------------------------
+// STUB para Trigger.gs
+// ------------------------------------------------------------------
+// Después de integrar PlanAcciones.gs, reemplazar en Trigger.gs la
+// implementación de crearPlanAccion() por este stub:
+//
+//   function crearPlanAccion(params) {
+//     return crearPlanAccionPlanAcciones(params);
+//   }
+//
+// Y en PlanAcciones.gs renombrar crearPlanAccion → crearPlanAccionPlanAcciones.
+// (No se hace aquí para no romper la compilación actual.)
+
+// ------------------------------------------------------------------
+// FUNCIONES DE PRUEBA
+// ------------------------------------------------------------------
+
+function TEST_crearPlanAccion() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const res = crearPlanAccion({
+    ss:           ss,
+    idEvaluacion: 'EVAL-TEST-001',
+    evaluado:     'Juan Pérez',
+    dominio:      'POE-CAL-001 Control de documentos',
+    puntajePct:   35,
+    escala:       'Insuficiente'
+  });
+  Logger.log('TEST crearPlanAccion → ID: ' + res);
+}
+
+function TEST_getPlanesActivos() {
+  const planes = getPlanesActivos();
+  Logger.log('TEST getPlanesActivos: ' + JSON.stringify(planes.slice(0, 3)));
+}
+
+function TEST_resumen() {
+  Logger.log('TEST resumen: ' + JSON.stringify(getResumenPlanesAccion()));
+}

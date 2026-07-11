@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 20px; margin: 0; background: #f8f9fa; font-size: 14px; }
+    h2 { margin: 0 0 4px; color: #c62828; font-size: 17px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; font-size: 13px; }
+    select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 13px; background: #fff;
+    }
+    textarea { resize: vertical; min-height: 70px; }
+    select:focus, textarea:focus { outline: none; border-color: #ea4335; box-shadow: 0 0 0 2px #fce8e6; }
+
+    /* Detalle de la OC seleccionada */
+    #detalleOC {
+      display: none;
+      background: #fff3e0;
+      border: 1px solid #fb8c00;
+      border-left: 5px solid #fb8c00;
+      border-radius: 4px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+    #detalleOC .campo { margin-bottom: 4px; }
+    #detalleOC .campo span { color: #5f6368; margin-right: 4px; }
+
+    /* Advertencia */
+    .advertencia {
+      background: #fce8e6; border: 1px solid #ef9a9a;
+      border-radius: 6px; padding: 12px 14px;
+      font-size: 13px; color: #b71c1c; margin: 12px 0;
+      display: none;
+    }
+    .advertencia strong { display: block; margin-bottom: 4px; }
+
+    .actions { display: flex; gap: 8px; margin-top: 20px; }
+    .btn { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+    .btn-danger    { background: #ea4335; color: white; }
+    .btn-danger:hover  { background: #c62828; }
+    .btn-danger:disabled { background: #ef9a9a; cursor: not-allowed; }
+    .btn-secondary { background: #e8eaed; color: #3c4043; }
+
+    .message { padding: 10px 14px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .loading { display: none; text-align: center; padding: 20px; color: #ea4335; font-weight: bold; }
+
+    .empty-state { text-align: center; padding: 30px; color: #888; }
+  </style>
+</head>
+<body>
+  <h2>🗑️ Cancelar Orden de Compra</h2>
+  <p class="subtitle">Solo se pueden cancelar OC en estado <strong>Pendiente</strong> sin recepciones registradas</p>
+
+  <div id="message" class="message"></div>
+
+  <div id="formContent">
+    <div class="form-group">
+      <label for="ocSelect">Seleccionar OC a cancelar *</label>
+      <select id="ocSelect" onchange="onOCChange()">
+        <option value="">⏳ Cargando...</option>
+      </select>
+    </div>
+
+    <div id="detalleOC">
+      <div class="campo"><span>Proveedor:</span><strong id="dProv">—</strong></div>
+      <div class="campo"><span>Emitida:</span><span id="dFecha">—</span></div>
+      <div class="campo"><span>Total:</span><strong id="dTotal">—</strong></div>
+      <div class="campo"><span>Solicitado por:</span><span id="dSol">—</span></div>
+    </div>
+
+    <div class="advertencia" id="advertencia">
+      <strong>⚠️ Esta acción es irreversible</strong>
+      La OC quedará marcada como <em>Cancelada</em> y no podrá reactivarse.
+      Los ítems no se pueden recuperar automáticamente — si fue un error,
+      deberás crear una nueva OC.
+    </div>
+
+    <div class="form-group">
+      <label for="motivo">Motivo de cancelación *</label>
+      <textarea id="motivo" placeholder="Ej: El proveedor no dispone del producto / Se decidió comprar a otro proveedor / Compra suspendida por presupuesto..."></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-danger" id="btnCancelar" onclick="confirmarCancelacion()" disabled>
+        🗑️ Cancelar esta OC
+      </button>
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar sin cancelar</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Cancelando orden...</div>
+
+  <script>
+    let ocData = [];
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(function(ocs) {
+          ocData = ocs;
+          const sel = document.getElementById('ocSelect');
+          if (!ocs || ocs.length === 0) {
+            sel.innerHTML = '<option value="">— Sin OC pendientes —</option>';
+            return;
+          }
+          sel.innerHTML = '<option value="">— Seleccioná una OC —</option>' +
+            ocs.map(function(oc) {
+              return '<option value="' + esc(oc.numero_orden) + '">' +
+                esc(oc.numero_orden) + ' — ' + esc(oc.proveedor) +
+                ' ($' + parseFloat(oc.total_orden || 0).toFixed(2) + ')' +
+                '</option>';
+            }).join('');
+        })
+        .withFailureHandler(function(e) {
+          mostrarMensaje('Error al cargar OC: ' + e.message, 'error');
+        })
+        .getOCsEditables();
+    };
+
+    function onOCChange() {
+      const num = document.getElementById('ocSelect').value;
+      const oc  = ocData.find(function(o) { return o.numero_orden === num; });
+
+      const detalle    = document.getElementById('detalleOC');
+      const advert     = document.getElementById('advertencia');
+      const btnCancelar = document.getElementById('btnCancelar');
+
+      if (!oc) {
+        detalle.style.display   = 'none';
+        advert.style.display    = 'none';
+        btnCancelar.disabled    = true;
+        return;
+      }
+
+      document.getElementById('dProv').textContent  = oc.proveedor;
+      document.getElementById('dFecha').textContent = oc.fecha_emision;
+      document.getElementById('dTotal').textContent = '$' + parseFloat(oc.total_orden || 0).toFixed(2);
+      document.getElementById('dSol').textContent   = oc.solicitado_por || '—';
+
+      detalle.style.display   = 'block';
+      advert.style.display    = 'block';
+      btnCancelar.disabled    = false;
+    }
+
+    function confirmarCancelacion() {
+      const num    = document.getElementById('ocSelect').value;
+      const motivo = document.getElementById('motivo').value.trim();
+
+      if (!num)    return mostrarMensaje('Seleccioná una OC.', 'error');
+      if (!motivo) return mostrarMensaje('El motivo es obligatorio.', 'error');
+
+      const oc = ocData.find(function(o) { return o.numero_orden === num; });
+      const confirmMsg = '¿Confirmar cancelación de ' + num + ' (' + (oc ? oc.proveedor : '') + ')?\n\nEsta acción NO puede deshacerse.';
+      if (!confirm(confirmMsg)) return;
+
+      document.getElementById('formContent').style.display = 'none';
+      document.getElementById('loading').style.display     = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          document.getElementById('loading').style.display = 'none';
+          if (result.ok) {
+            mostrarMensaje('✅ ' + result.mensaje, 'success');
+            setTimeout(function() { google.script.host.close(); }, 2500);
+          } else {
+            document.getElementById('formContent').style.display = 'block';
+            mostrarMensaje('❌ ' + result.mensaje, 'error');
+          }
+        })
+        .withFailureHandler(function(e) {
+          document.getElementById('loading').style.display     = 'none';
+          document.getElementById('formContent').style.display = 'block';
+          mostrarMensaje('❌ Error: ' + e.message, 'error');
+        })
+        .cancelarOrdenCompra(num, motivo);
+    }
+
+    function mostrarMensaje(texto, tipo) {
+      const el = document.getElementById('message');
+      el.textContent = texto;
+      el.className = 'message ' + tipo;
+      el.style.display = 'block';
+    }
+
+    function esc(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+        .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+MAPA_PROV_STOCK = {"PROV-BIOARS":{"filaInicio":6,"filaFin":43,"nombre":"Bioars S.A. (Yhlo)","mail":""},"PROV-MULLER":{"filaInicio":48,"filaFin":257,"nombre":"Dist. J. Muller (Roche/Sysmex)","mail":""},"PROV-LByB":{"filaInicio":262,"filaFin":277,"nombre":"LByB S.R.L. (Siemens)","mail":""},"PROV-GEN":{"filaInicio":282,"filaFin":316,"nombre":"Proveedor General","mail":""}} 

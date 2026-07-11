@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Sistema de No Conformidades{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Dashboard - No Conformidades</h1>
+
+    <!-- Estadísticas -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-white bg-info">
+                <div class="card-body">
+                    <h5 class="card-title">Total NC</h5>
+                    <h2 class="card-text">{{ total_nc }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-danger">
+                <div class="card-body">
+                    <h5 class="card-title">Abiertas</h5>
+                    <h2 class="card-text">{{ nc_abiertas }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-warning">
+                <div class="card-body">
+                    <h5 class="card-title">En Proceso</h5>
+                    <h2 class="card-text">{{ nc_en_proceso }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-white bg-success">
+                <div class="card-body">
+                    <h5 class="card-title">Cerradas</h5>
+                    <h2 class="card-text">{{ nc_cerradas }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Últimas NC -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Últimas No Conformidades Registradas</h5>
+                </div>
+                <div class="card-body">
+                    {% if ultimas_nc %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>N° NC</th>
+                                        <th>Fecha</th>
+                                        <th>Descripción</th>
+                                        <th>Área</th>
+                                        <th>Estado</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for nc in ultimas_nc %}
+                                    <tr>
+                                        <td><strong>{{ nc.numero_nc }}</strong></td>
+                                        <td>{{ nc.fecha_deteccion.strftime('%d/%m/%Y') }}</td>
+                                        <td>{{ nc.descripcion[:80] }}...</td>
+                                        <td>{{ nc.area_afectada }}</td>
+                                        <td>
+                                            {% if nc.estado == 'Abierta' %}
+                                                <span class="badge bg-danger">{{ nc.estado }}</span>
+                                            {% elif nc.estado == 'En proceso' %}
+                                                <span class="badge bg-warning">{{ nc.estado }}</span>
+                                            {% else %}
+                                                <span class="badge bg-success">{{ nc.estado }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <a href="{{ url_for('main.ver_nc', id=nc.id) }}" class="btn btn-sm btn-primary">
+                                                <i class="bi bi-eye"></i> Ver
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted">No hay no conformidades registradas aún.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Acceso rápido -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Acceso Rápido</h5>
+                </div>
+                <div class="card-body">
+                    <a href="{{ url_for('main.nueva_nc') }}" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> Registrar Nueva NC
+                    </a>
+                    <a href="{{ url_for('main.listar_nc') }}" class="btn btn-secondary">
+                        <i class="bi bi-list-ul"></i> Ver Todas las NC
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,240 @@
+// ============================================================
+// GeCO Lab — Config.gs
+// Configuración centralizada. Lee desde la hoja "Config" del
+// Spreadsheet. La API key SIEMPRE desde Script Properties.
+//
+// IMPORTANTE: copiar este archivo como Config.gs en Apps Script.
+// ============================================================
+
+const CONFIG_SHEET_NAME = 'Config';
+
+// Caché en memoria para la sesión (se invalida al recargar el script)
+let _configCache = null;
+
+// ------------------------------------------------------------------
+// Carga interna
+// ------------------------------------------------------------------
+
+/**
+ * Carga todos los parámetros desde la hoja Config (columnas A=clave, B=valor).
+ * Si la hoja no existe o está vacía, usa Script Properties como fallback.
+ * @returns {Object} mapa { clave: valor }
+ */
+function _cargarConfig() {
+  if (_configCache) return _configCache;
+
+  const cache = {};
+
+  // 1. Leer desde hoja Config
+  try {
+    const ss   = SpreadsheetApp.getActiveSpreadsheet();
+    const hoja = ss.getSheetByName(CONFIG_SHEET_NAME);
+
+    if (hoja && hoja.getLastRow() > 1) {
+      const filas = hoja.getRange(2, 1, hoja.getLastRow() - 1, 2).getValues();
+      filas.forEach(function(f) {
+        const clave = String(f[0]).trim();
+        const valor = f[1];
+        if (clave && clave !== '') cache[clave] = valor;
+      });
+    }
+  } catch (e) {
+    Logger.log('[Config] Error leyendo hoja Config: ' + e.message);
+  }
+
+  // 2. Fallback: Script Properties para claves no encontradas en la hoja
+  try {
+    const props = PropertiesService.getScriptProperties().getProperties();
+    Object.keys(props).forEach(function(k) {
+      if (!(k in cache)) cache[k] = props[k];
+    });
+  } catch (e) {
+    Logger.log('[Config] Error leyendo Script Properties: ' + e.message);
+  }
+
+  _configCache = cache;
+  return cache;
+}
+
+/** Fuerza recarga en la próxima llamada (útil si el evaluador edita la hoja Config). */
+function invalidarConfigCache() {
+  _configCache = null;
+  Logger.log('[Config] Caché invalidado.');
+}
+
+// ------------------------------------------------------------------
+// Getters tipados — usar siempre estas funciones, nunca leer la hoja
+// directamente desde otros archivos .gs
+// ------------------------------------------------------------------
+
+/**
+ * ID del Spreadsheet principal.
+ * Fallback: el spreadsheet activo (siempre disponible en ejecución manual).
+ */
+function getSpreadsheetId() {
+  const cfg = _cargarConfig();
+  if (cfg['SPREADSHEET_ID'] && String(cfg['SPREADSHEET_ID']).trim() !== '') {
+    return String(cfg['SPREADSHEET_ID']).trim();
+  }
+  return SpreadsheetApp.getActiveSpreadsheet().getId();
+}
+
+/**
+ * ID de la carpeta Drive del cliente.
+ * Lanza error si no está configurada (es requerida).
+ */
+function getDriveFolderId() {
+  const cfg = _cargarConfig();
+  const val = cfg['DRIVE_FOLDER_ID'];
+  if (!val || String(val).trim() === '') {
+    throw new Error('DRIVE_FOLDER_ID no está configurado. Completalo en la hoja Config.');
+  }
+  return String(val).trim();
+}
+
+/**
+ * API key de Claude.
+ * NUNCA se guarda en la hoja Config (riesgo de seguridad).
+ * Solo se lee desde Script Properties.
+ */
+function getClaudeApiKey() {
+  const key = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
+  if (!key || key.trim() === '') {
+    throw new Error('CLAUDE_API_KEY no configurada. Ir a Apps Script → Configuración del proyecto → Propiedades del script.');
+  }
+  return key.trim();
+}
+
+/** Modelo de Claude a usar en las llamadas a la API. */
+function getClaudeModel() {
+  const cfg = _cargarConfig();
+  return String(cfg['CLAUDE_MODEL'] || 'claude-sonnet-4-5-20251022').trim();
+}
+
+/** Nombre del cliente (se usa en mails y reportes). */
+function getNombreCliente() {
+  const cfg = _cargarConfig();
+  return String(cfg['NOMBRE_CLIENTE'] || 'Organización').trim();
+}
+
+/** Norma ISO de referencia (contextualiza el prompt de Claude). */
+function getNormaAplicable() {
+  const cfg = _cargarConfig();
+  return String(cfg['NORMA_APLICABLE'] || 'ISO 9001:2015').trim();
+}
+
+/**
+ * Umbrales de calificación como objeto numérico.
+ * Siempre retorna defaults seguros si los valores no están configurados.
+ * @returns {{ excelente: number, bueno: number, regular: number }}
+ */
+function getUmbralesEscala() {
+  const cfg = _cargarConfig();
+  return {
+    excelente: Number(cfg['UMBRAL_EXCELENTE']) || 75,
+    bueno:     Number(cfg['UMBRAL_BUENO'])     || 60,
+    regular:   Number(cfg['UMBRAL_REGULAR'])   || 40,
+  };
+}
+
+// ============================================================
+// INSTRUCCIÓN: Agregar al archivo Config.gs existente.
+// Son adiciones puras — no reemplazás nada.
+//
+// PASO A — Agregar el getter (después de getNormaAplicable()):
+//   Copiar el bloque de código de abajo y pegarlo en Config.gs
+//   inmediatamente después de la función getNormaAplicable().
+//
+// PASO B — Agregar la clave en la hoja "Config" del Spreadsheet:
+//   Abrir la hoja "Config" y agregar una fila nueva con:
+//     Columna A (clave): CONTEXTO_ORGANIZACIONAL
+//     Columna B (valor): [texto descriptivo de la organización]
+//
+//   Ejemplo para FCEFyN:
+//     Secretaría de Extensión de la Facultad de Ciencias Exactas,
+//     Físicas y Naturales (FCEFyN - UNC). Organización académica
+//     con sistema de gestión de calidad ISO 9001:2015. Personal
+//     orientado a la gestión universitaria, administración,
+//     extensión al medio y soporte técnico-científico.
+//
+//   Si se deja vacío, Claude generará la rúbrica igual,
+//   usando solo el nombre de la competencia y el puesto.
+// ============================================================
+
+/** Contexto organizacional para enriquecer la generación de rúbricas
+ * conductuales. Describe el tipo de organización, rubro y
+ * particularidades relevantes para contextualizar los comportamientos
+ * esperados por puesto.
+ *
+ * Configurar en hoja Config: clave = CONTEXTO_ORGANIZACIONAL
+ * Si está vacío, Claude trabaja solo con competencia + puesto.
+ *
+ * @returns {string}
+ */
+function getContextoOrganizacional() {
+  const cfg = _cargarConfig();
+  return String(cfg['CONTEXTO_ORGANIZACIONAL'] || '').trim();
+}
+
+/**
+ * Calcula la escala textual a partir de un puntaje porcentual.
+ * Lee los umbrales desde la hoja Config (configurables por cliente).
+ * @param {number} pct — valor entre 0 y 100
+ * @returns {string} 'Excelente' | 'Bueno' | 'Regular' | 'Insuficiente'
+ */
+function calcularEscala(pct) {
+  const u = getUmbralesEscala();
+  if (pct >= u.excelente) return 'Excelente';
+  if (pct >= u.bueno)     return 'Bueno';
+  if (pct >= u.regular)   return 'Regular';
+  return 'Insuficiente';
+}
+
+/**
+ * Indica si una escala requiere la creación de un plan de acción.
+ * @param {string} escala
+ * @returns {boolean}
+ */
+function requierePlanAccion(escala) {
+  return escala === 'Regular' || escala === 'Insuficiente';
+}
+
+/**
+ * Lector genérico con valor default.
+ * Usar para parámetros futuros sin necesitar un getter específico.
+ * @param {string} clave
+ * @param {*} defaultVal
+ * @returns {*}
+ */
+function getConfigParam(clave, defaultVal) {
+  const cfg = _cargarConfig();
+  const val = cfg[clave];
+  return (val !== undefined && String(val).trim() !== '') ? val : defaultVal;
+}
+
+// ------------------------------------------------------------------
+// Función de diagnóstico — ejecutar manualmente para verificar config
+// ------------------------------------------------------------------
+
+/**
+ * Imprime en el Logger todos los parámetros cargados.
+ * NO imprime la API key por seguridad.
+ */
+function diagnosticarConfig() {
+  invalidarConfigCache();
+  const cfg = _cargarConfig();
+
+  Logger.log('=== GeCO Lab — Diagnóstico de configuración ===');
+  Logger.log('Spreadsheet ID : ' + getSpreadsheetId());
+  Logger.log('Drive Folder ID: ' + (cfg['DRIVE_FOLDER_ID'] || '⚠️ NO CONFIGURADO'));
+  Logger.log('Modelo Claude  : ' + getClaudeModel());
+  Logger.log('Cliente        : ' + getNombreCliente());
+  Logger.log('Norma          : ' + getNormaAplicable());
+
+  const u = getUmbralesEscala();
+  Logger.log('Umbrales       : Excelente≥' + u.excelente + '% | Bueno≥' + u.bueno + '% | Regular≥' + u.regular + '%');
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
+  Logger.log('API Key Claude : ' + (apiKey ? '✅ Configurada (' + apiKey.substring(0,8) + '...)' : '❌ NO CONFIGURADA'));
+  Logger.log('=== Fin diagnóstico ===');
+}

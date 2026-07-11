@@ -1,0 +1,40 @@
+# Framework web
+Flask>=3.0.0
+Werkzeug>=3.0.1
+
+# Base de datos
+Flask-SQLAlchemy>=3.1.1
+SQLAlchemy>=2.0.35
+
+# Migraciones de base de datos (opcional, recomendado para producción)
+Flask-Migrate>=4.0.5
+alembic>=1.13.0
+
+# Formularios y validación
+Flask-WTF==1.2.1
+WTForms==3.1.1
+
+# Autenticación (para futuras mejoras)
+Flask-Login==0.6.3
+Flask-Bcrypt==1.0.1
+
+# Variables de entorno
+python-dotenv==1.0.0
+
+# Utilidades
+click==8.1.7
+itsdangerous==2.1.2
+Jinja2==3.1.2
+MarkupSafe==2.1.3
+
+# Formato y exportación de datos (para futuras mejoras)
+openpyxl==3.1.2
+python-dateutil==2.8.2
+
+# Desarrollo y testing
+pytest==7.4.3
+pytest-flask==1.3.0
+coverage==7.3.3
+
+# WSGI server para producción
+gunicorn==21.2.0

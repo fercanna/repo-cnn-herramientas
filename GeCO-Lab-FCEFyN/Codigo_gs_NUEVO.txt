@@ -1,0 +1,522 @@
+// ============================================================
+// GeCO Lab — Codigo.gs v3
+// CAMBIOS respecto a v2:
+//   • generarEvaluacion() acepta params.personas[] (array) en lugar
+//     de params.persona (singular). Soporta selección múltiple.
+//   • Modo autónomo multi: genera 1 Form compartido, registra 1 fila
+//     por persona en Registro_Competencias, crea 1 borrador a todos.
+//   • Modo presencial multi: registra 1 fila por persona.
+//   • Propaga nivelEsperado de la competencia a registrarEvaluacionInicial().
+//   • Mantiene compatibilidad descendente con formato anterior (Fase 1–3).
+// ============================================================
+
+// ------------------------------------------------------------------
+// MENÚ PRINCIPAL
+// ------------------------------------------------------------------
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('🧪 GeCO Lab')
+    .addItem('📝 Generar evaluación',              'abrirDialogoEvaluacion')
+    .addItem('✏️ Registrar evaluación presencial',  'abrirDialogoPresencial')
+    .addItem('📋 Gestionar competencias',           'abrirDialogoCompetencias')
+    .addItem('🚨 Ver planes de acción',             'abrirDialogoAcciones')
+    .addSeparator()
+    .addItem('📊 Dashboard (vista interactiva)',   'abrirDialogoDashboard')
+    .addItem('🔄 Actualizar hoja Dashboard',       'actualizarDashboard')
+    .addSeparator()
+    .addItem('📑 Ver registro de competencias',    'irARegistro')
+    .addItem('👥 Gestionar personas',              'irAPersonas')
+    .addItem('⚙️ Configuración',                   'irAConfig')
+    .addSeparator()
+    .addItem('🛠️ Inicializar/actualizar hojas',    'setupCompleto')
+    .addSeparator()
+    .addSubMenu(crearSubmenuDiagnostico())
+    .addToUi();
+}
+
+// ------------------------------------------------------------------
+// NAVEGACIÓN
+// ------------------------------------------------------------------
+
+function irARegistro()    { _irAHoja('Registro_Competencias'); }
+function irAPlanAcciones(){ _irAHoja('Plan_Acciones'); }
+function irAPersonas()    { _irAHoja('Personas'); }
+function irAConfig()      { _irAHoja('Config'); }
+
+function _irAHoja(nombre) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = ss.getSheetByName(nombre);
+  if (hoja) {
+    ss.setActiveSheet(hoja);
+  } else {
+    SpreadsheetApp.getUi().alert(
+      'No se encontró la hoja "' + nombre + '".\n' +
+      'Ejecutá GeCO Lab → Inicializar/actualizar hojas.'
+    );
+  }
+}
+
+// ------------------------------------------------------------------
+// DIÁLOGOS HTML
+// ------------------------------------------------------------------
+
+function abrirDialogoEvaluacion() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoEvaluacion')
+    .setWidth(600).setHeight(640);
+  SpreadsheetApp.getUi().showModalDialog(html, '📝 Generar nueva evaluación');
+}
+
+function abrirDialogoCompetencias() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoCompetencias')
+    .setWidth(900).setHeight(640);
+  SpreadsheetApp.getUi().showModalDialog(html, '📋 Gestionar competencias');
+}
+
+function abrirDialogoAcciones() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoAcciones')
+    .setWidth(900).setHeight(620);
+  SpreadsheetApp.getUi().showModalDialog(html, '🚨 Planes de acción');
+}
+
+function abrirDialogoDashboard() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoDashboard')
+    .setWidth(1000).setHeight(700);
+  SpreadsheetApp.getUi().showModalDialog(html, '📊 GeCO Lab — Dashboard');
+}
+
+function abrirDialogoConsulta() {
+  SpreadsheetApp.getUi().alert(
+    'El módulo de consulta documental está en pausa.\n' +
+    'Requiere implementación RAG para ser viable en producción.\n' +
+    'Se retoma en la segunda etapa del proyecto.'
+  );
+}
+
+// ------------------------------------------------------------------
+// GETTERS PARA LOS DIÁLOGOS HTML
+// ------------------------------------------------------------------
+
+function getPersonas() {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = ss.getSheetByName('Personas');
+  if (!hoja || hoja.getLastRow() < 2) return [];
+
+  const datos = hoja.getDataRange().getValues();
+  const out   = [];
+
+  for (let i = 1; i < datos.length; i++) {
+    const activo = datos[i][5];
+    if (activo === true || activo === 'TRUE' || activo === 'Sí') {
+      out.push({
+        idPersona: String(datos[i][0] || '').trim(),
+        nombre:    String(datos[i][1] || '').trim(),
+        mail:      String(datos[i][2] || '').trim(),
+        puesto:    String(datos[i][3] || '').trim(),
+        area:      String(datos[i][4] || '').trim()
+      });
+    }
+  }
+  return out;
+}
+
+function getDocumentosDrive() {
+  try {
+    return listarDocumentosCarpeta();
+  } catch (e) {
+    Logger.log('[Codigo] getDocumentosDrive error: ' + e.message);
+    return [{ id: 'error', nombre: 'Error: ' + e.message }];
+  }
+}
+
+// ------------------------------------------------------------------
+// FLUJO PRINCIPAL — GENERAR EVALUACIÓN
+// ------------------------------------------------------------------
+
+/**
+ * Genera la evaluación para una o múltiples personas.
+ *
+ * FORMATO v3 (nuevo, desde DialogoEvaluacion v3):
+ *   params.personas[]   — array de {idPersona, nombre, mail, puesto, area}
+ *   params.competencia  — {idCompetencia, dominio, categoria, naturaleza,
+ *                          criticidad, driveId, driveNombre, frecuenciaMeses, nivelEsperado}
+ *   params.cantidad     — número de preguntas
+ *   params.modo         — 'autonomo' | 'presencial'
+ *
+ * FORMATO LEGADO (Fase 1–3, sigue funcionando):
+ *   params.persona      — objeto singular
+ *   params.personas     — array (Fase 4 anterior, sin nivelEsperado)
+ *   params.docs[]
+ *
+ * @returns {Object} { ok, formUrl?, idEvaluacion?, error? }
+ */
+function generarEvaluacion(params) {
+  try {
+    // ── Normalizar personas ──────────────────────────────────────
+    var personas;
+    var comp;
+    var docs;
+
+    if (params.personas && Array.isArray(params.personas) && params.personas.length > 0) {
+      // NUEVO v3: array de personas
+      personas = params.personas;
+      comp     = params.competencia || {};
+
+      if (comp.driveId) {
+        var ids     = comp.driveId.split('|').map(function(s) { return s.trim(); }).filter(Boolean);
+        var nombres = (comp.driveNombre || comp.dominio).split('|').map(function(s) { return s.trim(); });
+        docs = ids.map(function(id, i) {
+          return { id: id, nombre: nombres[i] || comp.dominio };
+        });
+      } else {
+        docs = [];
+      }
+
+    } else if (params.persona) {
+      // Fase 4 singular
+      personas = [params.persona];
+      comp     = params.competencia || {};
+      if (comp.driveId) {
+        var ids2     = comp.driveId.split('|').map(function(s) { return s.trim(); }).filter(Boolean);
+        var nombres2 = (comp.driveNombre || comp.dominio).split('|').map(function(s) { return s.trim(); });
+        docs = ids2.map(function(id, i) { return { id: id, nombre: nombres2[i] || comp.dominio }; });
+      } else { docs = []; }
+
+    } else {
+      // LEGADO Fase 1–3
+      const pri = (params.personas || [])[0] || {};
+      personas = [{
+        idPersona: pri.idPersona || '',
+        nombre:    pri.nombre    || '',
+        mail:      pri.mail      || '',
+        puesto:    pri.puesto    || pri.area || '',
+        area:      pri.area      || ''
+      }];
+      comp = {
+        idCompetencia: '',
+        dominio:       (params.docs || []).map(function(d) { return d.nombre; }).join(', '),
+        categoria: '', naturaleza: '', criticidad: '',
+        driveId: '', driveNombre: '', nivelEsperado: ''
+      };
+      docs = params.docs || [];
+    }
+
+    if (!personas || personas.length === 0) return { ok: false, error: 'No se recibieron personas.' };
+
+    const cantidad = Number(params.cantidad) || 5;
+    const modo     = (params.modo || 'autonomo').toLowerCase();
+    const puesto   = personas[0].puesto || personas[0].area || 'Personal';
+
+    if (modo === 'autonomo' && docs.length === 0) {
+      return { ok: false, error: 'Modo autónomo requiere al menos un documento Drive.' };
+    }
+
+    const nombresDocumentos = docs.map(function(d) { return d.nombre; }).join(', ')
+                           || comp.dominio || '—';
+
+    // ── ID de evaluación (base, se personaliza por persona si hay muchas) ──
+    const ahora      = new Date();
+    const fechaStamp = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+
+    // ── Modo presencial sin documento: registrar directamente ────
+    if (modo === 'presencial' && docs.length === 0) {
+      return _procesarModoPresencial({
+        personas:          personas,
+        docs:              [],
+        todasLasPreguntas: [],
+        nombresDocumentos: nombresDocumentos,
+        competencia:       comp,
+        puesto:            puesto,
+        ahora:             ahora,
+        fechaStamp:        fechaStamp
+      });
+    }
+
+    // ── Generar preguntas con Claude ─────────────────────────────
+    var todasLasPreguntas = [];
+
+    for (var i = 0; i < docs.length; i++) {
+      var doc = docs[i];
+      try {
+        var texto       = leerTextoDeArchivo(doc.id);
+        var cantidadDoc = docs.length === 1
+          ? cantidad
+          : Math.max(2, Math.round(cantidad / docs.length));
+        var preguntas   = generarPreguntasDesdeTexto(texto, puesto, doc.nombre, cantidadDoc);
+        todasLasPreguntas = todasLasPreguntas.concat(preguntas);
+      } catch (docErr) {
+        Logger.log('[Codigo] Error procesando "' + doc.nombre + '": ' + docErr.message);
+        return { ok: false, error: 'Error al procesar "' + doc.nombre + '": ' + docErr.message };
+      }
+    }
+
+    if (todasLasPreguntas.length === 0) {
+      return { ok: false, error: 'No se pudieron generar preguntas. Revisá el documento.' };
+    }
+
+    // ── Modo presencial con documento ────────────────────────────
+    if (modo === 'presencial') {
+      return _procesarModoPresencial({
+        personas:          personas,
+        docs:              docs,
+        todasLasPreguntas: todasLasPreguntas,
+        nombresDocumentos: nombresDocumentos,
+        competencia:       comp,
+        puesto:            puesto,
+        ahora:             ahora,
+        fechaStamp:        fechaStamp
+      });
+    }
+
+    // ── Modo autónomo: crear UN Form compartido ──────────────────
+    const tituloForm = docs.length === 1 ? docs[0].nombre : nombresDocumentos;
+    const form       = FormApp.create(tituloForm);
+    form.setDescription('Evaluación GeCO Lab — ' + puesto);
+    form.setCollectEmail(false);
+    form.setShowLinkToRespondAgain(false);
+
+    if (docs.length > 1) {
+      var docActual = null;
+      todasLasPreguntas.forEach(function(p) {
+        var docPregunta = p.documento || '';
+        if (docPregunta && docPregunta !== docActual) {
+          form.addSectionHeaderItem().setTitle(docPregunta);
+          docActual = docPregunta;
+        }
+        _agregarPreguntaAlForm(form, p);
+      });
+    } else {
+      todasLasPreguntas.forEach(function(p) { _agregarPreguntaAlForm(form, p); });
+    }
+
+    const formUrl     = form.getPublishedUrl();
+    const formEditUrl = form.getEditUrl();
+    const formId      = form.getId();
+
+    // Mover Form a carpeta Drive
+    try {
+      const folder = DriveApp.getFolderById(getDriveFolderId());
+      DriveApp.getFileById(formId).moveTo(folder);
+    } catch (moveErr) {
+      Logger.log('[Codigo] No se pudo mover el Form: ' + moveErr.message);
+    }
+
+    // Instalar trigger
+    instalarTriggerForm(formId);
+
+    const ss       = SpreadsheetApp.getActiveSpreadsheet();
+    const fechaStr = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+    var hojaClaves = ss.getSheetByName('Claves_Evaluacion');
+    if (!hojaClaves) {
+      hojaClaves = ss.insertSheet('Claves_Evaluacion');
+      hojaClaves.appendRow(['FormID','ID_Evaluacion','N°_Pregunta','Enunciado',
+                            'Resp_Correcta','Justificación','Doc_Fuente','Fecha','Modo']);
+    }
+
+    // ── Registrar 1 fila por persona ─────────────────────────────
+    var primeraIdEvaluacion = '';
+
+    personas.forEach(function(persona, idx) {
+      var apellido = persona.nombre.split(' ').pop().toUpperCase()
+                      .replace(/[^A-ZÁÉÍÓÚÑ]/g, '').substring(0, 8);
+      var idEvaluacion = 'EVAL-' + fechaStamp + '-' + apellido +
+                         (personas.length > 1 ? '-' + (idx + 1) : '');
+      if (idx === 0) primeraIdEvaluacion = idEvaluacion;
+
+      // Guardar claves (solo una vez, referenciando el form y el primer ID)
+      if (idx === 0) {
+        todasLasPreguntas.forEach(function(p, qi) {
+          hojaClaves.appendRow([
+            formId, idEvaluacion, qi + 1, p.enunciado, p.correcta,
+            p.justificacion || '', p.documento || nombresDocumentos, fechaStr, 'autonomo'
+          ]);
+        });
+      }
+
+      registrarEvaluacionInicial({
+        persona: {
+          nombre:    persona.nombre,
+          mail:      persona.mail,
+          area:      persona.area,
+          puesto:    persona.puesto || puesto,
+          idPersona: persona.idPersona || ''
+        },
+        competencia: {
+          idCompetencia:  comp.idCompetencia || '',
+          dominio:        comp.dominio       || nombresDocumentos,
+          categoria:      comp.categoria     || '',
+          criticidad:     comp.criticidad    || '',
+          nivelEsperado:  comp.nivelEsperado || ''
+        },
+        evaluacion: {
+          idEvaluacion: idEvaluacion,
+          documento:    nombresDocumentos,
+          driveId:      docs.map(function(d) { return d.id; }).join('|'),
+          modo:         'Autónomo',
+          nroPreguntas: todasLasPreguntas.length,
+          evaluador:    Session.getActiveUser().getEmail(),
+          formUrl:      formUrl,
+          formEditUrl:  formEditUrl
+        }
+      });
+    });
+
+    // ── Borrador de Gmail (a todas las personas) ─────────────────
+    var mailsEvaluados  = personas.map(function(p) { return p.mail; }).filter(Boolean).join(', ');
+    var nombresEvaluados = personas.map(function(p) { return p.nombre; }).join(', ');
+    _crearBorradorGmail(mailsEvaluados, nombresEvaluados, nombresDocumentos,
+                        todasLasPreguntas.length, formUrl, 'autonomo');
+
+    var tipoEval = params.transversal ? 'TRANSVERSAL' : 'autónoma';
+    Logger.log('[Codigo] Evaluación ' + tipoEval + ' generada — Form: ' + formId +
+               ' | ' + personas.length + ' persona(s) | Dominio: ' + (comp.dominio || '—') +
+               ' | Comp: ' + (comp.idCompetencia || 'sin ID'));
+
+    return { ok: true, formUrl: formUrl, formEditUrl: formEditUrl, idEvaluacion: primeraIdEvaluacion };
+
+  } catch (e) {
+    Logger.log('[Codigo] generarEvaluacion() ERROR: ' + e.message + '\n' + e.stack);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ------------------------------------------------------------------
+// MODO PRESENCIAL
+// ------------------------------------------------------------------
+
+function _procesarModoPresencial(ctx) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const comp = ctx.competencia || {};
+
+  var primeraIdEvaluacion = '';
+
+  ctx.personas.forEach(function(persona, idx) {
+    var apellido = persona.nombre.split(' ').pop().toUpperCase()
+                    .replace(/[^A-ZÁÉÍÓÚÑ]/g, '').substring(0, 8);
+    var idEvaluacion = 'EVAL-' + ctx.fechaStamp + '-' + apellido +
+                       (ctx.personas.length > 1 ? '-' + (idx + 1) : '');
+    if (idx === 0) primeraIdEvaluacion = idEvaluacion;
+
+    registrarEvaluacionInicial({
+      persona: {
+        nombre:    persona.nombre,
+        mail:      persona.mail,
+        area:      persona.area,
+        puesto:    persona.puesto || ctx.puesto || '',
+        idPersona: persona.idPersona || ''
+      },
+      competencia: {
+        idCompetencia: comp.idCompetencia || '',
+        dominio:       comp.dominio       || ctx.nombresDocumentos,
+        categoria:     comp.categoria     || '',
+        criticidad:    comp.criticidad    || '',
+        nivelEsperado: comp.nivelEsperado || ''
+      },
+      evaluacion: {
+        idEvaluacion: idEvaluacion,
+        documento:    ctx.nombresDocumentos,
+        driveId:      (ctx.docs || []).map(function(d) { return d.id; }).join('|'),
+        modo:         'Presencial',
+        nroPreguntas: (ctx.todasLasPreguntas || []).length,
+        evaluador:    Session.getActiveUser().getEmail(),
+        formUrl:      '',
+        formEditUrl:  ''
+      }
+    });
+  });
+
+  var mailsEvaluados   = ctx.personas.map(function(p) { return p.mail; }).filter(Boolean).join(', ');
+  var nombresEvaluados = ctx.personas.map(function(p) { return p.nombre; }).join(', ');
+  _crearBorradorGmail(mailsEvaluados, nombresEvaluados, ctx.nombresDocumentos,
+                      (ctx.todasLasPreguntas || []).length, '', 'presencial');
+
+  Logger.log('[Codigo] Presencial registrada — ' + ctx.personas.length + ' persona(s) | Comp: ' +
+             (comp.idCompetencia || 'sin ID'));
+
+  // Abrir diálogo de corrección (solo si es 1 persona)
+  if (ctx.personas.length === 1) {
+    Utilities.sleep(500);
+    abrirDialogoPresencialParaEval(primeraIdEvaluacion);
+  }
+
+  return { ok: true, idEvaluacion: primeraIdEvaluacion, modo: 'presencial' };
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+function _agregarPreguntaAlForm(form, p) {
+  var item = form.addMultipleChoiceItem();
+  item.setTitle(p.enunciado);
+  item.setRequired(true);
+  item.setChoices(p.opciones.map(function(op) { return item.createChoice(op); }));
+}
+
+/**
+ * Crea un borrador de Gmail con el link a la evaluación.
+ * No envía — el evaluador revisa y envía manualmente.
+ */
+function _crearBorradorGmail(mails, nombres, documentos, nroPreguntas, formUrl, modo) {
+  try {
+    const asunto = 'Evaluación GeCO — ' + nombres + (nroPreguntas > 0 ? ' (' + nroPreguntas + ' preguntas)' : '');
+
+    var cuerpoHtml =
+      '<html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;">' +
+      '<p>Hola,</p>';
+
+    if (modo === 'presencial' || !formUrl) {
+      cuerpoHtml +=
+        '<p>Se ha registrado una <strong>evaluación presencial</strong> sobre: ' +
+        '<strong>' + documentos + '</strong>.</p>' +
+        '<p>El evaluador coordinará la fecha y modalidad de la evaluación.</p>';
+    } else {
+      cuerpoHtml +=
+        '<p>Tu evaluación está lista. Hacé clic en el link para completarla:</p>' +
+        '<p><a href="' + formUrl + '" style="color:#1a73e8;font-weight:600;">' +
+        'Acceder a la evaluación →</a></p>';
+    }
+
+    cuerpoHtml +=
+      '<p style="color:#888;font-size:12px;margin-top:16px;">' +
+      'Documento(s): ' + documentos +
+      (nroPreguntas > 0 ? ' &nbsp;|&nbsp; Preguntas: ' + nroPreguntas : '') +
+      ' &nbsp;|&nbsp; Modo: ' + (modo === 'presencial' ? 'Presencial' : 'Autónomo') +
+      '</p></body></html>';
+
+    GmailApp.createDraft(mails || Session.getActiveUser().getEmail(), asunto, '', {
+      htmlBody: cuerpoHtml,
+      charset:  'UTF-8'
+    });
+
+  } catch (e) {
+    Logger.log('[Codigo] Error creando borrador Gmail: ' + e.message);
+  }
+}
+
+// ------------------------------------------------------------------
+// WEB APP
+// ------------------------------------------------------------------
+
+function doGet() {
+  return HtmlService.createHtmlOutput(
+    '<h2>GeCO Lab</h2><p>Accedé al sistema desde el menú del Spreadsheet.</p>'
+  ).setTitle('GeCO Lab');
+}
+
+// ------------------------------------------------------------------
+// DASHBOARD
+// ------------------------------------------------------------------
+
+function actualizarDashboard() {
+  try {
+    escribirDashboardEnHoja();
+    SpreadsheetApp.getUi().alert(
+      '✅ Dashboard actualizado.\n\n' +
+      'Para una vista interactiva en tiempo real:\nGeCO Lab → Dashboard (vista interactiva)'
+    );
+  } catch (e) {
+    Logger.log('[Codigo] actualizarDashboard error: ' + e.message);
+    SpreadsheetApp.getUi().alert('❌ Error al actualizar el Dashboard:\n' + e.message);
+  }
+}

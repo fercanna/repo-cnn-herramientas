@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 18px; margin: 0; background: #f8f9fa; font-size: 14px; }
+    h2 { margin: 0 0 4px; color: #c62828; font-size: 17px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; font-size: 13px; }
+    select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 13px; background: #fff;
+    }
+    textarea { resize: vertical; min-height: 65px; }
+    select:focus, textarea:focus { outline: none; border-color: #ea4335; box-shadow: 0 0 0 2px #fce8e6; }
+
+    /* Lista de items de la recepción seleccionada */
+    #detalleRecepcion { display: none; margin: 10px 0; }
+
+    .rec-info {
+      background: #fff3e0; border-left: 5px solid #fb8c00;
+      padding: 10px 14px; border-radius: 4px; margin-bottom: 10px; font-size: 13px;
+    }
+    .rec-info .campo { margin-bottom: 3px; }
+    .rec-info .campo span { color: #5f6368; margin-right: 4px; }
+
+    .items-list { border: 1px solid #ddd; border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+    .items-list-header {
+      display: grid; grid-template-columns: 1fr 70px 100px 90px;
+      gap: 8px; padding: 6px 12px;
+      background: #f1f3f4; font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase;
+    }
+    .items-list-row {
+      display: grid; grid-template-columns: 1fr 70px 100px 90px;
+      gap: 8px; padding: 8px 12px;
+      border-top: 1px solid #f1f3f4; font-size: 13px;
+    }
+    .items-list-row .cod { font-size: 11px; color: #888; margin-top: 2px; }
+    .items-list-row .cant { font-weight: bold; color: #1F4E79; }
+    .items-list-row .lote { font-size: 12px; color: #5f6368; }
+
+    .advertencia {
+      background: #fce8e6; border: 1px solid #ef9a9a;
+      border-radius: 6px; padding: 12px 14px;
+      font-size: 13px; color: #b71c1c; margin: 10px 0;
+    }
+    .advertencia strong { display: block; margin-bottom: 4px; }
+
+    .actions { display: flex; gap: 8px; margin-top: 18px; }
+    .btn { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+    .btn-danger    { background: #ea4335; color: white; }
+    .btn-danger:hover  { background: #c62828; }
+    .btn-danger:disabled { background: #ef9a9a; cursor: not-allowed; }
+    .btn-secondary { background: #e8eaed; color: #3c4043; }
+
+    .message { padding: 10px 14px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .loading { display: none; text-align: center; padding: 20px; color: #ea4335; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>↩️ Cancelar Recepción</h2>
+  <p class="subtitle">Revierte el ingreso a stock. Se crean movimientos de anulación para trazabilidad.</p>
+
+  <div id="message" class="message"></div>
+
+  <div id="formContent">
+    <div class="form-group">
+      <label for="recSelect">Seleccionar Recepción a anular *</label>
+      <select id="recSelect" onchange="onRecepcionChange()">
+        <option value="">⏳ Cargando...</option>
+      </select>
+    </div>
+
+    <div id="detalleRecepcion">
+      <div class="rec-info">
+        <div class="campo"><span>OC asociada:</span><strong id="dOrden">—</strong></div>
+        <div class="campo"><span>Proveedor:</span><span id="dProv">—</span></div>
+        <div class="campo"><span>Fecha:</span><span id="dFecha">—</span></div>
+        <div class="campo"><span>Recibido por:</span><span id="dRec">—</span></div>
+      </div>
+
+      <strong style="font-size: 13px; color: #333; display:block; margin-bottom:6px;">Ítems que se revertirán del stock:</strong>
+      <div class="items-list">
+        <div class="items-list-header">
+          <span>Insumo</span>
+          <span style="text-align:center">Cant.</span>
+          <span>Lote</span>
+          <span>Vencimiento</span>
+        </div>
+        <div id="itemsRecepcion"></div>
+      </div>
+
+      <div class="advertencia">
+        <strong>⚠️ Esta acción revertirá el stock</strong>
+        Las cantidades ingresadas serán descontadas de Stock_Actual.
+        La OC asociada volverá al estado anterior (Pendiente o Parcial).
+        Los movimientos originales <em>no</em> se eliminan — se crean contrapartidas para auditoría.
+      </div>
+
+      <div class="form-group">
+        <label for="motivo">Motivo de anulación *</label>
+        <textarea id="motivo" placeholder="Ej: Se recepcionó por error / Insumo devuelto al proveedor / Datos incorrectos en el ingreso..."></textarea>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-danger" id="btnAnular" onclick="confirmarAnulacion()" disabled>
+        ↩️ Anular esta Recepción
+      </button>
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar sin anular</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Anulando recepción y revirtiendo stock...</div>
+
+  <script>
+    let recepciones = [];
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(function(data) {
+          recepciones = data;
+          const sel = document.getElementById('recSelect');
+          if (!data || data.length === 0) {
+            sel.innerHTML = '<option value="">— Sin recepciones activas —</option>';
+            return;
+          }
+          sel.innerHTML = '<option value="">— Seleccioná una recepción —</option>' +
+            data.map(function(rec) {
+              return '<option value="' + esc(rec.numero_recepcion) + '">' +
+                esc(rec.numero_recepcion) + ' — ' + esc(rec.proveedor) +
+                ' (' + esc(rec.fecha) + ')' +
+                '</option>';
+            }).join('');
+        })
+        .withFailureHandler(function(e) { mostrarMensaje('Error al cargar recepciones: ' + e.message, 'error'); })
+        .getRecepcionesActivas();
+    };
+
+    function onRecepcionChange() {
+      const num = document.getElementById('recSelect').value;
+      const rec = recepciones.find(function(r) { return r.numero_recepcion === num; });
+
+      const detalleEl = document.getElementById('detalleRecepcion');
+      const btnAnular = document.getElementById('btnAnular');
+
+      if (!rec) {
+        detalleEl.style.display = 'none';
+        btnAnular.disabled = true;
+        return;
+      }
+
+      document.getElementById('dOrden').textContent = rec.numero_orden;
+      document.getElementById('dProv').textContent  = rec.proveedor;
+      document.getElementById('dFecha').textContent = rec.fecha;
+      document.getElementById('dRec').textContent   = rec.recibido_por || '—';
+
+      const itemsEl = document.getElementById('itemsRecepcion');
+      if (rec.items && rec.items.length > 0) {
+        itemsEl.innerHTML = rec.items.map(function(it) {
+          return '<div class="items-list-row">' +
+            '<div><div>' + esc(it.descripcion) + '</div><div class="cod">' + esc(it.codigo_insumo) + '</div></div>' +
+            '<div class="cant" style="text-align:center">' + it.cantidad_recibida + '</div>' +
+            '<div class="lote">' + esc(it.lote) + '</div>' +
+            '<div class="lote">' + (it.vencimiento || '—') + '</div>' +
+            '</div>';
+        }).join('');
+      } else {
+        itemsEl.innerHTML = '<div style="padding:12px; color:#888;">Sin ítems</div>';
+      }
+
+      detalleEl.style.display = 'block';
+      btnAnular.disabled = false;
+    }
+
+    function confirmarAnulacion() {
+      const num    = document.getElementById('recSelect').value;
+      const motivo = document.getElementById('motivo').value.trim();
+
+      if (!num)    return mostrarMensaje('Seleccioná una recepción.', 'error');
+      if (!motivo) return mostrarMensaje('El motivo es obligatorio.', 'error');
+
+      const rec = recepciones.find(function(r) { return r.numero_recepcion === num; });
+      const confirmMsg = '¿Anular recepción ' + num + '?\n\nSe revertirán ' +
+        (rec ? rec.items.length : '?') + ' ítem(s) del stock.\nEsta acción queda registrada en los movimientos.';
+      if (!confirm(confirmMsg)) return;
+
+      document.getElementById('formContent').style.display = 'none';
+      document.getElementById('loading').style.display     = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          document.getElementById('loading').style.display = 'none';
+          if (result.ok) {
+            mostrarMensaje('✅ ' + result.mensaje, 'success');
+            setTimeout(function() { google.script.host.close(); }, 3000);
+          } else {
+            document.getElementById('formContent').style.display = 'block';
+            mostrarMensaje('❌ ' + result.mensaje, 'error');
+          }
+        })
+        .withFailureHandler(function(e) {
+          document.getElementById('loading').style.display     = 'none';
+          document.getElementById('formContent').style.display = 'block';
+          mostrarMensaje('❌ Error: ' + e.message, 'error');
+        })
+        .cancelarRecepcion(num, motivo);
+    }
+
+    function mostrarMensaje(texto, tipo) {
+      const el = document.getElementById('message');
+      el.textContent = texto;
+      el.className = 'message ' + tipo;
+      el.style.display = 'block';
+    }
+
+    function esc(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+        .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>

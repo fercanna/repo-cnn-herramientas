@@ -1,0 +1,579 @@
+/**
+ * CPR-CURF — Sistema de Gestión de Compras e Inventario
+ * Laboratorio de Microbiología — Virología y Bacteriología
+ * Versión: 2.6
+ *
+ * PARTES:
+ *   Parte 1 — Configuración, Auxiliares, Catálogos, Órdenes de Compra
+ *   Parte 2 — Recepciones, Stock e Inventario
+ *   Parte 3 — Dashboard, Stock por Proveedor, Precios
+ *   Parte 4 — Conversiones, Ajuste de Stock, Importar Stock Inicial
+ *   Parte 5 — Correcciones Operativas (v2.6): Editar/Cancelar OC, Recepción, Baja
+ *   Parte 6 — Utilidades de Setup y Reset
+ */
+
+// ========================================
+// CONFIGURACIÓN GLOBAL
+// ========================================
+
+const CONFIG = {
+  SHEETS: {
+    INSUMOS:             'Insumos',
+    PROVEEDORES:         'Proveedores',
+    ORDENES:             'Ordenes_Compra',
+    DETALLE_ORDENES:     'Detalle_Ordenes',
+    RECEPCIONES:         'Recepciones',
+    DETALLE_RECEPCIONES: 'Detalle_Recepciones',
+    MOVIMIENTOS:         'Movimientos_Inventario',
+    STOCK:               'Stock_Actual',
+    DASHBOARD:           'Dashboard',
+    CONVERSIONES:        'Config_Conversiones',
+    HIST_PRECIOS:        'Historial_Precios',
+    STOCK_PROV:          'Stock_por_Proveedor'
+  },
+  ESTADOS: {
+    ORDEN: {
+      PENDIENTE:    'Pendiente',
+      PARCIAL:      'Recepción Parcial',
+      RECEPCIONADA: 'Recepcionada',
+      CANCELADA:    'Cancelada'
+    },
+    ITEM: {
+      PENDIENTE: 'Pendiente',
+      PARCIAL:   'Parcial',
+      COMPLETO:  'Completo'
+    }
+  }
+};
+
+// ========================================
+// MENÚ PRINCIPAL
+// ========================================
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+
+  ui.createMenu('🛒 Gestión Compras')
+    .addItem('📝 Nueva Orden de Compra',              'mostrarFormularioOrden')
+    .addItem('🛒 Generar OC desde Stock',             'generarOrdenDesdeStock')
+    .addSeparator()
+    .addItem('📋 Ver Pendientes',                     'mostrarListaPendientes')
+    .addItem('📦 Recepcionar Pedido',                 'mostrarFormularioRecepcion')
+    .addSeparator()
+    .addItem('🔧 Ajuste de Stock',                    'mostrarFormularioAjusteStock')
+    .addSeparator()
+    .addItem('📊 Actualizar Dashboard',               'actualizarDashboard')
+    .addSeparator()
+    .addItem('⚙️ Gestionar Conversiones',             'mostrarFormularioConversiones')
+    .addItem('📈 Ver Historial Precios',              'mostrarHistorialPrecios')
+    .addSeparator()
+    .addItem('💲 Aplicar ajuste de precios',          'aplicarAjustePrecios')
+    .addItem('📋 Preparar columnas % en Proveedores', 'prepararColumnasPorcentaje')
+    .addItem('📦 Stock por Proveedor',                'actualizarStockPorProveedor')
+    .addSeparator()
+    .addItem('📥 Importar Stock Inicial',             'mostrarFormularioImportStock')
+    .addItem('🙈 Ocultar hojas internas',             'ocultarHojasInternas')
+    .addToUi();
+
+  ui.createMenu('✏️ Correcciones')
+    .addItem('📝 Editar Orden de Compra',             'mostrarFormularioEditarOC')
+    .addItem('🗑️ Cancelar Orden de Compra',           'mostrarFormularioCancelarOC')
+    .addSeparator()
+    .addItem('↩️ Cancelar Recepción',                 'mostrarFormularioCancelarRecepcion')
+    .addSeparator()
+    .addItem('↩️ Cancelar Baja de Consumo',           'mostrarFormularioCancelarBaja')
+    .addSeparator()
+    .addItem('🔴 Reset para producción',              'resetearParaProduccion')
+    .addToUi();
+}
+
+// ========================================
+// FUNCIONES AUXILIARES
+// ========================================
+
+function getSheet(sheetName) {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw new Error('No se encontró la hoja: ' + sheetName);
+  return sheet;
+}
+
+function getCurrentUser() {
+  return Session.getActiveUser().getEmail();
+}
+
+function formatearFecha(fecha) {
+  if (!fecha) return '';
+  return Utilities.formatDate(new Date(fecha), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+}
+
+function getDatosSheet(sheetName) {
+  const sheet   = getSheet(sheetName);
+  const data    = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  const headers = data[0];
+  return data.slice(1).map(function(row) {
+    const obj = {};
+    headers.forEach(function(header, index) { obj[header] = row[index]; });
+    return obj;
+  }).filter(function(row) {
+    return Object.values(row).some(function(val) { return val !== '' && val !== null; });
+  });
+}
+
+// ========================================
+// FUNCIONES DE CATÁLOGOS
+// ========================================
+
+function getInsumosActivos() {
+  return getDatosSheet(CONFIG.SHEETS.INSUMOS).filter(function(ins) {
+    return ins.activo === true || ins.activo === 'TRUE' || ins.activo === 'VERDADERO';
+  });
+}
+
+function getProveedoresActivos() {
+  return getDatosSheet(CONFIG.SHEETS.PROVEEDORES).filter(function(prov) {
+    return prov.activo === true || prov.activo === 'TRUE' || prov.activo === 'VERDADERO';
+  });
+}
+
+function getInsumosPorProveedor(codigoProveedor) {
+  // 1. Insumos activos del proveedor
+  const insumos = getInsumosActivos().filter(function(ins) {
+    return String(ins.proveedor_preferido).trim() === String(codigoProveedor).trim();
+  });
+
+  if (insumos.length === 0) return [];
+
+  // 2. Stock consolidado por insumo (suma todos los lotes)
+  const stockSheet      = getDatosSheet(CONFIG.SHEETS.STOCK);
+  const stockPorCodigo  = {};
+  stockSheet.forEach(function(row) {
+    const cod = String(row.codigo_insumo).trim();
+    if (!stockPorCodigo[cod]) stockPorCodigo[cod] = 0;
+    stockPorCodigo[cod] += Number(row.stock_disponible) || 0;
+  });
+
+  // 3. Construir resultado con estado de stock
+  const resultado = insumos.map(function(ins) {
+    const cod     = String(ins.codigo_insumo).trim();
+    const stock   = stockPorCodigo[cod] || 0;
+    const critico = Number(ins.stock_critico) || 0;
+    const estado  = stock <= 0 ? 'Agotado' : stock <= critico ? 'Crítico' : 'OK';
+
+    return {
+      codigo_insumo:      cod,
+      descripcion:        ins.descripcion,
+      categoria:          ins.categoria || 'Sin categoría',
+      unidad_medida:      ins.unidad_medida || '',
+      precio_referencial: Number(ins.precio_referencial) || 0,
+      stock_actual:       stock,
+      stock_critico:      critico,
+      estado_stock:       estado
+    };
+  });
+
+  // 4. Ordenar por categoría luego por descripción
+  resultado.sort(function(a, b) {
+    if (a.categoria < b.categoria) return -1;
+    if (a.categoria > b.categoria) return  1;
+    return a.descripcion.localeCompare(b.descripcion);
+  });
+
+  return resultado;
+}
+
+function getInsumo(codigoInsumo) {
+  return getDatosSheet(CONFIG.SHEETS.INSUMOS)
+    .find(function(ins) { return ins.codigo_insumo === codigoInsumo; });
+}
+
+function getProveedor(codigoProveedor) {
+  return getDatosSheet(CONFIG.SHEETS.PROVEEDORES)
+    .find(function(prov) { return prov.codigo_proveedor === codigoProveedor; });
+}
+
+// ========================================
+// MÓDULO: ÓRDENES DE COMPRA
+// ========================================
+
+function mostrarFormularioOrden() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioOrden')
+    .setWidth(800).setHeight(600)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Nueva Orden de Compra');
+}
+
+function generarNumeroOrden() {
+  const sheet   = getSheet(CONFIG.SHEETS.ORDENES);
+  const lastRow = sheet.getLastRow();
+  const anio    = new Date().getFullYear();
+  if (lastRow <= 1) return 'OC-' + anio + '-001';
+  const ultima  = sheet.getRange(lastRow, 1).getValue();
+  const numero  = parseInt(ultima.split('-')[2]) + 1;
+  return 'OC-' + anio + '-' + numero.toString().padStart(3, '0');
+}
+
+/**
+ * Crea una o más OC a partir de los datos del formulario.
+ * Si los ítems pertenecen a distintos proveedores, genera una OC por proveedor.
+ *
+ * @param {Object} ordenData
+ *   proveedor              {string}  — código del proveedor principal seleccionado
+ *   items                  {Array}   — [ { codigo_insumo, descripcion, cantidad, precio_unitario, subtotal } ]
+ *   fecha_entrega_estimada {string}
+ *   observaciones          {string}
+ *   solicitado_por         {string}
+ *
+ * @returns {string} Número de la primera OC creada
+ */
+function crearOrdenCompra(ordenData) {
+  try {
+    const fechaEmision  = new Date();
+    const usuario       = getCurrentUser();
+    const sheetOrdenes  = getSheet(CONFIG.SHEETS.ORDENES);
+    const sheetDetalle  = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+
+    // Leer proveedor_preferido de cada insumo desde el catálogo
+    const catalogoInsumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+    const mapaProveedor   = {};
+    catalogoInsumos.forEach(function(ins) {
+      mapaProveedor[String(ins.codigo_insumo).trim()] =
+        String(ins.proveedor_preferido || '').trim();
+    });
+
+    // Agrupar items por proveedor
+    // Si el ítem es del proveedor principal → usa ordenData.proveedor
+    // Si es alternativo → usa su proveedor_preferido del catálogo
+    const itemsPorProveedor = {};
+
+    ordenData.items.forEach(function(item) {
+      const codIns   = String(item.codigo_insumo).trim();
+      const provItem = mapaProveedor[codIns] || ordenData.proveedor;
+      if (!itemsPorProveedor[provItem]) itemsPorProveedor[provItem] = [];
+      itemsPorProveedor[provItem].push(item);
+    });
+
+    // Crear una OC por cada proveedor
+    let primeraOrden = null;
+
+    Object.keys(itemsPorProveedor).forEach(function(codProv) {
+      const itemsDelProv = itemsPorProveedor[codProv];
+
+      const totalProv = itemsDelProv.reduce(function(sum, item) {
+        return sum + (Number(item.subtotal) || 0);
+      }, 0);
+
+      const numeroOrden     = generarNumeroOrden();
+      const proveedor       = getProveedor(codProv);
+      const nombreProveedor = proveedor ? proveedor.razon_social : codProv;
+
+      // Cabecera OC (10 columnas)
+      // numero_orden | fecha_emision | codigo_proveedor | nombre_proveedor |
+      // estado | usuario_solicita | fecha_entrega_estimada | total | observaciones | solicitado_por
+      sheetOrdenes.appendRow([
+        numeroOrden,
+        fechaEmision,
+        codProv,
+        nombreProveedor,
+        CONFIG.ESTADOS.ORDEN.PENDIENTE,
+        usuario,
+        ordenData.fecha_entrega_estimada || '',
+        totalProv,
+        ordenData.observaciones || '',
+        ordenData.solicitado_por || ''
+      ]);
+
+      // Detalle — renumerar ítem desde 1 por OC
+      itemsDelProv.forEach(function(item, idx) {
+        sheetDetalle.appendRow([
+          numeroOrden,
+          idx + 1,
+          item.codigo_insumo,
+          item.descripcion,
+          item.cantidad,
+          item.precio_unitario,
+          item.subtotal,
+          0,                           // cantidad_recepcionada inicial = 0
+          CONFIG.ESTADOS.ITEM.PENDIENTE,
+          fechaEmision
+        ]);
+      });
+
+      // Historial de precios
+      registrarHistorialPrecios(
+        itemsDelProv,
+        numeroOrden,
+        usuario,
+        fechaEmision,
+        nombreProveedor
+      );
+
+      if (!primeraOrden) primeraOrden = numeroOrden;
+    });
+
+    return primeraOrden;
+
+  } catch (error) {
+    throw new Error('Error al crear OC: ' + error.message);
+  }
+}
+
+/**
+ * Retorna las OC en estado Pendiente o Recepción Parcial,
+ * con el desglose de ítems pendientes por OC.
+ * Usada por FormularioRecepcion y ListaPendientes.
+ */
+function getOrdenesPendientes() {
+  try {
+    SpreadsheetApp.flush();
+    const sheetOrdenes = getSheet(CONFIG.SHEETS.ORDENES);
+    const sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+
+    const lastRow = sheetOrdenes.getLastRow();
+    if (lastRow <= 1) return [];
+
+    // Leer 10 columnas (incluye nombre_proveedor en col D y solicitado_por en col J)
+    const dataOrdenes = sheetOrdenes.getRange(2, 1, lastRow - 1, 10).getValues();
+    const dataDetalle = sheetDetalle.getDataRange().getValues();
+    const headersDetalle = dataDetalle[0];
+
+    const idxNumOrden    = headersDetalle.indexOf('numero_orden');
+    const idxCodigo      = headersDetalle.indexOf('codigo_insumo');
+    const idxDescripcion = headersDetalle.indexOf('descripcion');
+    const idxCantidad    = headersDetalle.indexOf('cantidad');
+    const idxRecepcionada = headersDetalle.indexOf('cantidad_recepcionada');
+
+    return dataOrdenes
+      .filter(function(row) {
+        const estado = String(row[4]).trim();
+        return row[0] &&
+          (estado === CONFIG.ESTADOS.ORDEN.PENDIENTE ||
+           estado === CONFIG.ESTADOS.ORDEN.PARCIAL);
+      })
+      .map(function(row) {
+        const numeroOrden = row[0];
+
+        const itemsPendientes = [];
+        for (let i = 1; i < dataDetalle.length; i++) {
+          if (dataDetalle[i][idxNumOrden] !== numeroOrden) continue;
+          const solicitado = Number(dataDetalle[i][idxCantidad])    || 0;
+          const recibido   = Number(dataDetalle[i][idxRecepcionada]) || 0;
+          const pendiente  = solicitado - recibido;
+          if (pendiente > 0) {
+            itemsPendientes.push({
+              codigo:      dataDetalle[i][idxCodigo],
+              descripcion: dataDetalle[i][idxDescripcion],
+              solicitado,
+              recibido,
+              pendiente
+            });
+          }
+        }
+
+        return {
+          numero_orden:            numeroOrden,
+          fecha_emision:           formatearFecha(row[1]),
+          codigo_proveedor:        row[2],
+          proveedor:               row[3],   // nombre_proveedor guardado en col D
+          estado:                  String(row[4]).trim(),
+          usuario_solicita:        row[5],
+          fecha_entrega_estimada:  formatearFecha(row[6]),
+          total_orden:             row[7],
+          observaciones:           row[8],
+          solicitado_por:          row[9],
+          items_pendientes:        itemsPendientes
+        };
+      });
+
+  } catch (e) {
+    throw e;
+  }
+}
+
+/**
+ * Retorna el detalle completo de una OC (cabecera + ítems).
+ * Usada por FormularioRecepcion para pre-cargar los datos.
+ */
+function getDetalleOrden(numeroOrden) {
+  const ordenesData = getDatosSheet(CONFIG.SHEETS.ORDENES);
+  const ordenRaw    = ordenesData.find(function(o) { return o.numero_orden === numeroOrden; });
+  if (!ordenRaw) throw new Error('Orden no encontrada: ' + numeroOrden);
+
+  const orden = Object.assign({}, ordenRaw);
+  orden.fecha_emision            = formatearFecha(ordenRaw.fecha_emision);
+  orden.fecha_entrega_estimada   = formatearFecha(ordenRaw.fecha_entrega_estimada);
+
+  // Leer detalle con mapeo dinámico de columnas
+  const sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  const data         = sheetDetalle.getDataRange().getValues();
+  const headers      = data[0];
+
+  const idxNumeroOrden  = headers.indexOf('numero_orden');
+  const idxCodigo       = headers.indexOf('codigo_insumo');
+  const idxDescripcion  = headers.indexOf('descripcion');
+  const idxCantidad     = headers.indexOf('cantidad');
+  const idxRecepcionada = headers.indexOf('cantidad_recepcionada');
+  const idxPrecio       = headers.indexOf('precio_unitario');
+  const idxEstado       = headers.indexOf('estado_item');
+
+  const items = [];
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][idxNumeroOrden] !== numeroOrden) continue;
+    items.push({
+      codigo_insumo:        data[i][idxCodigo],
+      descripcion:          data[i][idxDescripcion],
+      cantidad:             Number(data[i][idxCantidad])    || 0,
+      cantidad_recepcionada: Number(data[i][idxRecepcionada]) || 0,
+      precio_unitario:      Number(data[i][idxPrecio])      || 0,
+      estado_item:          data[i][idxEstado]
+    });
+  }
+
+  return { orden, items };
+}
+
+// ── Generar OC desde la hoja Stock_por_Proveedor ─────────────────────────────
+
+function generarOrdenDesdeStock() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Stock_por_Proveedor');
+  const ui    = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Primero actualizá la hoja Stock_por_Proveedor desde el menú.');
+    return;
+  }
+
+  const mapaProp = PropertiesService.getScriptProperties().getProperty('MAPA_PROV_STOCK');
+  if (!mapaProp) {
+    ui.alert('No se encontró el mapa de proveedores. Actualizá la hoja Stock_por_Proveedor primero.');
+    return;
+  }
+  const mapa    = JSON.parse(mapaProp);
+  const allData = sheet.getDataRange().getValues();
+
+  // Buscar filas tildadas y agrupar por proveedor
+  const itemsPorProv = {};
+
+  Object.keys(mapa).forEach(function(codProv) {
+    const rango = mapa[codProv];
+    for (let r = rango.filaInicio - 1; r <= rango.filaFin - 1; r++) {
+      const row = allData[r];
+      if (row[0] !== true) continue;                // col A = checkbox
+
+      const cod       = String(row[1]).trim();      // col B
+      const desc      = String(row[2]).trim();      // col C
+      const precioRaw = String(row[6]).replace('$', '').trim();
+      const precio    = parseFloat(precioRaw) || 0;
+      const cant      = Number(row[9]) || 1;        // col J
+
+      if (!cod) continue;
+      if (!itemsPorProv[codProv]) itemsPorProv[codProv] = [];
+      itemsPorProv[codProv].push({
+        codigo_insumo:   cod,
+        descripcion:     desc,
+        cantidad:        cant,
+        precio_unitario: precio,
+        subtotal:        cant * precio
+      });
+    }
+  });
+
+  const proveedoresConItems = Object.keys(itemsPorProv);
+
+  if (proveedoresConItems.length === 0) {
+    ui.alert('No hay insumos seleccionados.\n\nTildá los insumos en la columna "✔ Pedir" y volvé a ejecutar.');
+    return;
+  }
+
+  if (proveedoresConItems.length > 1) {
+    const nombres = proveedoresConItems.map(function(c) {
+      return '• ' + mapa[c].nombre + ' (' + itemsPorProv[c].length + ' items)';
+    }).join('\n');
+    const resp = ui.alert(
+      'Se crearán ' + proveedoresConItems.length + ' órdenes separadas:',
+      nombres + '\n\n¿Confirmás?',
+      ui.ButtonSet.YES_NO
+    );
+    if (resp !== ui.Button.YES) return;
+  }
+
+  // Guardar datos para el diálogo HTML
+  PropertiesService.getScriptProperties().setProperty('OC_DESDE_STOCK', JSON.stringify({
+    proveedores: proveedoresConItems,
+    items:       itemsPorProv,
+    mapa
+  }));
+
+  const datosJSON = JSON.stringify({ proveedores: proveedoresConItems, items: itemsPorProv, mapa });
+  const template  = HtmlService.createTemplateFromFile('DialogOrdenStock');
+  template.datosOC = datosJSON;
+
+  const html = template.evaluate()
+    .setWidth(420).setHeight(320)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  ui.showModalDialog(html, '🛒 Confirmar Orden de Compra');
+}
+
+/**
+ * Ejecutada desde DialogOrdenStock.html al confirmar.
+ * Crea las OC y limpia los checkboxes de la hoja.
+ */
+function confirmarOrdenDesdeStock(fechaEntrega, observaciones, solicitadoPor) {
+  const datos  = JSON.parse(
+    PropertiesService.getScriptProperties().getProperty('OC_DESDE_STOCK')
+  );
+
+  // Leer precio_referencial del catálogo como fallback
+  const catalogoInsumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+  const mapaPrecioRef   = {};
+  catalogoInsumos.forEach(function(ins) {
+    mapaPrecioRef[String(ins.codigo_insumo).trim()] = Number(ins.precio_referencial) || 0;
+  });
+
+  const ordenesCreadas = [];
+
+  datos.proveedores.forEach(function(codProv) {
+    const items = datos.items[codProv];
+    if (!items || items.length === 0) return;
+
+    const itemsConIdx = items.map(function(it, i) {
+      let precio = Number(it.precio_unitario) || 0;
+      if (precio === 0) precio = mapaPrecioRef[String(it.codigo_insumo).trim()] || 0;
+      const subtotal = it.cantidad * precio;
+      return {
+        item:            i + 1,
+        codigo_insumo:   it.codigo_insumo,
+        descripcion:     it.descripcion,
+        cantidad:        it.cantidad,
+        precio_unitario: precio,
+        subtotal
+      };
+    });
+
+    const ordenData = {
+      proveedor:              codProv,
+      fecha_entrega_estimada: fechaEntrega   || '',
+      observaciones:          observaciones  || '',
+      solicitado_por:         solicitadoPor  || '',
+      items:                  itemsConIdx
+    };
+
+    const numeroOrden = crearOrdenCompra(ordenData);
+    ordenesCreadas.push(numeroOrden + ' → ' + datos.mapa[codProv].nombre);
+  });
+
+  // Limpiar checkboxes
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Stock_por_Proveedor');
+  if (sheet) {
+    const allData = sheet.getDataRange().getValues();
+    for (let r = 0; r < allData.length; r++) {
+      if (allData[r][0] === true) sheet.getRange(r + 1, 1).setValue(false);
+    }
+  }
+
+  PropertiesService.getScriptProperties().deleteProperty('OC_DESDE_STOCK');
+  return ordenesCreadas;
+}

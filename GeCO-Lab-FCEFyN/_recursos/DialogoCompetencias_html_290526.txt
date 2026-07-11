@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+    background: #f5f7fa;
+    color: #2d3748;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  .toolbar {
+    background: #1a56db;
+    color: #fff;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .toolbar h2 { font-size: 14px; font-weight: 600; margin-right: auto; }
+
+  .btn {
+    padding: 5px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn-white   { background: #fff;     color: #1a56db; }
+  .btn-green   { background: #0e9f6e; color: #fff; }
+  .btn-red     { background: #f05252; color: #fff; }
+  .btn-gray    { background: #6b7280; color: #fff; }
+  .btn-orange  { background: #ff8c00; color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  /* ── Filtros ─────────────────────────────────────────── */
+  .filtros {
+    background: #fff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 8px 14px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .filtros label { font-size: 12px; color: #6b7280; }
+  .filtros select, .filtros input {
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+  }
+  #buscador { width: 160px; }
+
+  /* ── Stats bar ───────────────────────────────────────── */
+  .stats {
+    background: #eff6ff;
+    border-bottom: 1px solid #bfdbfe;
+    padding: 6px 14px;
+    display: flex;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .stat-item { font-size: 12px; color: #1e40af; }
+  .stat-item strong { font-weight: 700; }
+
+  /* ── Tabla ───────────────────────────────────────────── */
+  .tabla-wrap {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 14px 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    font-size: 12px;
+  }
+  thead { position: sticky; top: 0; z-index: 10; }
+  th {
+    background: #1a56db;
+    color: #fff;
+    padding: 7px 8px;
+    text-align: left;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  th.th-check { width: 28px; text-align: center; }
+  td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+  tr:hover td { background: #eff6ff; }
+  tr.seleccionada td { background: #dbeafe; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-alta      { background: #fee2e2; color: #991b1b; }
+  .badge-media     { background: #fef3c7; color: #92400e; }
+  .badge-baja      { background: #d1fae5; color: #065f46; }
+  .badge-explicito { background: #e0f2fe; color: #0369a1; }
+  .badge-tacito    { background: #f3e8ff; color: #6b21a8; }
+  .badge-sin-doc   { background: #f1f5f9; color: #94a3b8; font-style: italic; }
+  .badge-con-doc   { background: #dcfce7; color: #166534; }
+
+  .ico-activo   { color: #0e9f6e; font-size: 16px; }
+  .ico-inactivo { color: #d1d5db; font-size: 16px; }
+
+  /* ── Panel lateral (formulario) ──────────────────────── */
+  .panel-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.35);
+    z-index: 100;
+    justify-content: flex-end;
+  }
+  .panel-overlay.visible { display: flex; }
+  .panel {
+    width: 340px;
+    background: #fff;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 20px rgba(0,0,0,.15);
+  }
+  .panel-header {
+    background: #1a56db;
+    color: #fff;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .btn-cerrar-panel {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 4px;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .panel-footer { padding: 10px 14px; border-top: 1px solid #e2e8f0; display: flex; gap: 8px; justify-content: flex-end; }
+
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-group label { font-size: 11px; font-weight: 600; color: #374151; text-transform: uppercase; letter-spacing: .4px; }
+  .form-group input, .form-group select, .form-group textarea {
+    padding: 7px 9px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    font-size: 13px;
+    background: #fff;
+    font-family: inherit;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none;
+    border-color: #1a56db;
+    box-shadow: 0 0 0 2px #bfdbfe;
+  }
+  .req { color: #f05252; margin-left: 2px; }
+
+  .doc-selector { display: flex; gap: 6px; align-items: flex-end; }
+  .doc-selector select { flex: 1; }
+
+  .hint { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+
+  /* ── CSV Import ──────────────────────────────────────── */
+  .csv-panel {
+    display: none;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px;
+    margin: 8px 14px;
+    flex-shrink: 0;
+  }
+  .csv-panel.visible { display: block; }
+  .csv-panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #1a56db; }
+  .csv-panel textarea {
+    width: 100%;
+    height: 100px;
+    font-family: monospace;
+    font-size: 11px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 6px;
+    resize: vertical;
+  }
+  .csv-actions { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .csv-result { font-size: 12px; color: #065f46; background: #d1fae5; padding: 4px 10px; border-radius: 4px; display: none; }
+  .csv-error  { font-size: 12px; color: #991b1b; background: #fee2e2; padding: 4px 10px; border-radius: 4px; display: none; }
+
+  /* ── Toast ───────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #fff;
+    z-index: 200;
+    opacity: 0;
+    transition: opacity .25s;
+    pointer-events: none;
+    max-width: 320px;
+  }
+  .toast.ok    { background: #0e9f6e; }
+  .toast.error { background: #f05252; }
+  .toast.show  { opacity: 1; }
+
+  /* ── Spinner ─────────────────────────────────────────── */
+  .spinner { display: none; width: 14px; height: 14px; border: 2px solid #bfdbfe; border-top-color: #1a56db; border-radius: 50%; animation: spin .6s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner.visible { display: inline-block; }
+
+  /* ── Empty state ─────────────────────────────────────── */
+  .empty { text-align: center; padding: 40px; color: #9ca3af; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Toolbar ─────────────────────────────────────── -->
+  <div class="toolbar">
+    <h2>📋 Matriz de Competencias</h2>
+    <div class="spinner" id="spinMain"></div>
+    <button class="btn btn-white"  onclick="mostrarFormNueva()">＋ Nueva</button>
+    <button class="btn btn-orange" onclick="toggleCSV()">⬆ Importar CSV</button>
+    <button class="btn btn-red"    onclick="desactivarSeleccionadas()" id="btnBaja" disabled>✕ Desactivar</button>
+    <button class="btn btn-gray"   onclick="google.script.host.close()">Cerrar</button>
+  </div>
+
+  <!-- ── Importar CSV ─────────────────────────────────── -->
+  <div class="csv-panel" id="csvPanel">
+    <h3>Importar desde CSV</h3>
+    <p style="font-size:11px;color:#6b7280;margin-bottom:8px;">
+      Columnas aceptadas: <code>Puesto, Dominio, Categoría, Naturaleza, Criticidad, Drive_ID, Drive_Nombre, Frecuencia_Meses</code><br>
+      Sólo <strong>Puesto</strong> y <strong>Dominio</strong> son obligatorias. Pegá el CSV o usá el botón para cargar un archivo.
+    </p>
+    <textarea id="csvTexto" placeholder="Puesto,Dominio,Categoría,Naturaleza,Criticidad,Frecuencia_Meses
+Analista,POE-001 Recepción,Técnico,Explícito,Alta,12"></textarea>
+    <div class="csv-actions">
+      <label class="btn btn-gray" style="cursor:pointer">
+        📂 Cargar archivo
+        <input type="file" accept=".csv,.txt" style="display:none" onchange="leerArchivoCSV(event)">
+      </label>
+      <button class="btn btn-green"   onclick="importarCSV()">Importar</button>
+      <button class="btn btn-gray"    onclick="toggleCSV()">Cancelar</button>
+      <div class="spinner" id="spinCSV"></div>
+      <span class="csv-result" id="csvResult"></span>
+      <span class="csv-error"  id="csvError"></span>
+    </div>
+  </div>
+
+  <!-- ── Filtros ──────────────────────────────────────── -->
+  <div class="filtros">
+    <label>Puesto:</label>
+    <select id="filtroPuesto" onchange="aplicarFiltros()">
+      <option value="">Todos</option>
+    </select>
+    <label>Categoría:</label>
+    <select id="filtroCategoria" onchange="aplicarFiltros()">
+      <option value="">Todas</option>
+      <option>Técnico</option>
+      <option>Normativo</option>
+      <option>Herramientas</option>
+      <option>Blandas</option>
+    </select>
+    <label>Criticidad:</label>
+    <select id="filtroCriticidad" onchange="aplicarFiltros()">
+      <option value="">Todas</option>
+      <option>Alta</option>
+      <option>Media</option>
+      <option>Baja</option>
+    </select>
+    <label>Naturaleza:</label>
+    <select id="filtroNaturaleza" onchange="aplicarFiltros()">
+      <option value="">Ambas</option>
+      <option>Explícito</option>
+      <option>Tácito</option>
+    </select>
+    <input type="search" id="buscador" placeholder="🔍 Buscar..." oninput="aplicarFiltros()">
+  </div>
+
+  <!-- ── Stats ────────────────────────────────────────── -->
+  <div class="stats" id="statsBar">
+    <span class="stat-item">Total: <strong id="statTotal">0</strong></span>
+    <span class="stat-item">Críticas: <strong id="statAlta">0</strong></span>
+    <span class="stat-item">Tácitas: <strong id="statTacito">0</strong></span>
+    <span class="stat-item">Sin documento: <strong id="statSinDoc">0</strong></span>
+  </div>
+
+  <!-- ── Tabla ────────────────────────────────────────── -->
+  <div class="tabla-wrap">
+    <table id="tablaComp">
+      <thead>
+        <tr>
+          <th class="th-check"><input type="checkbox" id="chkTodos" onchange="toggleTodos(this)"></th>
+          <th>Puesto</th>
+          <th>Dominio</th>
+          <th>Categoría</th>
+          <th>Naturaleza</th>
+          <th>Criticidad</th>
+          <th>Frecuencia</th>
+          <th>Documento</th>
+          <th style="text-align:center">Activo</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbodyComp">
+        <tr><td colspan="10" class="empty">Cargando competencias…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /app -->
+
+<!-- ── Panel lateral — formulario ───────────────────────── -->
+<div class="panel-overlay" id="panelOverlay">
+  <div class="panel">
+    <div class="panel-header">
+      <span id="panelTitulo">Nueva competencia</span>
+      <button class="btn-cerrar-panel" onclick="cerrarPanel()">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="form-group">
+        <label>Puesto <span class="req">*</span></label>
+        <input id="fPuesto" list="listaPuestos" placeholder="ej. Analista de Calidad">
+        <datalist id="listaPuestos"></datalist>
+      </div>
+      <div class="form-group">
+        <label>Dominio / Documento <span class="req">*</span></label>
+        <input id="fDominio" placeholder="ej. POE-CAL-001 Control de documentos">
+        <span class="hint">Nombre del procedimiento o área de conocimiento</span>
+      </div>
+      <div class="form-group">
+        <label>Categoría</label>
+        <select id="fCategoria">
+          <option>Técnico</option>
+          <option>Normativo</option>
+          <option>Herramientas</option>
+          <option>Blandas</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Naturaleza</label>
+        <select id="fNaturaleza">
+          <option>Explícito</option>
+          <option>Tácito</option>
+        </select>
+        <span class="hint">Explícito → evaluación por formulario · Tácito → evaluación presencial</span>
+      </div>
+      <div class="form-group">
+        <label>Criticidad</label>
+        <select id="fCriticidad">
+          <option>Alta</option>
+          <option>Media</option>
+          <option selected>Baja</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Frecuencia de reevaluación</label>
+        <select id="fFrecuencia">
+          <option value="3">Trimestral (3 meses)</option>
+          <option value="6">Semestral (6 meses)</option>
+          <option value="12" selected>Anual (12 meses)</option>
+          <option value="24">Bienal (24 meses)</option>
+          <option value="0">Sin vencimiento</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Documento Drive</label>
+        <div class="doc-selector">
+          <select id="fDriveDoc" onchange="onDriveDocChange()">
+            <option value="">— Sin vincular —</option>
+          </select>
+          <div class="spinner" id="spinDocs"></div>
+        </div>
+        <input type="text" id="fDriveNombre" placeholder="Nombre del documento" style="margin-top:4px">
+        <span class="hint">Si el documento no aparece en la lista, ingresá el nombre manualmente</span>
+      </div>
+    </div>
+    <div class="panel-footer">
+      <div class="spinner" id="spinPanel"></div>
+      <button class="btn btn-gray"  onclick="cerrarPanel()">Cancelar</button>
+      <button class="btn btn-green" onclick="guardarCompetencia()" id="btnGuardar">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Estado global ───────────────────────────────────────────────────
+var competencias = [];   // array completo desde servidor
+var competenciasFiltradas = [];
+var modoEdicion = null;  // null = nueva, string idCompetencia = edición
+var documentosDrive = []; // cache de archivos Drive
+
+// ── Init ────────────────────────────────────────────────────────────
+window.onload = function() {
+  cargarCompetencias();
+  cargarDocumentosDrive();
+};
+
+// ── Carga de datos ──────────────────────────────────────────────────
+function cargarCompetencias() {
+  spin('spinMain', true);
+  google.script.run
+    .withSuccessHandler(function(data) {
+      spin('spinMain', false);
+      competencias = data || [];
+      llenarFiltroPuesto();
+      aplicarFiltros();
+    })
+    .withFailureHandler(function(err) {
+      spin('spinMain', false);
+      mostrarToast('Error al cargar: ' + err.message, 'error');
+    })
+    .getCompetencias();
+}
+
+function cargarDocumentosDrive() {
+  spin('spinDocs', true);
+  google.script.run
+    .withSuccessHandler(function(docs) {
+      spin('spinDocs', false);
+      documentosDrive = docs || [];
+      poblarSelectDrive(docs);
+    })
+    .withFailureHandler(function() {
+      spin('spinDocs', false);
+    })
+    .buscarDocumentosDrive();
+}
+
+function poblarSelectDrive(docs) {
+  var sel = document.getElementById('fDriveDoc');
+  // conservar la primera opción vacía
+  while (sel.options.length > 1) sel.remove(1);
+  docs.forEach(function(d) {
+    var o = document.createElement('option');
+    o.value = d.id;
+    o.text  = d.nombre;
+    sel.appendChild(o);
+  });
+}
+
+// ── Filtros ─────────────────────────────────────────────────────────
+function llenarFiltroPuesto() {
+  var puestos = {};
+  competencias.forEach(function(c) { puestos[c.puesto] = true; });
+  var sel = document.getElementById('filtroPuesto');
+  while (sel.options.length > 1) sel.remove(1);
+  Object.keys(puestos).sort().forEach(function(p) {
+    var o = document.createElement('option');
+    o.value = p; o.text = p;
+    sel.appendChild(o);
+  });
+
+  // datalist para el formulario
+  var dl = document.getElementById('listaPuestos');
+  dl.innerHTML = '';
+  Object.keys(puestos).sort().forEach(function(p) {
+    var o = document.createElement('option'); o.value = p; dl.appendChild(o);
+  });
+}
+
+function aplicarFiltros() {
+  var puesto     = document.getElementById('filtroPuesto').value.toLowerCase();
+  var categoria  = document.getElementById('filtroCategoria').value.toLowerCase();
+  var criticidad = document.getElementById('filtroCriticidad').value.toLowerCase();
+  var naturaleza = document.getElementById('filtroNaturaleza').value.toLowerCase();
+  var busq       = document.getElementById('buscador').value.toLowerCase();
+
+  competenciasFiltradas = competencias.filter(function(c) {
+    if (puesto     && c.puesto.toLowerCase()     !== puesto)     return false;
+    if (categoria  && c.categoria.toLowerCase()  !== categoria)  return false;
+    if (criticidad && c.criticidad.toLowerCase() !== criticidad) return false;
+    if (naturaleza && c.naturaleza.toLowerCase() !== naturaleza) return false;
+    if (busq && !(
+      c.puesto.toLowerCase().includes(busq)   ||
+      c.dominio.toLowerCase().includes(busq)  ||
+      c.driveNombre.toLowerCase().includes(busq)
+    )) return false;
+    return true;
+  });
+
+  renderTabla();
+  actualizarStats();
+}
+
+// ── Render tabla ─────────────────────────────────────────────────────
+function renderTabla() {
+  var tbody = document.getElementById('tbodyComp');
+
+  if (competenciasFiltradas.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No se encontraron competencias con esos filtros.</td></tr>';
+    document.getElementById('btnBaja').disabled = true;
+    document.getElementById('chkTodos').checked = false;
+    return;
+  }
+
+  tbody.innerHTML = competenciasFiltradas.map(function(c) {
+    var badgeCrit = 'badge-' + c.criticidad.toLowerCase();
+    var badgeNat  = c.naturaleza === 'Tácito' ? 'badge-tacito' : 'badge-explicito';
+    var docBadge  = c.driveId
+      ? '<span class="badge badge-con-doc">✓ ' + esc(c.driveNombre) + '</span>'
+      : '<span class="badge badge-sin-doc">Sin doc</span>';
+    var iconoActivo = c.activo
+      ? '<span class="ico-activo" title="Activa">●</span>'
+      : '<span class="ico-inactivo" title="Inactiva">○</span>';
+    var freq = c.frecuenciaMeses === 0 ? 'Sin venc.' : c.frecuenciaMeses + ' m';
+
+    return '<tr id="row-' + esc(c.idCompetencia) + '">' +
+      '<td style="text-align:center"><input type="checkbox" class="chk-fila" value="' + esc(c.idCompetencia) + '" onchange="onCheckFila()"></td>' +
+      '<td>' + esc(c.puesto) + '</td>' +
+      '<td>' + esc(c.dominio) + '</td>' +
+      '<td>' + esc(c.categoria) + '</td>' +
+      '<td><span class="badge ' + badgeNat + '">' + esc(c.naturaleza) + '</span></td>' +
+      '<td><span class="badge ' + badgeCrit + '">' + esc(c.criticidad) + '</span></td>' +
+      '<td style="text-align:center">' + freq + '</td>' +
+      '<td>' + docBadge + '</td>' +
+      '<td style="text-align:center">' + iconoActivo + '</td>' +
+      '<td><button class="btn btn-gray" style="padding:3px 8px;font-size:11px" onclick="editarCompetencia(\'' + esc(c.idCompetencia) + '\')">Editar</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function actualizarStats() {
+  var data = competenciasFiltradas;
+  document.getElementById('statTotal').textContent   = data.length;
+  document.getElementById('statAlta').textContent    = data.filter(function(c){ return c.criticidad === 'Alta'; }).length;
+  document.getElementById('statTacito').textContent  = data.filter(function(c){ return c.naturaleza === 'Tácito'; }).length;
+  document.getElementById('statSinDoc').textContent  = data.filter(function(c){ return !c.driveId; }).length;
+}
+
+// ── Checkboxes ───────────────────────────────────────────────────────
+function toggleTodos(chk) {
+  document.querySelectorAll('.chk-fila').forEach(function(c) { c.checked = chk.checked; });
+  onCheckFila();
+}
+
+function onCheckFila() {
+  var sel = document.querySelectorAll('.chk-fila:checked');
+  document.getElementById('btnBaja').disabled = sel.length === 0;
+  document.getElementById('chkTodos').checked = sel.length > 0 && sel.length === document.querySelectorAll('.chk-fila').length;
+}
+
+// ── Panel formulario ─────────────────────────────────────────────────
+function mostrarFormNueva() {
+  modoEdicion = null;
+  document.getElementById('panelTitulo').textContent = 'Nueva competencia';
+  limpiarFormPanel();
+  document.getElementById('panelOverlay').classList.add('visible');
+}
+
+function editarCompetencia(idCompetencia) {
+  var comp = competencias.find(function(c) { return c.idCompetencia === idCompetencia; });
+  if (!comp) return;
+  modoEdicion = idCompetencia;
+  document.getElementById('panelTitulo').textContent = 'Editar competencia';
+  cargarEnFormPanel(comp);
+  document.getElementById('panelOverlay').classList.add('visible');
+}
+
+function cerrarPanel() {
+  document.getElementById('panelOverlay').classList.remove('visible');
+}
+
+function limpiarFormPanel() {
+  document.getElementById('fPuesto').value    = '';
+  document.getElementById('fDominio').value   = '';
+  document.getElementById('fCategoria').value = 'Técnico';
+  document.getElementById('fNaturaleza').value = 'Explícito';
+  document.getElementById('fCriticidad').value = 'Alta';
+  document.getElementById('fFrecuencia').value = '12';
+  document.getElementById('fDriveDoc').value   = '';
+  document.getElementById('fDriveNombre').value = '';
+}
+
+function cargarEnFormPanel(comp) {
+  document.getElementById('fPuesto').value    = comp.puesto;
+  document.getElementById('fDominio').value   = comp.dominio;
+  document.getElementById('fCategoria').value = comp.categoria;
+  document.getElementById('fNaturaleza').value = comp.naturaleza;
+  document.getElementById('fCriticidad').value = comp.criticidad;
+  document.getElementById('fFrecuencia').value = String(comp.frecuenciaMeses);
+  document.getElementById('fDriveDoc').value   = comp.driveId || '';
+  document.getElementById('fDriveNombre').value = comp.driveNombre || '';
+}
+
+function onDriveDocChange() {
+  var sel  = document.getElementById('fDriveDoc');
+  var id   = sel.value;
+  var nombre = id ? (sel.options[sel.selectedIndex].text) : '';
+  document.getElementById('fDriveNombre').value = nombre;
+}
+
+function guardarCompetencia() {
+  var puesto  = document.getElementById('fPuesto').value.trim();
+  var dominio = document.getElementById('fDominio').value.trim();
+
+  if (!puesto || !dominio) {
+    mostrarToast('Puesto y Dominio son obligatorios.', 'error');
+    return;
+  }
+
+  var datos = {
+    puesto:          puesto,
+    dominio:         dominio,
+    categoria:       document.getElementById('fCategoria').value,
+    naturaleza:      document.getElementById('fNaturaleza').value,
+    criticidad:      document.getElementById('fCriticidad').value,
+    frecuenciaMeses: parseInt(document.getElementById('fFrecuencia').value) || 12,
+    driveId:         document.getElementById('fDriveDoc').value,
+    driveNombre:     document.getElementById('fDriveNombre').value.trim() || dominio
+  };
+
+  spin('spinPanel', true);
+  document.getElementById('btnGuardar').disabled = true;
+
+  if (modoEdicion) {
+    // Edición
+    google.script.run
+      .withSuccessHandler(function(res) {
+        spin('spinPanel', false);
+        document.getElementById('btnGuardar').disabled = false;
+        if (res.ok) {
+          mostrarToast('Competencia actualizada correctamente.', 'ok');
+          cerrarPanel();
+          cargarCompetencias();
+        } else {
+          mostrarToast('Error: ' + res.error, 'error');
+        }
+      })
+      .withFailureHandler(function(err) {
+        spin('spinPanel', false);
+        document.getElementById('btnGuardar').disabled = false;
+        mostrarToast('Error: ' + err.message, 'error');
+      })
+      .modificarCompetencia(modoEdicion, datos);
+  } else {
+    // Alta nueva
+    google.script.run
+      .withSuccessHandler(function(res) {
+        spin('spinPanel', false);
+        document.getElementById('btnGuardar').disabled = false;
+        if (res.ok) {
+          mostrarToast('Competencia agregada: ' + res.idCompetencia, 'ok');
+          cerrarPanel();
+          cargarCompetencias();
+        } else {
+          mostrarToast('Error: ' + res.error, 'error');
+        }
+      })
+      .withFailureHandler(function(err) {
+        spin('spinPanel', false);
+        document.getElementById('btnGuardar').disabled = false;
+        mostrarToast('Error: ' + err.message, 'error');
+      })
+      .agregarCompetencia(datos);
+  }
+}
+
+// ── Desactivar seleccionadas ─────────────────────────────────────────
+function desactivarSeleccionadas() {
+  var ids = Array.from(document.querySelectorAll('.chk-fila:checked')).map(function(c) { return c.value; });
+  if (ids.length === 0) return;
+  if (!confirm('¿Desactivar ' + ids.length + ' competencia(s) seleccionada(s)? Se pueden reactivar manualmente en la hoja.')) return;
+
+  spin('spinMain', true);
+  var promesas = ids.length;
+  var errores  = 0;
+
+  ids.forEach(function(id) {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res.ok) errores++;
+        promesas--;
+        if (promesas === 0) {
+          spin('spinMain', false);
+          if (errores > 0) mostrarToast('Se produjeron ' + errores + ' error(es).', 'error');
+          else mostrarToast(ids.length + ' competencia(s) desactivada(s).', 'ok');
+          cargarCompetencias();
+        }
+      })
+      .withFailureHandler(function() {
+        errores++; promesas--;
+        if (promesas === 0) {
+          spin('spinMain', false);
+          mostrarToast('Se produjeron errores.', 'error');
+          cargarCompetencias();
+        }
+      })
+      .desactivarCompetencia(id);
+  });
+}
+
+// ── Importar CSV ─────────────────────────────────────────────────────
+function toggleCSV() {
+  var panel = document.getElementById('csvPanel');
+  panel.classList.toggle('visible');
+  document.getElementById('csvResult').style.display = 'none';
+  document.getElementById('csvError').style.display  = 'none';
+}
+
+function leerArchivoCSV(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('csvTexto').value = e.target.result;
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function importarCSV() {
+  var texto = document.getElementById('csvTexto').value.trim();
+  if (!texto) { mostrarToast('Pegá o cargá un CSV primero.', 'error'); return; }
+
+  var resEl = document.getElementById('csvResult');
+  var errEl = document.getElementById('csvError');
+  resEl.style.display = 'none';
+  errEl.style.display = 'none';
+
+  spin('spinCSV', true);
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      spin('spinCSV', false);
+      if (!res.ok) {
+        errEl.textContent  = 'Error: ' + res.error;
+        errEl.style.display = 'inline-block';
+        return;
+      }
+      var msg = '✓ ' + res.agregadas + ' agregadas';
+      if (res.saltadas > 0) msg += ' · ' + res.saltadas + ' saltadas';
+      resEl.textContent  = msg;
+      resEl.style.display = 'inline-block';
+      if (res.errores && res.errores.length > 0) {
+        errEl.textContent  = res.errores.join(' | ');
+        errEl.style.display = 'inline-block';
+      }
+      cargarCompetencias();
+    })
+    .withFailureHandler(function(err) {
+      spin('spinCSV', false);
+      errEl.textContent  = 'Error: ' + err.message;
+      errEl.style.display = 'inline-block';
+    })
+    .importarCompetenciasDesdeCSV(texto);
+}
+
+// ── Utilidades ────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function spin(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.classList.toggle('visible', on);
+}
+
+function mostrarToast(msg, tipo) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className   = 'toast ' + tipo + ' show';
+  setTimeout(function() { t.classList.remove('show'); }, 3500);
+}
+</script>
+</body>
+</html>

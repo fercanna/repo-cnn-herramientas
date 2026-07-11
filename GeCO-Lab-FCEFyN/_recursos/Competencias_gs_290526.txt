@@ -1,0 +1,685 @@
+// ============================================================
+// GeCO Lab — Competencias.gs
+// Gestión de la matriz de competencias (Puestos_Competencias).
+// Módulo 1 — DEFINIR (Fase 2)
+//
+// DEPENDENCIAS:
+//   - Config.gs  → getDriveFolderId(), getSpreadsheetId()
+//   - Setup.gs v2 → columnas de Puestos_Competencias
+//
+// COLUMNAS Puestos_Competencias (0-based):
+//   A(0)  ID_Competencia   — 'COMP-PUESTO-NNN'
+//   B(1)  Puesto
+//   C(2)  Dominio          — nombre del procedimiento / área de conocimiento
+//   D(3)  Categoría        — Técnico | Normativo | Herramientas | Blandas
+//   E(4)  Naturaleza       — Explícito | Tácito
+//   F(5)  Criticidad       — Alta | Media | Baja
+//   G(6)  Drive_ID         — ID del documento fuente en Drive
+//   H(7)  Drive_Nombre     — nombre para mostrar
+//   I(8)  Frecuencia_Meses — cada cuántos meses reevaluar
+//   J(9)  Activo           — TRUE/FALSE
+// ============================================================
+
+// ------------------------------------------------------------------
+// LECTURA
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve todas las competencias activas como array de objetos.
+ * Llamada desde el HTML (google.script.run) y desde Codigo.gs.
+ * @param {string} [filtroPuesto]   — si se pasa, filtra por puesto exacto
+ * @param {string} [filtroCategoria] — si se pasa, filtra por categoría
+ * @returns {Array<Object>}
+ */
+function getCompetencias(filtroPuesto, filtroCategoria) {
+  try {
+    const hoja = _hojaCompetencias();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const fila = datos[i];
+      const activo = fila[9];
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+
+      if (filtroPuesto && String(fila[1]).toLowerCase() !== filtroPuesto.toLowerCase()) continue;
+      if (filtroCategoria && String(fila[3]).toLowerCase() !== filtroCategoria.toLowerCase()) continue;
+
+      resultado.push(_filaAObj(fila));
+    }
+
+    // Ordenar: puesto → criticidad (Alta primero) → dominio
+    resultado.sort(function(a, b) {
+      const cp = a.puesto.localeCompare(b.puesto);
+      if (cp !== 0) return cp;
+      const orden = { 'Alta': 0, 'Media': 1, 'Baja': 2 };
+      const cc = (orden[a.criticidad] || 99) - (orden[b.criticidad] || 99);
+      if (cc !== 0) return cc;
+      return a.dominio.localeCompare(b.dominio);
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[Competencias] getCompetencias error: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Devuelve los puestos únicos presentes en Puestos_Competencias (activos).
+ * @returns {string[]}
+ */
+function getPuestosConCompetencias() {
+  try {
+    const hoja = _hojaCompetencias();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+    const datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 10).getValues();
+    const set = {};
+    for (let i = 0; i < datos.length; i++) {
+      const activo = datos[i][9];
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+      const p = String(datos[i][1]).trim();
+      if (p) set[p] = true;
+    }
+    return Object.keys(set).sort();
+  } catch (e) {
+    Logger.log('[Competencias] getPuestosConCompetencias error: ' + e.message);
+    return [];
+  }
+}
+
+// ------------------------------------------------------------------
+// SUGERENCIA DE COMPETENCIAS PENDIENTES / VENCIDAS
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve las competencias que una persona debería evaluar:
+ *  - Nunca evaluadas en el dominio correspondiente a su puesto, O
+ *  - Cuya última evaluación superó la frecuencia de reevaluación.
+ *
+ * Llamada desde DialogoEvaluacion (Fase 4) para precargar el selector.
+ *
+ * @param {string} idPersona
+ * @param {string} puesto     — si no hay puesto, se usa el de Personas
+ * @returns {Array<{idCompetencia, dominio, categoria, naturaleza, criticidad,
+ *                  driveId, driveNombre, frecuenciaMeses, diasVencida}>}
+ */
+function getCompetenciasPendientesPorPersona(idPersona, puesto) {
+  try {
+    const ss = _getSSCompetencias();
+
+    // ① Obtener puesto de la persona si no viene
+    const puestoReal = puesto || _obtenerPuestoPersona(ss, idPersona);
+    if (!puestoReal) return [];
+
+    // ② Competencias activas para ese puesto
+    const competencias = getCompetencias(puestoReal);
+    if (competencias.length === 0) return [];
+
+    // ③ Historial de evaluaciones completadas de la persona
+    const historial = _historialEvaluaciones(ss, idPersona);
+
+    const hoy = new Date();
+    const resultado = [];
+
+    competencias.forEach(function(comp) {
+      const ultimaFecha = historial[comp.dominio]; // fecha Date o undefined
+      if (!ultimaFecha) {
+        // Nunca evaluada → pendiente
+        resultado.push(_competenciaPendienteObj(comp, null, null));
+      } else {
+        // Verificar si venció el período
+        const diasDesde = Math.floor((hoy - ultimaFecha) / (1000 * 60 * 60 * 24));
+        const diasLimite = (comp.frecuenciaMeses || 12) * 30;
+        if (diasDesde >= diasLimite) {
+          const diasVencida = diasDesde - diasLimite;
+          resultado.push(_competenciaPendienteObj(comp, ultimaFecha, diasVencida));
+        }
+      }
+    });
+
+    // Ordenar: vencidas primero (mayor diasVencida), luego nunca evaluadas, por criticidad
+    resultado.sort(function(a, b) {
+      // nunca evaluadas tienen diasVencida = null → van al final dentro de su criticidad
+      const av = a.diasVencida === null ? -1 : a.diasVencida;
+      const bv = b.diasVencida === null ? -1 : b.diasVencida;
+      if (av !== bv) return bv - av; // mayor vencimiento primero
+      const orden = { 'Alta': 0, 'Media': 1, 'Baja': 2 };
+      return (orden[a.criticidad] || 99) - (orden[b.criticidad] || 99);
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[Competencias] getCompetenciasPendientesPorPersona error: ' + e.message);
+    return [];
+  }
+}
+
+// ------------------------------------------------------------------
+// ALTA / MODIFICACIÓN / BAJA
+// ------------------------------------------------------------------
+
+/**
+ * Agrega una nueva competencia a Puestos_Competencias.
+ * @param {Object} datos — { puesto, dominio, categoria, naturaleza, criticidad,
+ *                           driveId, driveNombre, frecuenciaMeses }
+ * @returns {{ ok: boolean, idCompetencia?: string, error?: string }}
+ */
+function agregarCompetencia(datos) {
+  try {
+    _validarDatosCompetencia(datos);
+    const hoja  = _hojaCompetencias();
+    const id    = _generarIdCompetencia(hoja, datos.puesto);
+    const ahora = new Date();
+
+    // Buscar primera fila vacía en col A (evita caer en fila 500+ por validaciones pre-aplicadas)
+    const colA = hoja.getRange(2, 1, Math.max(hoja.getLastRow() + 1, 2), 1).getValues();
+    let filaDestino = 2;
+    for (let r = 0; r < colA.length; r++) {
+      if (!colA[r][0]) { filaDestino = r + 2; break; }
+      filaDestino = r + 3;
+    }
+    hoja.getRange(filaDestino, 1, 1, 10).setValues([[
+      id,
+      datos.puesto.trim(),
+      datos.dominio.trim(),
+      datos.categoria || 'Técnico',
+      datos.naturaleza || 'Explícito',
+      datos.criticidad || 'Media',
+      datos.driveId    || '',
+      datos.driveNombre || datos.dominio.trim(),
+      Number(datos.frecuenciaMeses) || 12,
+      true
+    ]]);
+
+    Logger.log('[Competencias] Competencia agregada: ' + id + ' — ' + datos.puesto + ' / ' + datos.dominio);
+    return { ok: true, idCompetencia: id };
+
+  } catch (e) {
+    Logger.log('[Competencias] agregarCompetencia error: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Modifica una competencia existente por ID_Competencia.
+ * @param {string} idCompetencia
+ * @param {Object} cambios — campos a actualizar (parcial)
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function modificarCompetencia(idCompetencia, cambios) {
+  try {
+    if (!idCompetencia) return { ok: false, error: 'ID_Competencia requerido.' };
+    const hoja = _hojaCompetencias();
+    const datos = hoja.getDataRange().getValues();
+
+    let filaIdx = -1;
+    for (let i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idCompetencia.trim()) {
+        filaIdx = i + 1; // 1-based
+        break;
+      }
+    }
+    if (filaIdx < 0) return { ok: false, error: 'No se encontró la competencia: ' + idCompetencia };
+
+    // Columnas mapeadas (1-based)
+    const mapa = {
+      puesto:          2,
+      dominio:         3,
+      categoria:       4,
+      naturaleza:      5,
+      criticidad:      6,
+      driveId:         7,
+      driveNombre:     8,
+      frecuenciaMeses: 9,
+      activo:          10
+    };
+
+    Object.keys(cambios).forEach(function(campo) {
+      const col = mapa[campo];
+      if (col) hoja.getRange(filaIdx, col).setValue(cambios[campo]);
+    });
+
+    Logger.log('[Competencias] Competencia modificada: ' + idCompetencia);
+    return { ok: true };
+
+  } catch (e) {
+    Logger.log('[Competencias] modificarCompetencia error: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Desactiva (baja lógica) una competencia.
+ * @param {string} idCompetencia
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function desactivarCompetencia(idCompetencia) {
+  return modificarCompetencia(idCompetencia, { activo: false });
+}
+
+// ------------------------------------------------------------------
+// IMPORTACIÓN DESDE CSV
+// ------------------------------------------------------------------
+
+/**
+ * Importa competencias desde CSV.
+ * El CSV debe tener cabecera con las columnas (en cualquier orden):
+ *   Puesto, Dominio, Categoría, Naturaleza, Criticidad,
+ *   Drive_ID, Drive_Nombre, Frecuencia_Meses
+ *
+ * Columnas mínimas obligatorias: Puesto, Dominio.
+ * Las demás tienen valores por defecto.
+ *
+ * Comportamiento:
+ *   - Si ya existe una combinación Puesto+Dominio activa → salta (no duplica).
+ *   - Registra cuántas filas se agregaron / saltaron.
+ *
+ * @param {string} csvText — contenido del CSV como texto plano
+ * @returns {{ ok: boolean, agregadas: number, saltadas: number, errores: string[], error?: string }}
+ */
+function importarCompetenciasDesdeCSV(csvText) {
+  try {
+    if (!csvText || csvText.trim() === '') {
+      return { ok: false, error: 'El CSV está vacío.', agregadas: 0, saltadas: 0, errores: [] };
+    }
+
+    const filas = _parsearCSV(csvText);
+    if (filas.length < 2) {
+      return { ok: false, error: 'El CSV no tiene filas de datos.', agregadas: 0, saltadas: 0, errores: [] };
+    }
+
+    // Cabecera normalizada
+    const cabecera = filas[0].map(function(h) { return h.trim().toLowerCase(); });
+    const idx = {
+      puesto:          _idxCol(cabecera, ['puesto']),
+      dominio:         _idxCol(cabecera, ['dominio']),
+      categoria:       _idxCol(cabecera, ['categoria', 'categoría']),
+      naturaleza:      _idxCol(cabecera, ['naturaleza']),
+      criticidad:      _idxCol(cabecera, ['criticidad']),
+      driveId:         _idxCol(cabecera, ['drive_id', 'driveid']),
+      driveNombre:     _idxCol(cabecera, ['drive_nombre', 'drivenombre', 'drive nombre']),
+      frecuenciaMeses: _idxCol(cabecera, ['frecuencia_meses', 'frecuencia meses', 'frecuencia'])
+    };
+
+    if (idx.puesto < 0 || idx.dominio < 0) {
+      return { ok: false, error: 'El CSV debe tener columnas "Puesto" y "Dominio".', agregadas: 0, saltadas: 0, errores: [] };
+    }
+
+    // Construir índice de existentes para evitar duplicados
+    const hoja      = _hojaCompetencias();
+    const existentes = _construirIndiceExistentes(hoja);
+
+    let agregadas = 0;
+    let saltadas  = 0;
+    const errores = [];
+
+    for (let i = 1; i < filas.length; i++) {
+      const fila = filas[i];
+      if (fila.every(function(c) { return !c.trim(); })) continue; // fila vacía
+
+      const puesto  = idx.puesto  >= 0 ? fila[idx.puesto].trim()  : '';
+      const dominio = idx.dominio >= 0 ? fila[idx.dominio].trim() : '';
+
+      if (!puesto || !dominio) {
+        errores.push('Fila ' + (i + 1) + ': Puesto o Dominio vacío — saltada.');
+        saltadas++;
+        continue;
+      }
+
+      const clave = puesto.toLowerCase() + '|' + dominio.toLowerCase();
+      if (existentes[clave]) {
+        saltadas++;
+        continue;
+      }
+
+      const datosFila = {
+        puesto:          puesto,
+        dominio:         dominio,
+        categoria:       idx.categoria       >= 0 ? (fila[idx.categoria].trim()       || 'Técnico')  : 'Técnico',
+        naturaleza:      idx.naturaleza      >= 0 ? (fila[idx.naturaleza].trim()      || 'Explícito'): 'Explícito',
+        criticidad:      idx.criticidad      >= 0 ? (fila[idx.criticidad].trim()      || 'Media')    : 'Media',
+        driveId:         idx.driveId         >= 0 ? fila[idx.driveId].trim()         : '',
+        driveNombre:     idx.driveNombre     >= 0 ? (fila[idx.driveNombre].trim()    || dominio)     : dominio,
+        frecuenciaMeses: idx.frecuenciaMeses >= 0 ? (Number(fila[idx.frecuenciaMeses]) || 12)        : 12
+      };
+
+      const res = agregarCompetencia(datosFila);
+      if (res.ok) {
+        existentes[clave] = true; // evitar duplicados dentro del mismo CSV
+        agregadas++;
+      } else {
+        errores.push('Fila ' + (i + 1) + ': ' + res.error);
+        saltadas++;
+      }
+    }
+
+    Logger.log('[Competencias] CSV import: ' + agregadas + ' agregadas, ' + saltadas + ' saltadas.');
+    return { ok: true, agregadas: agregadas, saltadas: saltadas, errores: errores };
+
+  } catch (e) {
+    Logger.log('[Competencias] importarCompetenciasDesdeCSV error: ' + e.message);
+    return { ok: false, error: e.message, agregadas: 0, saltadas: 0, errores: [] };
+  }
+}
+
+// ------------------------------------------------------------------
+// VINCULACIÓN CON GOOGLE DRIVE
+// ------------------------------------------------------------------
+
+/**
+ * Busca documentos en la carpeta Drive configurada y los devuelve
+ * para que el usuario pueda vincularlos a una competencia.
+ * @param {string} [query] — término de búsqueda opcional
+ * @returns {Array<{ id, nombre }>}
+ */
+function buscarDocumentosDrive(query) {
+  try {
+    const folderId = getDriveFolderId();
+    const folder   = DriveApp.getFolderById(folderId);
+
+    let archivos;
+    if (query && query.trim()) {
+      archivos = folder.searchFiles('title contains "' + query.trim().replace(/"/g, '') + '" and trashed = false');
+    } else {
+      archivos = folder.getFiles();
+    }
+
+    const resultado = [];
+    while (archivos.hasNext()) {
+      const f = archivos.next();
+      resultado.push({ id: f.getId(), nombre: f.getName() });
+    }
+
+    resultado.sort(function(a, b) { return a.nombre.localeCompare(b.nombre); });
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[Competencias] buscarDocumentosDrive error: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Vincula un documento Drive a una competencia existente.
+ * @param {string} idCompetencia
+ * @param {string} driveId
+ * @param {string} driveNombre
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function vincularDocumentoACompetencia(idCompetencia, driveId, driveNombre) {
+  return modificarCompetencia(idCompetencia, {
+    driveId:     driveId,
+    driveNombre: driveNombre
+  });
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+function _hojaCompetencias() {
+  const ss = _getSSCompetencias();
+  return ss.getSheetByName('Puestos_Competencias');
+}
+
+function _getSSCompetencias() {
+  try {
+    const id = getSpreadsheetId();
+    if (id) return SpreadsheetApp.openById(id);
+  } catch (e) {}
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function _filaAObj(fila) {
+  return {
+    idCompetencia:   String(fila[0] || ''),
+    puesto:          String(fila[1] || ''),
+    dominio:         String(fila[2] || ''),
+    categoria:       String(fila[3] || 'Técnico'),
+    naturaleza:      String(fila[4] || 'Explícito'),
+    criticidad:      String(fila[5] || 'Media'),
+    driveId:         String(fila[6] || ''),
+    driveNombre:     String(fila[7] || ''),
+    frecuenciaMeses: Number(fila[8]) || 12,
+    activo:          fila[9] !== false && String(fila[9]).toLowerCase() !== 'false'
+  };
+}
+
+function _competenciaPendienteObj(comp, ultimaFecha, diasVencida) {
+  return {
+    idCompetencia:   comp.idCompetencia,
+    dominio:         comp.dominio,
+    categoria:       comp.categoria,
+    naturaleza:      comp.naturaleza,
+    criticidad:      comp.criticidad,
+    driveId:         comp.driveId,
+    driveNombre:     comp.driveNombre,
+    frecuenciaMeses: comp.frecuenciaMeses,
+    ultimaEvaluacion: ultimaFecha
+      ? Utilities.formatDate(new Date(ultimaFecha), Session.getScriptTimeZone(), 'dd/MM/yyyy')
+      : null,
+    diasVencida:     diasVencida  // null = nunca evaluada, ≥0 = días desde que venció
+  };
+}
+
+function _generarIdCompetencia(hoja, puesto) {
+  const puestoSlug = puesto.trim().toUpperCase().replace(/\s+/g, '_').substring(0, 10);
+  if (hoja.getLastRow() < 2) return 'COMP-' + puestoSlug + '-001';
+
+  const ids = hoja.getRange(2, 1, hoja.getLastRow() - 1, 1).getValues()
+    .map(function(r) { return String(r[0]); })
+    .filter(function(id) { return id.indexOf('COMP-' + puestoSlug + '-') === 0; });
+
+  let max = 0;
+  ids.forEach(function(id) {
+    const n = parseInt(id.split('-').pop(), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+
+  return 'COMP-' + puestoSlug + '-' + String(max + 1).padStart(3, '0');
+}
+
+function _validarDatosCompetencia(datos) {
+  if (!datos.puesto  || !datos.puesto.trim())  throw new Error('El campo Puesto es obligatorio.');
+  if (!datos.dominio || !datos.dominio.trim())  throw new Error('El campo Dominio es obligatorio.');
+
+  const categoriasValidas  = ['Técnico', 'Normativo', 'Herramientas', 'Blandas'];
+  const naturalezasValidas = ['Explícito', 'Tácito'];
+  const criticidadesValidas = ['Alta', 'Media', 'Baja'];
+
+  if (datos.categoria  && !categoriasValidas.includes(datos.categoria))
+    throw new Error('Categoría inválida: ' + datos.categoria);
+  if (datos.naturaleza && !naturalezasValidas.includes(datos.naturaleza))
+    throw new Error('Naturaleza inválida: ' + datos.naturaleza);
+  if (datos.criticidad && !criticidadesValidas.includes(datos.criticidad))
+    throw new Error('Criticidad inválida: ' + datos.criticidad);
+}
+
+function _obtenerPuestoPersona(ss, idPersona) {
+  try {
+    const hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return '';
+    const datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 4).getValues();
+    for (let i = 0; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idPersona) return String(datos[i][3]).trim(); // col D = Puesto
+    }
+  } catch (e) {}
+  return '';
+}
+
+/**
+ * Construye mapa dominio → fecha_ultima_evaluacion_completada para una persona.
+ * Busca en Registro_Competencias: evaluaciones con Estado='Completado'.
+ */
+function _historialEvaluaciones(ss, idPersona) {
+  const mapa = {};
+  try {
+    const hoja = ss.getSheetByName('Registro_Competencias');
+    if (!hoja || hoja.getLastRow() < 2) return mapa;
+    const datos = hoja.getDataRange().getValues();
+
+    // Col E (4) = ID_Persona, Col I (8) = Dominio, Col C (2) = Fecha_Completado, Col W (22) = Estado
+    for (let i = 1; i < datos.length; i++) {
+      if (String(datos[i][4]).trim() !== idPersona) continue;
+      if (String(datos[i][22]).trim() !== 'Completado') continue;
+
+      const dominio = String(datos[i][8]).trim();
+      const fecha   = datos[i][2] ? new Date(datos[i][2]) : null;
+      if (!fecha || !dominio) continue;
+
+      // Guardar la fecha más reciente por dominio
+      if (!mapa[dominio] || fecha > mapa[dominio]) mapa[dominio] = fecha;
+    }
+  } catch (e) {
+    Logger.log('[Competencias] _historialEvaluaciones error: ' + e.message);
+  }
+  return mapa;
+}
+
+function _construirIndiceExistentes(hoja) {
+  const idx = {};
+  if (!hoja || hoja.getLastRow() < 2) return idx;
+  const datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 10).getValues();
+  for (let i = 0; i < datos.length; i++) {
+    const activo = datos[i][9];
+    if (activo === false || String(activo).toLowerCase() === 'false') continue;
+    const clave = String(datos[i][1]).toLowerCase() + '|' + String(datos[i][2]).toLowerCase();
+    idx[clave] = true;
+  }
+  return idx;
+}
+
+// ── CSV Parser simple (maneja comillas dobles y comas) ──────────────
+function _parsearCSV(texto) {
+  const lineas = texto.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lineas.map(function(linea) {
+    const cols = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < linea.length; i++) {
+      const c = linea[i];
+      if (c === '"') {
+        if (inQuotes && linea[i + 1] === '"') { current += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (c === ',' && !inQuotes) {
+        cols.push(current);
+        current = '';
+      } else {
+        current += c;
+      }
+    }
+    cols.push(current);
+    return cols;
+  });
+}
+
+function _idxCol(cabecera, posibilidades) {
+  for (let i = 0; i < cabecera.length; i++) {
+    if (posibilidades.indexOf(cabecera[i]) >= 0) return i;
+  }
+  return -1;
+}
+
+// ------------------------------------------------------------------
+// ESTADÍSTICAS (para Dashboard — Fase 5)
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve un resumen de estado de competencias por persona.
+ * Útil para el Dashboard en Fase 5.
+ * @returns {Array<{idPersona, nombre, puesto, total, evaluadas, vencidas, pendientes}>}
+ */
+function getEstadoCompetenciasPorPersona() {
+  try {
+    const ss = _getSSCompetencias();
+    const hojaP = ss.getSheetByName('Personas');
+    if (!hojaP || hojaP.getLastRow() < 2) return [];
+
+    const personas = hojaP.getRange(2, 1, hojaP.getLastRow() - 1, 6).getValues();
+    const resultado = [];
+
+    for (let i = 0; i < personas.length; i++) {
+      const activo = personas[i][5];
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+
+      const idPersona = String(personas[i][0]).trim();
+      const nombre    = String(personas[i][1]).trim();
+      const puesto    = String(personas[i][3]).trim();
+      if (!idPersona || !puesto) continue;
+
+      const compPuesto    = getCompetencias(puesto);
+      const pendientes    = getCompetenciasPendientesPorPersona(idPersona, puesto);
+      const historial     = _historialEvaluaciones(ss, idPersona);
+
+      const evaluadas = compPuesto.filter(function(c) {
+        return !!historial[c.dominio];
+      }).length;
+
+      const vencidas = pendientes.filter(function(p) {
+        return p.diasVencida !== null; // fue evaluada pero venció
+      }).length;
+
+      const nuncaEval = pendientes.filter(function(p) {
+        return p.diasVencida === null; // nunca evaluada
+      }).length;
+
+      resultado.push({
+        idPersona:  idPersona,
+        nombre:     nombre,
+        puesto:     puesto,
+        total:      compPuesto.length,
+        evaluadas:  evaluadas,
+        vencidas:   vencidas,
+        pendientes: nuncaEval,
+        alDia:      compPuesto.length - pendientes.length
+      });
+    }
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[Competencias] getEstadoCompetenciasPorPersona error: ' + e.message);
+    return [];
+  }
+}
+
+// ------------------------------------------------------------------
+// FUNCIONES DE PRUEBA
+// ------------------------------------------------------------------
+
+function TEST_agregarCompetencia() {
+  const res = agregarCompetencia({
+    puesto:          'Analista de Calidad',
+    dominio:         'POE-CAL-001 Control de documentos',
+    categoria:       'Normativo',
+    naturaleza:      'Explícito',
+    criticidad:      'Alta',
+    driveId:         '',
+    driveNombre:     'POE-CAL-001',
+    frecuenciaMeses: 12
+  });
+  Logger.log('TEST agregarCompetencia: ' + JSON.stringify(res));
+}
+
+function TEST_getCompetenciasPendientes() {
+  const personas = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName('Personas').getRange(2, 1, 1, 4).getValues();
+  const idPersona = String(personas[0][0]);
+  const puesto    = String(personas[0][3]);
+  const res = getCompetenciasPendientesPorPersona(idPersona, puesto);
+  Logger.log('TEST pendientes: ' + JSON.stringify(res));
+}
+
+function TEST_importarCSV() {
+  const csv = 'Puesto,Dominio,Categoría,Naturaleza,Criticidad,Frecuencia_Meses\n' +
+              'Analista,POE-001 Recepción de muestras,Técnico,Explícito,Alta,12\n' +
+              'Analista,POE-002 Cadena de frío,Técnico,Explícito,Alta,6\n' +
+              'Jefe de Calidad,SOP-NC Gestión de NC,Normativo,Explícito,Alta,12\n';
+  const res = importarCompetenciasDesdeCSV(csv);
+  Logger.log('TEST importar CSV: ' + JSON.stringify(res));
+}

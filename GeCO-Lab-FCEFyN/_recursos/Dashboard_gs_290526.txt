@@ -1,0 +1,574 @@
+// ============================================================
+// GeCO Lab — Dashboard.gs
+// Lógica de métricas, alertas y estado general del sistema.
+// Módulo transversal — Fase 5.
+//
+// DEPENDENCIAS:
+//   - Config.gs        → getSpreadsheetId()
+//   - Competencias.gs  → getEstadoCompetenciasPorPersona()
+//   - PlanAcciones.gs  → getResumenPlanesAccion(), getPlanesActivos()
+// ============================================================
+
+// ------------------------------------------------------------------
+// FUNCIÓN MAESTRA — llamada desde DialogoDashboard.html
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve todos los datos necesarios para el Dashboard en una sola llamada.
+ * Evitar múltiples round-trips desde el HTML.
+ *
+ * @returns {Object} {
+ *   kpis, alertas, estadoPersonas, ultimasEvaluaciones,
+ *   distribucionEscalas, tendenciaMensual, resumenPlanes
+ * }
+ */
+function getDatosDashboard() {
+  try {
+    const ss = _getSS_Dash();
+
+    return {
+      kpis:               _calcularKPIs(ss),
+      alertas:            getAlertasOperacionales(ss),
+      estadoPersonas:     getEstadoCompetenciasPorPersona(),   // de Competencias.gs
+      ultimasEvaluaciones: _ultimasEvaluaciones(ss, 15),
+      distribucionEscalas: _distribucionEscalas(ss),
+      tendenciaMensual:    _tendenciaMensual(ss, 6),
+      resumenPlanes:       getResumenPlanesAccion()             // de PlanAcciones.gs
+    };
+  } catch (e) {
+    Logger.log('[Dashboard] getDatosDashboard error: ' + e.message);
+    return {
+      kpis: {}, alertas: [], estadoPersonas: [],
+      ultimasEvaluaciones: [], distribucionEscalas: {},
+      tendenciaMensual: [], resumenPlanes: {}
+    };
+  }
+}
+
+// ------------------------------------------------------------------
+// KPIs
+// ------------------------------------------------------------------
+
+/**
+ * @returns {{
+ *   totalEvaluaciones, completadas, pendientes, enCurso,
+ *   tasaCompletado, personasEvaluadas, personasTotal,
+ *   planesActivos, planesVencidos, competenciasSinDoc
+ * }}
+ */
+function _calcularKPIs(ss) {
+  const reg = ss.getSheetByName('Registro_Competencias');
+  const per = ss.getSheetByName('Personas');
+
+  var total = 0, completadas = 0, pendientes = 0, enCurso = 0;
+  const personasConEval = {};
+
+  if (reg && reg.getLastRow() > 1) {
+    const datos = reg.getDataRange().getValues().slice(1);
+    total = datos.length;
+    datos.forEach(function(r) {
+      const estado = String(r[22] || '');
+      if (estado === 'Completado') { completadas++; }
+      else if (estado === 'En Curso') { enCurso++; }
+      else { pendientes++; }
+      const idP = String(r[4] || '').trim();
+      if (idP) personasConEval[idP] = true;
+    });
+  }
+
+  var personasTotal = 0;
+  if (per && per.getLastRow() > 1) {
+    const datosPer = per.getRange(2, 1, per.getLastRow() - 1, 6).getValues();
+    datosPer.forEach(function(r) {
+      const activo = r[5];
+      if (activo !== false && String(activo).toLowerCase() !== 'false') personasTotal++;
+    });
+  }
+
+  // Competencias sin documento vinculado
+  var compSinDoc = 0;
+  const hojaComp = ss.getSheetByName('Puestos_Competencias');
+  if (hojaComp && hojaComp.getLastRow() > 1) {
+    const datosComp = hojaComp.getRange(2, 1, hojaComp.getLastRow() - 1, 10).getValues();
+    datosComp.forEach(function(r) {
+      const activo = r[9];
+      if (activo !== false && String(activo).toLowerCase() !== 'false') {
+        if (!String(r[6]).trim()) compSinDoc++;
+      }
+    });
+  }
+
+  const resPlanes = getResumenPlanesAccion();
+
+  return {
+    totalEvaluaciones:  total,
+    completadas:        completadas,
+    pendientes:         pendientes,
+    enCurso:            enCurso,
+    tasaCompletado:     total > 0 ? Math.round((completadas / total) * 100) : 0,
+    personasEvaluadas:  Object.keys(personasConEval).length,
+    personasTotal:      personasTotal,
+    planesActivos:      (resPlanes.pendientes || 0) + (resPlanes.enCurso || 0),
+    planesVencidos:     resPlanes.vencidos || 0,
+    competenciasSinDoc: compSinDoc
+  };
+}
+
+// ------------------------------------------------------------------
+// ALERTAS OPERACIONALES
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve alertas priorizadas del sistema.
+ * Cada alerta tiene: { nivel, tipo, titulo, detalle, fecha? }
+ * nivel: 'critico' | 'advertencia' | 'info'
+ *
+ * @param {Spreadsheet} [ss]
+ * @returns {Array<Object>}
+ */
+function getAlertasOperacionales(ss) {
+  ss = ss || _getSS_Dash();
+  const alertas = [];
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  try {
+    // ── A. Planes de acción vencidos ──────────────────────────────
+    const planesActivos = getPlanesActivos();
+    const vencidos = planesActivos.filter(function(p) {
+      return p.diasRestantes !== null && p.diasRestantes < 0;
+    });
+    if (vencidos.length > 0) {
+      alertas.push({
+        nivel:  'critico',
+        tipo:   'planes_vencidos',
+        titulo: vencidos.length + ' plan(es) de acción vencido(s)',
+        detalle: vencidos.map(function(p) {
+          return p.evaluado + ' — ' + p.dominio + ' (vencido hace ' + Math.abs(p.diasRestantes) + 'd)';
+        }).join(' | ')
+      });
+    }
+
+    // ── B. Planes por vencer en 7 días ────────────────────────────
+    const porVencer = planesActivos.filter(function(p) {
+      return p.diasRestantes !== null && p.diasRestantes >= 0 && p.diasRestantes <= 7;
+    });
+    if (porVencer.length > 0) {
+      alertas.push({
+        nivel:  'advertencia',
+        tipo:   'planes_por_vencer',
+        titulo: porVencer.length + ' plan(es) vence(n) en los próximos 7 días',
+        detalle: porVencer.map(function(p) {
+          return p.evaluado + ' — ' + p.dominio + ' (' + (p.diasRestantes === 0 ? 'hoy' : 'en ' + p.diasRestantes + 'd') + ')';
+        }).join(' | ')
+      });
+    }
+
+    // ── C. Evaluaciones "En Curso" sin actividad hace >14 días ───
+    const reg = ss.getSheetByName('Registro_Competencias');
+    if (reg && reg.getLastRow() > 1) {
+      const datos = reg.getDataRange().getValues().slice(1);
+      const abandonadas = [];
+      datos.forEach(function(r) {
+        if (String(r[22]) !== 'Pendiente' && String(r[22]) !== 'En Curso') return;
+        var fechaGen = r[1] ? new Date(r[1]) : null;
+        if (!fechaGen) return;
+        fechaGen.setHours(0, 0, 0, 0);
+        var dias = Math.floor((hoy - fechaGen) / (1000 * 60 * 60 * 24));
+        if (dias > 14) {
+          abandonadas.push(String(r[3]) + ' — ' + String(r[8] || r[11] || '') + ' (' + dias + 'd sin responder)');
+        }
+      });
+      if (abandonadas.length > 0) {
+        alertas.push({
+          nivel:  'advertencia',
+          tipo:   'evaluaciones_sin_actividad',
+          titulo: abandonadas.length + ' evaluación(es) sin respuesta hace más de 14 días',
+          detalle: abandonadas.join(' | ')
+        });
+      }
+    }
+
+    // ── D. Personas sin ninguna evaluación ────────────────────────
+    const per = ss.getSheetByName('Personas');
+    if (per && per.getLastRow() > 1 && reg && reg.getLastRow() > 1) {
+      const datosReg = reg.getDataRange().getValues().slice(1);
+      const idsConEval = {};
+      datosReg.forEach(function(r) { idsConEval[String(r[4]).trim()] = true; });
+
+      const datosPer = per.getRange(2, 1, per.getLastRow() - 1, 6).getValues();
+      const sinEval = [];
+      datosPer.forEach(function(r) {
+        const activo = r[5];
+        if (activo === false || String(activo).toLowerCase() === 'false') return;
+        const id = String(r[0]).trim();
+        if (id && !idsConEval[id]) sinEval.push(String(r[1]));
+      });
+      if (sinEval.length > 0) {
+        alertas.push({
+          nivel:  'info',
+          tipo:   'personas_sin_evaluacion',
+          titulo: sinEval.length + ' persona(s) sin evaluaciones registradas',
+          detalle: sinEval.join(', ')
+        });
+      }
+    }
+
+    // ── E. Competencias críticas sin documento ────────────────────
+    const hojaComp = ss.getSheetByName('Puestos_Competencias');
+    if (hojaComp && hojaComp.getLastRow() > 1) {
+      const datosComp = hojaComp.getRange(2, 1, hojaComp.getLastRow() - 1, 10).getValues();
+      const criticasSinDoc = [];
+      datosComp.forEach(function(r) {
+        const activo = r[9];
+        if (activo === false || String(activo).toLowerCase() === 'false') return;
+        if (String(r[5]).trim() === 'Alta' && !String(r[6]).trim()) {
+          criticasSinDoc.push(String(r[1]) + ' / ' + String(r[2]));
+        }
+      });
+      if (criticasSinDoc.length > 0) {
+        alertas.push({
+          nivel:  'advertencia',
+          tipo:   'competencias_criticas_sin_doc',
+          titulo: criticasSinDoc.length + ' competencia(s) críticas sin documento vinculado',
+          detalle: criticasSinDoc.slice(0, 5).join(' | ') + (criticasSinDoc.length > 5 ? ' …' : '')
+        });
+      }
+    }
+
+  } catch (e) {
+    Logger.log('[Dashboard] getAlertasOperacionales error: ' + e.message);
+  }
+
+  // Ordenar: crítico → advertencia → info
+  const orden = { critico: 0, advertencia: 1, info: 2 };
+  alertas.sort(function(a, b) { return (orden[a.nivel] || 9) - (orden[b.nivel] || 9); });
+
+  return alertas;
+}
+
+// ------------------------------------------------------------------
+// ÚLTIMAS EVALUACIONES
+// ------------------------------------------------------------------
+
+/**
+ * @param {Spreadsheet} ss
+ * @param {number} n — cuántas filas devolver
+ * @returns {Array<Object>}
+ */
+function _ultimasEvaluaciones(ss, n) {
+  const reg = ss.getSheetByName('Registro_Competencias');
+  if (!reg || reg.getLastRow() < 2) return [];
+
+  const datos = reg.getDataRange().getValues().slice(1)
+    .filter(function(r) { return !!r[0]; })
+    .sort(function(a, b) { return new Date(b[1]) - new Date(a[1]); })
+    .slice(0, n);
+
+  return datos.map(function(r) {
+    return {
+      idEvaluacion: String(r[0]  || ''),
+      fecha:        r[1] ? _formatFechaDash(new Date(r[1])) : '—',
+      evaluado:     String(r[3]  || ''),
+      puesto:       String(r[6]  || r[5] || ''),
+      dominio:      String(r[8]  || r[11] || ''),
+      modo:         String(r[13] || ''),
+      puntaje:      r[16] !== '' && r[16] !== undefined ? Number(r[16]) : null,
+      escala:       String(r[17] || ''),
+      estado:       String(r[22] || 'Pendiente'),
+      generaAccion: r[23] === true
+    };
+  });
+}
+
+// ------------------------------------------------------------------
+// DISTRIBUCIÓN DE ESCALAS
+// ------------------------------------------------------------------
+
+/**
+ * @returns {{ Excelente, Bueno, Regular, Insuficiente, total }}
+ */
+function _distribucionEscalas(ss) {
+  const reg = ss.getSheetByName('Registro_Competencias');
+  const dist = { Excelente: 0, Bueno: 0, Regular: 0, Insuficiente: 0, total: 0 };
+  if (!reg || reg.getLastRow() < 2) return dist;
+
+  const datos = reg.getDataRange().getValues().slice(1);
+  datos.forEach(function(r) {
+    if (String(r[22]) !== 'Completado') return;
+    const escala = String(r[17] || '');
+    if (dist[escala] !== undefined) { dist[escala]++; dist.total++; }
+  });
+  return dist;
+}
+
+// ------------------------------------------------------------------
+// TENDENCIA MENSUAL
+// ------------------------------------------------------------------
+
+/**
+ * Devuelve evaluaciones completadas por mes (últimos N meses).
+ * @param {Spreadsheet} ss
+ * @param {number} meses
+ * @returns {Array<{ mes, label, completadas, conAccion }>}
+ */
+function _tendenciaMensual(ss, meses) {
+  const reg = ss.getSheetByName('Registro_Competencias');
+  if (!reg || reg.getLastRow() < 2) return [];
+
+  const hoy   = new Date();
+  const desde = new Date(hoy.getFullYear(), hoy.getMonth() - (meses - 1), 1);
+
+  // Construir mapa mes → { completadas, conAccion }
+  const mapa = {};
+  for (var i = 0; i < meses; i++) {
+    var d = new Date(hoy.getFullYear(), hoy.getMonth() - (meses - 1 - i), 1);
+    var clave = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    mapa[clave] = { mes: clave, label: _labelMes(d), completadas: 0, conAccion: 0 };
+  }
+
+  const datos = reg.getDataRange().getValues().slice(1);
+  datos.forEach(function(r) {
+    if (String(r[22]) !== 'Completado') return;
+    var fechaComp = r[2] ? new Date(r[2]) : null;
+    if (!fechaComp || fechaComp < desde) return;
+    var clave = fechaComp.getFullYear() + '-' + String(fechaComp.getMonth() + 1).padStart(2, '0');
+    if (mapa[clave]) {
+      mapa[clave].completadas++;
+      if (r[23] === true) mapa[clave].conAccion++;
+    }
+  });
+
+  return Object.values(mapa);
+}
+
+function _labelMes(d) {
+  var meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return meses[d.getMonth()] + ' ' + String(d.getFullYear()).slice(2);
+}
+
+// ------------------------------------------------------------------
+// SHEET DASHBOARD — generación en la hoja (menú → actualizar)
+// ------------------------------------------------------------------
+
+/**
+ * Escribe el Dashboard en la hoja "Dashboard" del Spreadsheet.
+ * Versión mejorada de la función en Codigo.gs: usa todas las fuentes de datos.
+ * La función actualizarDashboard() en Codigo.gs llama a ésta.
+ */
+function escribirDashboardEnHoja() {
+  const ss = _getSS_Dash();
+  const datos = getDatosDashboard();
+
+  let dash = ss.getSheetByName('Dashboard');
+  if (!dash) dash = ss.insertSheet('Dashboard');
+  dash.clearContents();
+  dash.clearFormats();
+  dash.setColumnWidth(1, 30);  // margen
+
+  const ANCHO = 11;
+  let fila = 1;
+
+  // ── Título ─────────────────────────────────────────────────────
+  dash.getRange(fila, 1, 1, ANCHO).merge()
+    .setValue('🧪 GeCO Lab — Dashboard de Competencias')
+    .setFontSize(15).setFontWeight('bold').setHorizontalAlignment('center')
+    .setBackground('#1a56db').setFontColor('#ffffff');
+  fila++;
+
+  dash.getRange(fila, 1, 1, ANCHO).merge()
+    .setValue('Actualizado: ' + new Date().toLocaleString('es-AR'))
+    .setFontSize(10).setHorizontalAlignment('center').setFontColor('#6b7280')
+    .setBackground('#eff6ff');
+  fila += 2;
+
+  // ── KPIs fila 1 ────────────────────────────────────────────────
+  const k = datos.kpis;
+  const kpis1 = [
+    ['Total evaluaciones', k.totalEvaluaciones, '#1a56db'],
+    ['Completadas',         k.completadas,        '#0e9f6e'],
+    ['Tasa completado',     k.tasaCompletado + '%','#0e9f6e'],
+    ['Pendientes',          k.pendientes,          '#6b7280'],
+    ['Planes activos',      k.planesActivos,       '#e65100']
+  ];
+  kpis1.forEach(function(kpi, i) {
+    var col = 2 + i * 2;
+    dash.getRange(fila, col).setValue(kpi[0]).setFontSize(9).setFontColor('#6b7280');
+    dash.getRange(fila + 1, col).setValue(kpi[1]).setFontSize(20).setFontWeight('bold').setFontColor(kpi[2]);
+  });
+  fila += 3;
+
+  // ── KPIs fila 2 ────────────────────────────────────────────────
+  const kpis2 = [
+    ['Personas evaluadas', k.personasEvaluadas + '/' + k.personasTotal, '#1a56db'],
+    ['Planes vencidos',    k.planesVencidos,  '#f05252'],
+    ['Comp. sin doc',      k.competenciasSinDoc, '#ff8c00']
+  ];
+  kpis2.forEach(function(kpi, i) {
+    var col = 2 + i * 2;
+    dash.getRange(fila, col).setValue(kpi[0]).setFontSize(9).setFontColor('#6b7280');
+    dash.getRange(fila + 1, col).setValue(kpi[1]).setFontSize(20).setFontWeight('bold').setFontColor(kpi[2]);
+  });
+  fila += 3;
+
+  // ── Alertas ────────────────────────────────────────────────────
+  if (datos.alertas.length > 0) {
+    dash.getRange(fila, 1, 1, ANCHO).merge()
+      .setValue('⚠️ Alertas operacionales (' + datos.alertas.length + ')')
+      .setFontSize(11).setFontWeight('bold')
+      .setBackground('#fff7ed').setFontColor('#92400e');
+    fila++;
+
+    const coloresNivel = {
+      critico:     { bg: '#fee2e2', fg: '#991b1b' },
+      advertencia: { bg: '#fef3c7', fg: '#92400e' },
+      info:        { bg: '#eff6ff', fg: '#1e40af' }
+    };
+    datos.alertas.forEach(function(a) {
+      var c = coloresNivel[a.nivel] || coloresNivel.info;
+      dash.getRange(fila, 2, 1, ANCHO - 1).merge()
+        .setValue(a.titulo + '  →  ' + (a.detalle || ''))
+        .setFontSize(10).setBackground(c.bg).setFontColor(c.fg)
+        .setWrap(true);
+      fila++;
+    });
+    fila++;
+  }
+
+  // ── Estado por persona ─────────────────────────────────────────
+  if (datos.estadoPersonas.length > 0) {
+    dash.getRange(fila, 1, 1, ANCHO).merge()
+      .setValue('👥 Estado de competencias por persona')
+      .setFontSize(11).setFontWeight('bold')
+      .setBackground('#e8f0fe').setFontColor('#1a56db');
+    fila++;
+
+    var hdrP = ['Persona', 'Puesto', 'Total comp.', 'Al día', 'Vencidas', 'Nunca eval.', 'Cobertura'];
+    dash.getRange(fila, 2, 1, hdrP.length).setValues([hdrP])
+      .setFontWeight('bold').setFontSize(10).setBackground('#e2e8f0');
+    fila++;
+
+    datos.estadoPersonas.forEach(function(p) {
+      var cobertura = p.total > 0 ? Math.round((p.alDia / p.total) * 100) + '%' : '—';
+      dash.getRange(fila, 2, 1, 7).setValues([[
+        p.nombre, p.puesto, p.total, p.alDia, p.vencidas, p.pendientes, cobertura
+      ]]).setFontSize(10);
+
+      // Color cobertura
+      var pct = p.total > 0 ? (p.alDia / p.total) : 1;
+      var cobCol = pct >= .8
+        ? { bg: '#d1fae5', fg: '#065f46' }
+        : pct >= .5
+          ? { bg: '#fef3c7', fg: '#92400e' }
+          : { bg: '#fee2e2', fg: '#991b1b' };
+      dash.getRange(fila, 8).setBackground(cobCol.bg).setFontColor(cobCol.fg).setFontWeight('bold');
+      fila++;
+    });
+    fila++;
+  }
+
+  // ── Distribución de escalas ────────────────────────────────────
+  const dist = datos.distribucionEscalas;
+  if (dist.total > 0) {
+    dash.getRange(fila, 1, 1, ANCHO).merge()
+      .setValue('📊 Distribución de resultados (evaluaciones completadas)')
+      .setFontSize(11).setFontWeight('bold')
+      .setBackground('#f3e8ff').setFontColor('#6b21a8');
+    fila++;
+
+    var hdrD = ['Excelente', 'Bueno', 'Regular', 'Insuficiente'];
+    var colD  = [
+      { bg: '#d1fae5', fg: '#065f46' },
+      { bg: '#dbeafe', fg: '#1e40af' },
+      { bg: '#fef3c7', fg: '#92400e' },
+      { bg: '#fee2e2', fg: '#991b1b' }
+    ];
+    hdrD.forEach(function(e, i) {
+      var col = 2 + i * 2;
+      var cnt = dist[e] || 0;
+      var pct = dist.total > 0 ? Math.round((cnt / dist.total) * 100) : 0;
+      dash.getRange(fila, col).setValue(e).setFontSize(9).setFontColor('#6b7280');
+      dash.getRange(fila + 1, col).setValue(cnt + ' (' + pct + '%)')
+        .setFontSize(14).setFontWeight('bold')
+        .setFontColor(colD[i].fg).setBackground(colD[i].bg);
+    });
+    fila += 3;
+  }
+
+  // ── Últimas evaluaciones ───────────────────────────────────────
+  if (datos.ultimasEvaluaciones.length > 0) {
+    dash.getRange(fila, 1, 1, ANCHO).merge()
+      .setValue('📋 Últimas evaluaciones')
+      .setFontSize(11).setFontWeight('bold')
+      .setBackground('#e8f0fe').setFontColor('#1a56db');
+    fila++;
+
+    var hdrE = ['Fecha', 'Evaluado', 'Dominio', 'Modo', 'Puntaje', 'Escala', 'Estado'];
+    dash.getRange(fila, 2, 1, hdrE.length).setValues([hdrE])
+      .setFontWeight('bold').setFontSize(10).setBackground('#e2e8f0');
+    fila++;
+
+    const escalaColors = {
+      Excelente:    { bg: '#d1fae5', fg: '#065f46' },
+      Bueno:        { bg: '#dbeafe', fg: '#1e40af' },
+      Regular:      { bg: '#fef3c7', fg: '#92400e' },
+      Insuficiente: { bg: '#fee2e2', fg: '#991b1b' }
+    };
+    datos.ultimasEvaluaciones.forEach(function(ev) {
+      var dom = ev.dominio.length > 35 ? ev.dominio.substring(0, 35) + '…' : ev.dominio;
+      var c = escalaColors[ev.escala] || { bg: '#f9fafb', fg: '#6b7280' };
+      dash.getRange(fila, 2, 1, 7).setValues([[
+        ev.fecha, ev.evaluado, dom, ev.modo,
+        ev.puntaje !== null ? ev.puntaje + '%' : '—',
+        ev.escala  || '—',
+        ev.estado
+      ]]).setFontSize(10);
+      if (ev.escala) {
+        dash.getRange(fila, 7).setBackground(c.bg).setFontColor(c.fg).setFontWeight('bold');
+      }
+      fila++;
+    });
+  }
+
+  // Anchos finales
+  [1,2,3,4,5,6,7,8,9,10,11].forEach(function(i) { dash.setColumnWidth(i, i === 1 ? 18 : 130); });
+  dash.setColumnWidth(4, 200); // Dominio más ancho
+  dash.setFrozenRows(0);
+
+  ss.setActiveSheet(dash);
+  Logger.log('[Dashboard] Hoja Dashboard escrita correctamente.');
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+function _getSS_Dash() {
+  try {
+    const id = getSpreadsheetId();
+    if (id) return SpreadsheetApp.openById(id);
+  } catch (e) {}
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function _formatFechaDash(d) {
+  try {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy');
+  } catch (e) { return ''; }
+}
+
+// ------------------------------------------------------------------
+// FUNCIONES DE PRUEBA
+// ------------------------------------------------------------------
+
+function TEST_getDatosDashboard() {
+  const datos = getDatosDashboard();
+  Logger.log('KPIs: '      + JSON.stringify(datos.kpis));
+  Logger.log('Alertas: '   + JSON.stringify(datos.alertas));
+  Logger.log('Dist: '      + JSON.stringify(datos.distribucionEscalas));
+  Logger.log('Tendencia: ' + JSON.stringify(datos.tendenciaMensual));
+}
+
+function TEST_alertas() {
+  Logger.log('Alertas: ' + JSON.stringify(getAlertasOperacionales()));
+}

@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+    background: #f5f7fa;
+    color: #2d3748;
+    overflow: hidden;
+  }
+
+  /* ── Wizard header ──────────────────────────────────── */
+  .wizard-header {
+    background: #1a56db;
+    padding: 12px 16px 0;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .wizard-header h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+
+  .pasos {
+    display: flex;
+    gap: 0;
+  }
+  .paso-tab {
+    flex: 1;
+    padding: 7px 0;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,.5);
+    border-bottom: 3px solid transparent;
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .paso-tab.activo {
+    color: #fff;
+    border-bottom-color: #fff;
+  }
+  .paso-tab.completado {
+    color: rgba(255,255,255,.8);
+  }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  .wizard-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px;
+  }
+
+  .paso { display: none; }
+  .paso.visible { display: block; }
+
+  .wizard-footer {
+    padding: 10px 16px;
+    border-top: 1px solid #e2e8f0;
+    background: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  /* ── Botones ─────────────────────────────────────────── */
+  .btn {
+    padding: 7px 16px;
+    border: none; border-radius: 5px;
+    cursor: pointer; font-size: 13px; font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn-primary  { background: #1a56db; color: #fff; }
+  .btn-success  { background: #0e9f6e; color: #fff; }
+  .btn-ghost    { background: #f3f4f6; color: #374151; }
+  .btn-danger   { background: #f05252; color: #fff; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn-primary:hover:not(:disabled)  { background: #1e429f; }
+  .btn-success:hover:not(:disabled)  { background: #057a55; }
+
+  /* ── Form groups ─────────────────────────────────────── */
+  .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .form-group label {
+    font-size: 11px; font-weight: 700; color: #374151;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .form-group select, .form-group input {
+    padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 5px;
+    font-size: 13px; background: #fff; font-family: inherit; width: 100%;
+  }
+  .form-group select:focus, .form-group input:focus {
+    outline: none; border-color: #1a56db; box-shadow: 0 0 0 2px #bfdbfe;
+  }
+  .form-group input[readonly] { background: #f9fafb; color: #6b7280; }
+  .form-group .hint { font-size: 11px; color: #9ca3af; }
+
+  .req { color: #f05252; }
+
+  /* ── Card de persona ─────────────────────────────────── */
+  .persona-card {
+    display: none;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #1e40af;
+  }
+  .persona-card.visible { display: block; }
+  .persona-card strong { font-weight: 700; }
+
+  /* ── Competencias sugeridas ──────────────────────────── */
+  .section-title {
+    font-size: 12px; font-weight: 700; color: #374151;
+    text-transform: uppercase; letter-spacing: .5px;
+    margin: 14px 0 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-title .badge-count {
+    background: #1a56db; color: #fff;
+    padding: 1px 6px; border-radius: 10px;
+    font-size: 11px; font-weight: 700;
+  }
+
+  .comp-lista { display: flex; flex-direction: column; gap: 4px; }
+
+  .comp-item {
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 9px 12px;
+    cursor: pointer;
+    background: #fff;
+    transition: border-color .15s, background .15s;
+    position: relative;
+  }
+  .comp-item:hover { border-color: #93c5fd; background: #f0f7ff; }
+  .comp-item.seleccionado { border-color: #1a56db; background: #eff6ff; }
+  .comp-item.vencido     { border-left: 4px solid #f05252; }
+  .comp-item.nunca-eval  { border-left: 4px solid #fbbf24; }
+  .comp-item.al-dia      { border-left: 4px solid #34d399; }
+
+  .comp-nombre { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .comp-meta {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    font-size: 11px;
+  }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .badge-alta      { background: #fee2e2; color: #991b1b; }
+  .badge-media     { background: #fef3c7; color: #92400e; }
+  .badge-baja      { background: #d1fae5; color: #065f46; }
+  .badge-explicito { background: #e0f2fe; color: #0369a1; }
+  .badge-tacito    { background: #f3e8ff; color: #6b21a8; }
+  .badge-vencido   { background: #fee2e2; color: #991b1b; }
+  .badge-nunca     { background: #fef3c7; color: #92400e; }
+  .badge-doc       { background: #dcfce7; color: #166534; }
+  .badge-sin-doc   { background: #f1f5f9; color: #94a3b8; font-style:italic; }
+
+  .comp-seleccionada-icon {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    color: #1a56db; font-size: 18px; display: none;
+  }
+  .comp-item.seleccionado .comp-seleccionada-icon { display: block; }
+
+  .toggle-todas {
+    font-size: 12px; color: #1a56db; cursor: pointer;
+    text-decoration: underline; margin-top: 8px; display: inline-block;
+    background: none; border: none; padding: 0;
+  }
+
+  .todas-lista { display: none; margin-top: 6px; }
+  .todas-lista.visible { display: flex; flex-direction: column; gap: 4px; }
+
+  /* ── Paso 3 — Configuración ──────────────────────────── */
+  .resumen-card {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #166534;
+    line-height: 1.8;
+    margin-bottom: 14px;
+  }
+  .resumen-card strong { font-weight: 700; }
+
+  .modo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modo-card {
+    border: 2px solid #e2e8f0; border-radius: 8px; padding: 10px 12px;
+    cursor: pointer; background: #fff; transition: all .15s; text-align: center;
+  }
+  .modo-card:hover { border-color: #93c5fd; }
+  .modo-card.seleccionado { border-color: #1a56db; background: #eff6ff; }
+  .modo-card .modo-icon { font-size: 22px; display: block; margin-bottom: 4px; }
+  .modo-card .modo-titulo { font-weight: 600; font-size: 13px; }
+  .modo-card .modo-desc { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .modo-sugerido { font-size: 11px; color: #1a56db; margin-top: 4px; display: none; }
+  .modo-sugerido.visible { display: block; }
+
+  .cantidad-row { display: flex; gap: 10px; align-items: center; }
+  .cantidad-row input[type=range] { flex: 1; accent-color: #1a56db; }
+  .cantidad-valor {
+    min-width: 32px; text-align: center; font-weight: 700;
+    font-size: 15px; color: #1a56db;
+  }
+
+  /* ── Doc manual ──────────────────────────────────────── */
+  .doc-manual { display: none; margin-top: 8px; }
+  .doc-manual.visible { display: block; }
+
+  /* ── Spinner / alerta ────────────────────────────────── */
+  .spinner {
+    display: none; width: 16px; height: 16px;
+    border: 2px solid #bfdbfe; border-top-color: #1a56db;
+    border-radius: 50%; animation: spin .6s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner.visible { display: inline-block; }
+
+  .alert {
+    padding: 8px 12px; border-radius: 6px; font-size: 12px;
+    display: none; margin-top: 8px;
+  }
+  .alert.error   { background: #fee2e2; color: #991b1b; display: block; }
+  .alert.success { background: #d1fae5; color: #065f46; display: block; }
+  .alert.info    { background: #eff6ff; color: #1e40af; display: block; }
+
+  .empty-hint { font-size: 12px; color: #9ca3af; text-align: center; padding: 16px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Wizard header ───────────────────────────────── -->
+  <div class="wizard-header">
+    <h2>📝 Nueva evaluación de competencia</h2>
+    <div class="pasos">
+      <div class="paso-tab activo"     id="tab1">① Persona</div>
+      <div class="paso-tab"            id="tab2">② Competencia</div>
+      <div class="paso-tab"            id="tab3">③ Configurar</div>
+    </div>
+  </div>
+
+  <!-- ── Body ─────────────────────────────────────────── -->
+  <div class="wizard-body">
+
+    <!-- ══ PASO 1 — Persona ══════════════════════════════ -->
+    <div class="paso visible" id="paso1">
+      <div class="form-group">
+        <label>Persona a evaluar <span class="req">*</span></label>
+        <select id="selectPersona" onchange="onPersonaChange()">
+          <option value="">— Seleccioná una persona —</option>
+        </select>
+      </div>
+      <div class="persona-card" id="personaCard"></div>
+      <div id="alertaPaso1" class="alert"></div>
+    </div>
+
+    <!-- ══ PASO 2 — Competencia ══════════════════════════ -->
+    <div class="paso" id="paso2">
+
+      <div class="section-title">
+        ⚠️ Pendientes / vencidas
+        <span class="badge-count" id="cntPendientes">0</span>
+      </div>
+      <div class="comp-lista" id="listaPendientes">
+        <div class="empty-hint" id="emptyPendientes">Cargando…</div>
+      </div>
+
+      <button class="toggle-todas" onclick="toggleTodas()" id="btnToggleTodas">
+        ▸ Ver todas las competencias del puesto
+      </button>
+      <div class="todas-lista" id="listaTodas"></div>
+
+      <div id="alertaPaso2" class="alert"></div>
+    </div>
+
+    <!-- ══ PASO 3 — Configuración ════════════════════════ -->
+    <div class="paso" id="paso3">
+
+      <!-- Resumen de lo seleccionado -->
+      <div class="resumen-card" id="resumenCard">
+        <strong>Persona:</strong> <span id="resPersona">—</span><br>
+        <strong>Competencia:</strong> <span id="resCompetencia">—</span><br>
+        <strong>Documento:</strong> <span id="resDocumento">—</span>
+      </div>
+
+      <!-- Documento: auto-cargado o selector manual -->
+      <div class="form-group" id="grupoDocManual" style="display:none">
+        <label>Documento en Drive <span class="req">*</span></label>
+        <select id="selectDocDrive">
+          <option value="">— Sin documento vinculado a la competencia —</option>
+        </select>
+        <span class="hint">Esta competencia no tiene documento vinculado. Podés elegir uno de Drive o dejar vacío para evaluación presencial sin soporte.</span>
+      </div>
+
+      <!-- Modo de evaluación -->
+      <div class="form-group">
+        <label>Modo de evaluación</label>
+        <p class="modo-sugerido" id="modoSugerido">💡 Sugerido por naturaleza de la competencia</p>
+        <div class="modo-grid">
+          <div class="modo-card" id="modoAutonomo" onclick="seleccionarModo('autonomo')">
+            <span class="modo-icon">💻</span>
+            <div class="modo-titulo">Autónomo</div>
+            <div class="modo-desc">Google Form, el evaluado responde cuando quiera</div>
+          </div>
+          <div class="modo-card" id="modoPresencial" onclick="seleccionarModo('presencial')">
+            <span class="modo-icon">👤</span>
+            <div class="modo-titulo">Presencial</div>
+            <div class="modo-desc">El evaluador ingresa el resultado en persona</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cantidad de preguntas -->
+      <div class="form-group">
+        <label>Cantidad de preguntas</label>
+        <div class="cantidad-row">
+          <input type="range" id="sliderCantidad" min="3" max="20" value="5" oninput="onSlider()">
+          <div class="cantidad-valor" id="valorCantidad">5</div>
+        </div>
+        <span class="hint">Recomendado: 5–10 preguntas por evaluación.</span>
+      </div>
+
+      <div id="alertaPaso3" class="alert"></div>
+    </div>
+
+  </div><!-- /wizard-body -->
+
+  <!-- ── Footer ───────────────────────────────────────── -->
+  <div class="wizard-footer">
+    <button class="btn btn-ghost" id="btnVolver"   onclick="irPaso(pasoActual - 1)" style="display:none">← Volver</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+      <div class="spinner" id="spinGen"></div>
+      <button class="btn btn-ghost"   onclick="google.script.host.close()">Cancelar</button>
+      <button class="btn btn-primary" id="btnSiguiente" onclick="siguiente()" disabled>Siguiente →</button>
+      <button class="btn btn-success" id="btnGenerar"   onclick="generar()"    style="display:none" disabled>⚡ Generar evaluación</button>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── Estado global ─────────────────────────────────────────────────
+var personas       = [];
+var personaSel     = null;   // objeto persona seleccionada
+
+var compPendientes = [];     // competencias pendientes/vencidas
+var compTodas      = [];     // todas las competencias del puesto
+var compSel        = null;   // competencia seleccionada
+
+var modoSel        = null;   // 'autonomo' | 'presencial'
+var docsDrive      = [];     // para cuando no hay driveId en la competencia
+
+var pasoActual     = 1;
+
+// ── Init ──────────────────────────────────────────────────────────
+window.onload = function() {
+  cargarPersonas();
+};
+
+// ── PASO 1 — Persona ──────────────────────────────────────────────
+function cargarPersonas() {
+  google.script.run
+    .withSuccessHandler(function(data) {
+      personas = data || [];
+      var sel = document.getElementById('selectPersona');
+      personas.forEach(function(p) {
+        var o = document.createElement('option');
+        o.value = p.idPersona;
+        o.text  = p.nombre + (p.puesto ? ' — ' + p.puesto : '') + (p.area ? ' (' + p.area + ')' : '');
+        sel.appendChild(o);
+      });
+    })
+    .withFailureHandler(function(err) { mostrarAlerta('alertaPaso1', 'error', 'Error cargando personas: ' + err.message); })
+    .getPersonas();
+}
+
+function onPersonaChange() {
+  var id = document.getElementById('selectPersona').value;
+  personaSel = id ? personas.find(function(p) { return p.idPersona === id; }) : null;
+
+  var card = document.getElementById('personaCard');
+  if (personaSel) {
+    card.innerHTML =
+      '<strong>' + esc(personaSel.nombre) + '</strong><br>' +
+      (personaSel.puesto ? '📌 ' + esc(personaSel.puesto) + '<br>' : '') +
+      (personaSel.area   ? '🏢 ' + esc(personaSel.area) + '<br>'   : '') +
+      (personaSel.mail   ? '✉️ ' + esc(personaSel.mail)             : '');
+    card.classList.add('visible');
+    ocultarAlerta('alertaPaso1');
+  } else {
+    card.classList.remove('visible');
+  }
+
+  document.getElementById('btnSiguiente').disabled = !personaSel;
+}
+
+// ── PASO 2 — Competencia ──────────────────────────────────────────
+function cargarCompetencias() {
+  document.getElementById('emptyPendientes').textContent = 'Cargando…';
+  document.getElementById('listaPendientes').innerHTML = '<div class="empty-hint" id="emptyPendientes">Cargando…</div>';
+  document.getElementById('listaTodas').innerHTML = '';
+  document.getElementById('listaTodas').classList.remove('visible');
+  document.getElementById('btnToggleTodas').textContent = '▸ Ver todas las competencias del puesto';
+
+  var cargados = 0;
+  function check() { cargados++; if (cargados === 2) document.getElementById('btnSiguiente').disabled = !compSel; }
+
+  // Pendientes/vencidas
+  google.script.run
+    .withSuccessHandler(function(data) {
+      compPendientes = data || [];
+      renderCompLista('listaPendientes', compPendientes, true);
+      document.getElementById('cntPendientes').textContent = compPendientes.length;
+      if (compPendientes.length === 0) {
+        document.getElementById('listaPendientes').innerHTML =
+          '<div class="empty-hint">✓ No hay competencias vencidas o pendientes para este puesto.</div>';
+      }
+      check();
+    })
+    .withFailureHandler(function(err) {
+      document.getElementById('listaPendientes').innerHTML =
+        '<div class="empty-hint" style="color:#c5221f">Error: ' + esc(err.message) + '</div>';
+      check();
+    })
+    .getCompetenciasPendientesPorPersona(personaSel.idPersona, personaSel.puesto);
+
+  // Todas del puesto
+  google.script.run
+    .withSuccessHandler(function(data) {
+      compTodas = data || [];
+      renderCompLista('listaTodas', compTodas, false);
+      if (compTodas.length === 0) {
+        document.getElementById('listaTodas').innerHTML =
+          '<div class="empty-hint">No hay competencias definidas para el puesto "' + esc(personaSel.puesto) + '".</div>';
+      }
+      check();
+    })
+    .withFailureHandler(function() { check(); })
+    .getCompetencias(personaSel.puesto);
+}
+
+function renderCompLista(contenedorId, lista, esPendiente) {
+  var cont = document.getElementById(contenedorId);
+  if (!lista || lista.length === 0) return;
+
+  cont.innerHTML = lista.map(function(c) {
+    var claseTipo = '';
+    var badgePendiente = '';
+
+    if (esPendiente) {
+      if (c.diasVencida !== null && c.diasVencida !== undefined) {
+        claseTipo = 'vencido';
+        badgePendiente = '<span class="badge badge-vencido">Vencida ' + c.diasVencida + 'd</span>';
+      } else {
+        claseTipo = 'nunca-eval';
+        badgePendiente = '<span class="badge badge-nunca">Nunca evaluada</span>';
+      }
+    }
+
+    var badgeCrit = 'badge-' + (c.criticidad || 'media').toLowerCase();
+    var badgeNat  = (c.naturaleza || '').toLowerCase() === 'tácito' ? 'badge-tacito' : 'badge-explicito';
+    var badgeDoc  = c.driveId ? '<span class="badge badge-doc">📄 ' + esc(c.driveNombre || c.dominio) + '</span>'
+                              : '<span class="badge badge-sin-doc">Sin doc</span>';
+    var ultEval   = c.ultimaEvaluacion ? '<span style="font-size:11px;color:#6b7280">Última: ' + esc(c.ultimaEvaluacion) + '</span>' : '';
+
+    var idComp = c.idCompetencia || (c.dominio + '|' + (c.puesto || ''));
+
+    return '<div class="comp-item ' + claseTipo + '" id="ci-' + esc(idComp) + '" onclick="seleccionarComp(' + esc(JSON.stringify(c)) + ')">' +
+      '<div class="comp-nombre">' + esc(c.dominio) + '</div>' +
+      '<div class="comp-meta">' +
+        '<span class="badge ' + badgeCrit + '">' + esc(c.criticidad) + '</span>' +
+        '<span class="badge ' + badgeNat  + '">' + esc(c.naturaleza) + '</span>' +
+        badgeDoc + badgePendiente + ultEval +
+      '</div>' +
+      '<div class="comp-seleccionada-icon">✓</div>' +
+    '</div>';
+  }).join('');
+}
+
+function seleccionarComp(comp) {
+  compSel = comp;
+  // Quitar selección de todos
+  document.querySelectorAll('.comp-item').forEach(function(el) { el.classList.remove('seleccionado'); });
+  // Marcar el seleccionado
+  var idComp = comp.idCompetencia || (comp.dominio + '|' + (comp.puesto || ''));
+  var el = document.getElementById('ci-' + idComp);
+  if (el) el.classList.add('seleccionado');
+
+  document.getElementById('btnSiguiente').disabled = false;
+  ocultarAlerta('alertaPaso2');
+}
+
+function toggleTodas() {
+  var lista = document.getElementById('listaTodas');
+  var btn   = document.getElementById('btnToggleTodas');
+  var visible = lista.classList.toggle('visible');
+  btn.textContent = visible ? '▴ Ocultar todas' : '▸ Ver todas las competencias del puesto';
+}
+
+// ── PASO 3 — Configuración ────────────────────────────────────────
+function prepararPaso3() {
+  // Resumen
+  document.getElementById('resPersona').textContent    = personaSel.nombre + (personaSel.puesto ? ' — ' + personaSel.puesto : '');
+  document.getElementById('resCompetencia').textContent = compSel.dominio + ' (' + compSel.criticidad + ')';
+  document.getElementById('resDocumento').textContent  = compSel.driveNombre || compSel.driveId || '— Sin documento vinculado';
+
+  // Si no hay driveId, mostrar selector de Drive
+  var grupoDoc = document.getElementById('grupoDocManual');
+  if (!compSel.driveId) {
+    grupoDoc.style.display = 'flex';
+    cargarDocsDrive();
+  } else {
+    grupoDoc.style.display = 'none';
+  }
+
+  // Sugerir modo según naturaleza
+  var naturaleza = (compSel.naturaleza || '').toLowerCase();
+  if (naturaleza === 'tácito' || naturaleza === 'tacito') {
+    seleccionarModo('presencial');
+    document.getElementById('modoSugerido').classList.add('visible');
+    document.getElementById('modoSugerido').textContent = '💡 Sugerido: Presencial (competencia tácita)';
+  } else {
+    seleccionarModo('autonomo');
+    document.getElementById('modoSugerido').classList.add('visible');
+    document.getElementById('modoSugerido').textContent = '💡 Sugerido: Autónomo (competencia explícita)';
+  }
+
+  document.getElementById('btnGenerar').disabled = false;
+}
+
+function cargarDocsDrive() {
+  var sel = document.getElementById('selectDocDrive');
+  while (sel.options.length > 1) sel.remove(1);
+
+  google.script.run
+    .withSuccessHandler(function(docs) {
+      docsDrive = docs || [];
+      docs.forEach(function(d) {
+        var o = document.createElement('option');
+        o.value = d.id;
+        o.text  = d.nombre;
+        sel.appendChild(o);
+      });
+      // Si la competencia tiene driveNombre, intentar pre-seleccionar
+      if (compSel.driveNombre) {
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].text.toLowerCase().includes(compSel.driveNombre.toLowerCase())) {
+            sel.selectedIndex = i; break;
+          }
+        }
+      }
+    })
+    .getDocumentosDrive();
+}
+
+function seleccionarModo(modo) {
+  modoSel = modo;
+  document.getElementById('modoAutonomo').classList.toggle('seleccionado',  modo === 'autonomo');
+  document.getElementById('modoPresencial').classList.toggle('seleccionado', modo === 'presencial');
+}
+
+function onSlider() {
+  document.getElementById('valorCantidad').textContent = document.getElementById('sliderCantidad').value;
+}
+
+// ── Navegación entre pasos ────────────────────────────────────────
+function siguiente() {
+  if (pasoActual === 1) {
+    if (!personaSel) { mostrarAlerta('alertaPaso1', 'error', 'Seleccioná una persona primero.'); return; }
+    irPaso(2);
+    cargarCompetencias();
+  } else if (pasoActual === 2) {
+    if (!compSel) { mostrarAlerta('alertaPaso2', 'error', 'Seleccioná una competencia para continuar.'); return; }
+    irPaso(3);
+    prepararPaso3();
+  }
+}
+
+function irPaso(n) {
+  if (n < 1 || n > 3) return;
+  document.getElementById('paso' + pasoActual).classList.remove('visible');
+  document.getElementById('paso' + n).classList.add('visible');
+  pasoActual = n;
+
+  // Tabs
+  [1, 2, 3].forEach(function(i) {
+    var tab = document.getElementById('tab' + i);
+    tab.classList.remove('activo', 'completado');
+    if (i < pasoActual)      tab.classList.add('completado');
+    else if (i === pasoActual) tab.classList.add('activo');
+  });
+
+  // Footer buttons
+  document.getElementById('btnVolver').style.display = pasoActual > 1 ? 'inline-block' : 'none';
+
+  if (pasoActual === 3) {
+    document.getElementById('btnSiguiente').style.display = 'none';
+    document.getElementById('btnGenerar').style.display   = 'inline-block';
+  } else {
+    document.getElementById('btnSiguiente').style.display = 'inline-block';
+    document.getElementById('btnGenerar').style.display   = 'none';
+    document.getElementById('btnSiguiente').disabled = (pasoActual === 2 && !compSel);
+  }
+}
+
+// ── Generar evaluación ────────────────────────────────────────────
+function generar() {
+  if (!personaSel || !compSel || !modoSel) {
+    mostrarAlerta('alertaPaso3', 'error', 'Faltan datos obligatorios.');
+    return;
+  }
+
+  // Determinar documento final
+  var driveId     = compSel.driveId || '';
+  var driveNombre = compSel.driveNombre || compSel.dominio;
+
+  if (!driveId) {
+    var selDoc = document.getElementById('selectDocDrive');
+    if (selDoc && selDoc.value) {
+      driveId     = selDoc.value;
+      driveNombre = selDoc.options[selDoc.selectedIndex].text;
+    }
+  }
+
+  // Modo autónomo sin documento → error
+  if (modoSel === 'autonomo' && !driveId) {
+    mostrarAlerta('alertaPaso3', 'error',
+      'Para el modo autónomo es necesario un documento Drive para generar las preguntas. ' +
+      'Vinculá uno en la gestión de competencias o seleccioná el modo presencial.');
+    return;
+  }
+
+  var cantidad = parseInt(document.getElementById('sliderCantidad').value) || 5;
+
+  var params = {
+    persona: {
+      idPersona: personaSel.idPersona,
+      nombre:    personaSel.nombre,
+      mail:      personaSel.mail,
+      puesto:    personaSel.puesto,
+      area:      personaSel.area
+    },
+    competencia: {
+      idCompetencia:   compSel.idCompetencia   || '',
+      dominio:         compSel.dominio,
+      categoria:       compSel.categoria        || '',
+      naturaleza:      compSel.naturaleza        || '',
+      criticidad:      compSel.criticidad        || '',
+      driveId:         driveId,
+      driveNombre:     driveNombre,
+      frecuenciaMeses: compSel.frecuenciaMeses  || 12
+    },
+    cantidad: cantidad,
+    modo:     modoSel
+  };
+
+  // Bloquear UI
+  document.getElementById('btnGenerar').disabled   = true;
+  document.getElementById('btnVolver').disabled    = true;
+  spin('spinGen', true);
+  mostrarAlerta('alertaPaso3', 'info',
+    modoSel === 'autonomo'
+      ? '⏳ Generando preguntas con IA y creando el formulario… puede tardar unos segundos.'
+      : '⏳ Registrando evaluación presencial…');
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      spin('spinGen', false);
+      if (res.ok) {
+        var msg = modoSel === 'autonomo'
+          ? '✅ Evaluación generada. Se creó el borrador de Gmail con el link.'
+          : '✅ Evaluación presencial registrada. Se abrirá el diálogo de corrección.';
+        mostrarAlerta('alertaPaso3', 'success', msg);
+        if (modoSel === 'autonomo' && res.formUrl) {
+          setTimeout(function() { google.script.host.close(); }, 2500);
+        } else {
+          setTimeout(function() { google.script.host.close(); }, 1800);
+        }
+      } else {
+        document.getElementById('btnGenerar').disabled = false;
+        document.getElementById('btnVolver').disabled  = false;
+        mostrarAlerta('alertaPaso3', 'error', '❌ ' + (res.error || 'Error desconocido.'));
+      }
+    })
+    .withFailureHandler(function(err) {
+      spin('spinGen', false);
+      document.getElementById('btnGenerar').disabled = false;
+      document.getElementById('btnVolver').disabled  = false;
+      mostrarAlerta('alertaPaso3', 'error', '❌ Error: ' + err.message);
+    })
+    .generarEvaluacion(params);
+}
+
+// ── Utilidades ────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function spin(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.classList.toggle('visible', on);
+}
+
+function mostrarAlerta(id, tipo, msg) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'alert ' + tipo;
+  el.textContent = msg;
+}
+
+function ocultarAlerta(id) {
+  var el = document.getElementById(id);
+  if (el) { el.className = 'alert'; el.textContent = ''; }
+}
+</script>
+</body>
+</html>

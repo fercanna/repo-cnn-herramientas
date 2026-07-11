@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 16px;
+      background: #f8f9fa;
+      font-size: 14px;
+      color: #202124;
+    }
+
+    h2 { margin-bottom: 14px; color: #1F4E79; font-size: 17px; }
+
+    /* ── Buscador ── */
+    .search-wrap { position: relative; margin-bottom: 12px; }
+    .search-wrap input {
+      width: 100%; padding: 10px 12px 10px 36px;
+      border: 2px solid #dadce0; border-radius: 6px;
+      font-size: 14px; background: #fff;
+    }
+    .search-wrap input:focus { border-color: #4285f4; outline: none; }
+    .search-wrap .ico {
+      position: absolute; left: 11px; top: 50%;
+      transform: translateY(-50%); color: #888; font-size: 15px;
+    }
+
+    .dropdown {
+      position: absolute; width: 100%; background: #fff;
+      border: 1px solid #dadce0; border-top: none;
+      border-radius: 0 0 6px 6px;
+      max-height: 210px; overflow-y: auto;
+      z-index: 100; box-shadow: 0 4px 10px rgba(0,0,0,.12);
+      display: none;
+    }
+    .dropdown-item {
+      padding: 9px 12px; cursor: pointer;
+      border-bottom: 1px solid #f1f3f4;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .dropdown-item:hover { background: #e8f0fe; }
+    .di-left .desc { font-weight: bold; font-size: 13px; }
+    .di-left .cod  { font-size: 11px; color: #888; margin-top: 2px; }
+    .di-right      { font-size: 12px; color: #5f6368; white-space: nowrap; padding-left: 8px; }
+
+    /* ── Item seleccionado ── */
+    .item-card {
+      background: #e8f0fe; border: 1px solid #4285f4;
+      border-radius: 6px; padding: 10px 12px;
+      margin-bottom: 14px; display: none;
+      justify-content: space-between; align-items: center;
+    }
+    .item-card .nombre  { font-weight: bold; color: #1F4E79; font-size: 14px; }
+    .item-card .sub     { font-size: 11px; color: #5f6368; margin-top: 2px; }
+    .item-card .cambiar { color: #ea4335; font-size: 12px; cursor: pointer; white-space: nowrap; padding-left: 12px; }
+    .item-card .cambiar:hover { text-decoration: underline; }
+
+    /* ── Panel de ajuste ── */
+    #panelAjuste { display: none; }
+
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; color: #333; }
+    label .hint { font-weight: normal; color: #888; }
+
+    select, input[type="number"], textarea {
+      width: 100%; padding: 8px 10px;
+      border: 1px solid #dadce0; border-radius: 4px;
+      font-size: 14px; background: #fff;
+    }
+    select:focus, input:focus, textarea:focus {
+      outline: none; border-color: #4285f4;
+      box-shadow: 0 0 0 2px #e8f0fe;
+    }
+    textarea { resize: vertical; min-height: 52px; }
+
+    /* ── Info del lote seleccionado ── */
+    .lote-info {
+      background: #fff; border: 1px solid #dadce0;
+      border-radius: 6px; padding: 10px 12px;
+      margin-top: 8px; font-size: 13px; display: none;
+    }
+    .lote-info .fila { display: flex; justify-content: space-between; }
+    .lote-info .etiqueta { color: #5f6368; }
+    .lote-info .valor    { font-weight: bold; font-size: 15px; color: #202124; }
+    .lote-info .venc     { font-size: 11px; color: #888; margin-top: 4px; }
+
+    /* ── Indicador de delta ── */
+    .delta {
+      margin-top: 8px; padding: 9px 12px;
+      border-radius: 4px; font-weight: bold;
+      font-size: 14px; display: none; text-align: center;
+    }
+    .delta-pos  { background: #e6f4ea; color: #137333; border: 1px solid #ceead6; }
+    .delta-neg  { background: #fce8e6; color: #a61c00; border: 1px solid #f5c6c2; }
+    .delta-cero { background: #f1f3f4; color: #5f6368; border: 1px solid #dadce0; }
+
+    /* ── Mensajes ── */
+    .msg { padding: 10px 13px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .msg-ok  { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .msg-err { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+    .loading { text-align: center; color: #4285f4; padding: 14px; font-size: 13px; display: none; }
+
+    /* ── Acciones ── */
+    .actions {
+      margin-top: 16px; padding-top: 14px;
+      border-top: 1px solid #dadce0;
+      display: flex; justify-content: flex-end; gap: 8px;
+    }
+    .btn {
+      padding: 9px 20px; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 14px; font-weight: bold;
+    }
+    .btn-secondary { background: #e8eaed; color: #3c4043; }
+    .btn-secondary:hover { background: #dadce0; }
+    .btn-primary   { background: #1F4E79; color: #fff; }
+    .btn-primary:hover { background: #1a4269; }
+    .btn-primary:disabled { background: #b0bec5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+  <h2>🔧 Ajuste de Stock</h2>
+
+  <!-- Buscador -->
+  <div class="search-wrap">
+    <span class="ico">🔍</span>
+    <input type="text" id="busqueda"
+      placeholder="Buscar insumo por código o descripción..."
+      autocomplete="off">
+    <div class="dropdown" id="dropdown"></div>
+  </div>
+
+  <!-- Item seleccionado -->
+  <div class="item-card" id="itemCard">
+    <div>
+      <div class="nombre" id="cardNombre"></div>
+      <div class="sub"    id="cardSub"></div>
+    </div>
+    <span class="cambiar" onclick="limpiarSeleccion()">✕ Cambiar</span>
+  </div>
+
+  <!-- Panel de ajuste (aparece tras seleccionar item) -->
+  <div id="panelAjuste">
+
+    <div class="form-group">
+      <label>Lote a corregir</label>
+      <select id="loteSelect" onchange="onLoteChange()">
+        <option value="">— Seleccioná un lote —</option>
+      </select>
+      <div class="lote-info" id="loteInfo">
+        <div class="fila">
+          <span class="etiqueta">Stock actual en este lote:</span>
+          <span class="valor" id="stockActualLabel">0</span>
+        </div>
+        <div class="venc" id="vencLabel"></div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>
+        Cantidad correcta
+        <span class="hint">(cuántas unidades debería haber realmente)</span>
+      </label>
+      <input type="number" id="stockCorrecto" min="0" step="1"
+        placeholder="Ingresá el stock real..."
+        oninput="calcularDelta()">
+      <div class="delta" id="deltaBox"></div>
+    </div>
+
+    <div class="form-group">
+      <label>
+        Motivo del ajuste
+        <span class="hint">(requerido)</span>
+      </label>
+      <textarea id="motivo"
+        placeholder="Ej: Error en importación inicial, se cargaron 200 en vez de 100. / Rotura de material. / Conteo físico corregido."></textarea>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Procesando ajuste...</div>
+  <div class="msg msg-ok"  id="msgOk"></div>
+  <div class="msg msg-err" id="msgErr"></div>
+
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar</button>
+    <button class="btn btn-primary" id="btnAjustar"
+      onclick="aplicarAjuste()" style="display:none;">
+      ✔ Aplicar ajuste
+    </button>
+  </div>
+
+<script>
+  var insumos    = [];
+  var loteActual = null;
+  var itemActual = null;
+
+  // Carga inicial de insumos
+  google.script.run
+    .withSuccessHandler(function(data) { insumos = data; })
+    .withFailureHandler(function(e) { mostrarError('Error al cargar insumos: ' + e.message); })
+    .getInsumosConStockYSinStock();
+
+  // ── Buscador ──────────────────────────────────────────────────
+  var inputBusq = document.getElementById('busqueda');
+  var dropdown  = document.getElementById('dropdown');
+
+  inputBusq.addEventListener('input', function() {
+    var val = this.value.trim().toUpperCase();
+    if (val.length < 2) { dropdown.style.display = 'none'; return; }
+
+    var filtrados = insumos.filter(function(ins) {
+      return ins.codigo.toUpperCase().indexOf(val) > -1 ||
+             ins.descripcion.toUpperCase().indexOf(val) > -1;
+    }).slice(0, 14);
+
+    if (!filtrados.length) { dropdown.style.display = 'none'; return; }
+
+    dropdown.innerHTML = filtrados.map(function(ins) {
+      var stockStr = ins.stock_total > 0
+        ? ins.stock_total + ' u.'
+        : '<span style="color:#ea4335">Sin stock</span>';
+      return '<div class="dropdown-item" onclick="seleccionarInsumo(\'' +
+             esc(ins.codigo) + '\')">' +
+        '<div class="di-left">' +
+          '<div class="desc">' + esc(ins.descripcion) + '</div>' +
+          '<div class="cod">'  + esc(ins.codigo) + ' · ' + esc(ins.categoria) + '</div>' +
+        '</div>' +
+        '<div class="di-right">' + stockStr + '</div>' +
+      '</div>';
+    }).join('');
+    dropdown.style.display = 'block';
+  });
+
+  inputBusq.addEventListener('blur', function() {
+    setTimeout(function() { dropdown.style.display = 'none'; }, 180);
+  });
+
+  // ── Selección de insumo ──────────────────────────────────────
+  function seleccionarInsumo(codigo) {
+    var ins = insumos.find(function(x) { return x.codigo === codigo; });
+    if (!ins) return;
+    itemActual = ins;
+
+    inputBusq.value            = '';
+    dropdown.style.display     = 'none';
+
+    document.getElementById('cardNombre').textContent = ins.descripcion;
+    document.getElementById('cardSub').textContent    =
+      ins.codigo + (ins.categoria ? ' · ' + ins.categoria : '');
+    document.getElementById('itemCard').style.display    = 'flex';
+    document.getElementById('panelAjuste').style.display = 'block';
+    document.getElementById('btnAjustar').style.display  = 'inline-block';
+
+    loteActual = null;
+    document.getElementById('loteSelect').innerHTML = '<option value="">Cargando lotes…</option>';
+    document.getElementById('loteInfo').style.display = 'none';
+    document.getElementById('deltaBox').style.display  = 'none';
+    document.getElementById('stockCorrecto').value     = '';
+    ocultarMensajes();
+
+    google.script.run
+      .withSuccessHandler(cargarLotes)
+      .withFailureHandler(function(e) { mostrarError('Error al cargar lotes: ' + e.message); })
+      .getLotesParaAjuste(codigo);
+  }
+
+  function cargarLotes(lotes) {
+    var sel = document.getElementById('loteSelect');
+    sel.innerHTML = '<option value="">— Seleccioná un lote —</option>' +
+      lotes.map(function(l) {
+        var label = l.lote;
+        if (l.vencimiento) label += '  (vence ' + l.vencimiento + ')';
+        label += '  —  ' + l.stock_actual + ' u.';
+        return '<option value="' + esc(l.lote) + '"' +
+          ' data-stock="' + l.stock_actual + '"' +
+          ' data-venc="'  + esc(l.vencimiento || '') + '">' +
+          label + '</option>';
+      }).join('');
+  }
+
+  function onLoteChange() {
+    var sel = document.getElementById('loteSelect');
+    var opt = sel.options[sel.selectedIndex];
+    var inf = document.getElementById('loteInfo');
+
+    if (!sel.value) {
+      inf.style.display = 'none';
+      loteActual = null;
+      document.getElementById('deltaBox').style.display = 'none';
+      return;
+    }
+
+    var stock = Number(opt.getAttribute('data-stock'));
+    var venc  = opt.getAttribute('data-venc') || '';
+    loteActual = { lote: sel.value, stock: stock, vencimiento: venc };
+
+    document.getElementById('stockActualLabel').textContent = stock;
+    document.getElementById('vencLabel').textContent =
+      venc ? 'Vencimiento: ' + venc : '';
+    inf.style.display = 'block';
+
+    // Pre-completar con el valor actual para que el usuario solo corrija
+    document.getElementById('stockCorrecto').value = stock;
+    calcularDelta();
+  }
+
+  function calcularDelta() {
+    var box = document.getElementById('deltaBox');
+    if (!loteActual) { box.style.display = 'none'; return; }
+
+    var val = document.getElementById('stockCorrecto').value;
+    if (val === '' || isNaN(Number(val))) { box.style.display = 'none'; return; }
+
+    var correcto = Number(val);
+    var delta    = correcto - loteActual.stock;
+
+    box.style.display = 'block';
+    box.className = 'delta ' +
+      (delta > 0 ? 'delta-pos' : delta < 0 ? 'delta-neg' : 'delta-cero');
+
+    if (delta === 0) {
+      box.textContent = '✓ Sin cambios (el stock ya tiene ese valor)';
+    } else if (delta > 0) {
+      box.textContent = '⬆ Se sumarán +' + delta + ' unidades al lote';
+    } else {
+      box.textContent = '⬇ Se restarán ' + Math.abs(delta) + ' unidades del lote';
+    }
+  }
+
+  // ── Limpiar selección ────────────────────────────────────────
+  function limpiarSeleccion() {
+    itemActual = null; loteActual = null;
+    document.getElementById('itemCard').style.display    = 'none';
+    document.getElementById('panelAjuste').style.display = 'none';
+    document.getElementById('btnAjustar').style.display  = 'none';
+    document.getElementById('deltaBox').style.display    = 'none';
+    document.getElementById('loteInfo').style.display    = 'none';
+    ocultarMensajes();
+    inputBusq.focus();
+  }
+
+  // ── Enviar ajuste ────────────────────────────────────────────
+  function aplicarAjuste() {
+    if (!itemActual)  { mostrarError('Seleccioná un insumo primero.'); return; }
+    if (!loteActual)  { mostrarError('Seleccioná un lote.'); return; }
+
+    var correcto = Number(document.getElementById('stockCorrecto').value);
+    if (isNaN(correcto) || correcto < 0) {
+      mostrarError('Ingresá una cantidad válida (número entero ≥ 0).');
+      return;
+    }
+
+    var motivo = document.getElementById('motivo').value.trim();
+    if (!motivo) { mostrarError('El motivo es obligatorio.'); return; }
+
+    if (correcto === loteActual.stock) {
+      mostrarError('El stock ya tiene ese valor. No hay nada que ajustar.');
+      return;
+    }
+
+    ocultarMensajes();
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('btnAjustar').disabled   = true;
+
+    var payload = {
+      codigo_insumo:  itemActual.codigo,
+      descripcion:    itemActual.descripcion,
+      lote:           loteActual.lote,
+      vencimiento:    loteActual.vencimiento,
+      stock_actual:   loteActual.stock,
+      stock_correcto: correcto,
+      motivo:         motivo
+    };
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('btnAjustar').disabled   = false;
+
+        if (result.ok) {
+          var el = document.getElementById('msgOk');
+          el.textContent    = '✅ ' + result.mensaje;
+          el.style.display  = 'block';
+          // Actualizar estado local para que el delta se recalcule bien
+          loteActual.stock  = correcto;
+          document.getElementById('stockActualLabel').textContent = correcto;
+          calcularDelta();
+          // Limpiar motivo para el próximo ajuste
+          document.getElementById('motivo').value = '';
+        } else {
+          mostrarError(result.mensaje);
+        }
+      })
+      .withFailureHandler(function(e) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('btnAjustar').disabled   = false;
+        mostrarError('Error inesperado: ' + e.message);
+      })
+      .registrarAjusteStock(payload);
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────
+  function mostrarError(msg) {
+    var el = document.getElementById('msgErr');
+    el.textContent   = '❌ ' + msg;
+    el.style.display = 'block';
+  }
+  function ocultarMensajes() {
+    document.getElementById('msgOk').style.display  = 'none';
+    document.getElementById('msgErr').style.display = 'none';
+  }
+  function esc(str) {
+    return String(str || '')
+      .replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+      .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>

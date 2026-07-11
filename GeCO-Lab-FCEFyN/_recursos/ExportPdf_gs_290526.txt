@@ -1,0 +1,395 @@
+// ============================================================
+// INSTRUCCIÓN: Reemplazar el archivo completo ExportPDF.gs
+// por este contenido.
+//
+// CORRECCIÓN PRINCIPAL: _htmlADF_core()
+//   El bug era que htmlContent se recibía pero nunca se escribía
+//   en el Doc de Google. El Doc se creaba vacío y el PDF resultaba
+//   en blanco.
+//
+//   La solución usa la API Drive.Files.insert con convert:true
+//   para convertir el blob HTML directamente en un Google Doc
+//   con formato real (preserva colores, negritas, tablas).
+//   Es el mismo mecanismo que ya usa _extraerTextoConvertido()
+//   en Drive.gs, pero en sentido inverso (HTML → Doc).
+//
+//   REQUISITO: el proyecto Apps Script debe tener habilitado el
+//   servicio avanzado "Drive API" (v2).
+//   Habilitarlo en: Apps Script → Servicios → Drive API → Agregar.
+// ============================================================
+
+// ============================================================
+// GeCO Lab — ExportPDF.gs
+// Exportación de resultados y planes de acción como PDF.
+// ============================================================
+
+// ------------------------------------------------------------------
+// EXPORTAR RESULTADO DE EVALUACIÓN
+// ------------------------------------------------------------------
+
+function exportarResultadoEvaluacion(idEvaluacion) {
+  try {
+    if (!idEvaluacion) return { ok: false, error: 'ID de evaluación requerido.' };
+
+    var ss      = getSS();
+    var hojaReg = getHoja(ss, 'Registro_Competencias');
+    var datos   = hojaReg.getDataRange().getValues();
+
+    var datosFila = null;
+    for (var i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idEvaluacion.trim()) {
+        datosFila = datos[i]; break;
+      }
+    }
+    if (!datosFila) return { ok: false, error: 'No se encontró la evaluación: ' + idEvaluacion };
+
+    var evaluado      = String(datosFila[3]  || '');
+    var puesto        = String(datosFila[6]  || datosFila[5] || '');
+    var dominio       = String(datosFila[8]  || datosFila[11] || '');
+    var fechaGen      = datosFila[1]  ? formatFecha(new Date(datosFila[1]))  : '—';
+    var fechaComp     = datosFila[2]  ? formatFecha(new Date(datosFila[2]))  : '—';
+    var modo          = String(datosFila[13] || '');
+    var nroPreg       = Number(datosFila[14]) || 0;
+    var correctas     = Number(datosFila[15]) || 0;
+    var puntaje       = Number(datosFila[16]) || 0;
+    var escala        = String(datosFila[17] || '');
+    var estado        = String(datosFila[22] || '');
+    var generaAccion  = datosFila[23] === true;
+    var observaciones = String(datosFila[24] || '');
+
+    var detallePreguntas = [];
+    if (modo.toLowerCase() !== 'presencial') {
+      detallePreguntas = _obtenerDetalleClaves(ss, idEvaluacion);
+    }
+
+    var html = _construirHtmlEvaluacion({
+      idEvaluacion, evaluado, puesto, dominio, fechaGen, fechaComp,
+      modo, nroPreg, correctas, puntaje, escala, estado, generaAccion,
+      observaciones, detallePreguntas
+    });
+
+    var titulo = 'GeCO_Evaluacion_' + idEvaluacion;
+    return _htmlAPDF(html, titulo);
+
+  } catch (e) {
+    gLogE('ExportPDF', 'exportarResultadoEvaluacion: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+function exportarPlanAccion(idAccion) {
+  try {
+    if (!idAccion) return { ok: false, error: 'ID de acción requerido.' };
+
+    var ss       = getSS();
+    var hojaPlan = getHoja(ss, 'Plan_Acciones');
+    var datos    = hojaPlan.getDataRange().getValues();
+
+    var datosFila = null;
+    for (var i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idAccion.trim()) {
+        datosFila = datos[i]; break;
+      }
+    }
+    if (!datosFila) return { ok: false, error: 'No se encontró el plan: ' + idAccion };
+
+    var html   = _construirHtmlPlan(datosFila);
+    var titulo = 'GeCO_Plan_' + idAccion;
+    return _htmlAPDF(html, titulo);
+
+  } catch (e) {
+    gLogE('ExportPDF', 'exportarPlanAccion: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ------------------------------------------------------------------
+// CONSTRUCCIÓN DEL HTML
+// ------------------------------------------------------------------
+
+function _construirHtmlEvaluacion(d) {
+  var colorEscala = {
+    'Excelente':    '#137333',
+    'Bueno':        '#1a73e8',
+    'Regular':      '#b06000',
+    'Insuficiente': '#c5221f'
+  };
+  var color = colorEscala[d.escala] || '#5f6368';
+
+  var html = '<html><head><meta charset="UTF-8"><style>' +
+    'body{font-family:Arial,sans-serif;font-size:11pt;color:#212121;margin:0;padding:0}' +
+    'h1{font-size:14pt;color:#1a56db;border-bottom:2px solid #1a56db;padding-bottom:6px;margin-bottom:14px}' +
+    'h2{font-size:11pt;color:#444;margin:14px 0 6px}' +
+    '.tabla{width:100%;border-collapse:collapse;margin-bottom:14px}' +
+    '.tabla td{padding:6px 10px;border:1px solid #e0e0e0;vertical-align:top}' +
+    '.tabla .lbl{font-weight:bold;background:#f5f5f5;width:35%;color:#555;font-size:10pt}' +
+    '.escala{font-weight:bold;font-size:13pt;color:' + color + '}' +
+    '.puntaje{font-size:22pt;font-weight:bold;color:' + color + ';text-align:center;padding:10px}' +
+    '.footer{margin-top:20px;font-size:9pt;color:#9e9e9e;border-top:1px solid #eee;padding-top:8px}' +
+    '.preg{margin:6px 0;padding:8px;border:1px solid #e0e0e0;border-radius:4px;font-size:10pt}' +
+    '.preg.ok{border-left:4px solid #137333}.preg.mal{border-left:4px solid #c5221f}' +
+    '</style></head><body>';
+
+  html += '<h1>GeCO Lab — Resultado de Evaluación</h1>';
+
+  html += '<table class="tabla">';
+  html += _fila('ID Evaluación',     d.idEvaluacion);
+  html += _fila('Evaluado',          d.evaluado);
+  html += _fila('Puesto',            d.puesto);
+  html += _fila('Competencia',       d.dominio);
+  html += _fila('Fecha generación',  d.fechaGen);
+  html += _fila('Fecha completado',  d.fechaComp);
+  html += _fila('Modo',              d.modo);
+  html += _fila('Estado',            d.estado);
+  html += '</table>';
+
+  html += '<div class="puntaje">' + d.puntaje + '%</div>';
+  html += '<div style="text-align:center;margin-bottom:14px">' +
+          '<span class="escala">' + d.escala + '</span>';
+
+  // Para modo presencial: mostrar nivel en lugar de correctas/total
+  var modoLower = String(d.modo || '').toLowerCase();
+  if (modoLower === 'presencial') {
+    // Extraer nivel de observaciones: "Nivel: Competente | ..."
+    var nivelMatch = String(d.observaciones || '').match(/Nivel:\s*([^\|]+)/);
+    var nivelStr = nivelMatch ? nivelMatch[1].trim() : '';
+    if (nivelStr) {
+      html += ' &nbsp;|&nbsp; Nivel: ' + _escHtml(nivelStr);
+    }
+  } else if (d.nroPreg > 0) {
+    html += ' &nbsp;|&nbsp; ' + d.correctas + ' / ' + d.nroPreg + ' correctas';
+  }
+  html += '</div>';
+
+  if (d.generaAccion) {
+    html += '<div style="background:#fff3e0;border:1px solid #ffe0b2;border-radius:4px;' +
+            'padding:8px 12px;margin-bottom:14px;font-size:10pt;color:#e65100">' +
+            '<strong>Plan de accion generado</strong> — se requiere seguimiento.' +
+            '</div>';
+  }
+
+  if (d.observaciones) {
+    // Para presencial, separar nivel y texto de observación
+    if (modoLower === 'presencial') {
+      var partes = String(d.observaciones).split(' | ');
+      var nivelParte = partes[0] || '';
+      var obsParte   = partes.slice(1).join(' | ');
+      if (obsParte) {
+        html += '<h2>Observaciones del evaluador</h2>';
+        html += '<div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:4px;' +
+                'padding:8px 12px;font-size:10pt">' +
+                _escHtml(obsParte) + '</div>';
+      }
+    } else {
+      html += '<h2>Observaciones del evaluador</h2>';
+      html += '<div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:4px;' +
+              'padding:8px 12px;font-size:10pt">' +
+              _escHtml(d.observaciones) + '</div>';
+    }
+  }
+
+  if (d.detallePreguntas && d.detallePreguntas.length > 0) {
+    html += '<h2>Detalle de respuestas</h2>';
+    d.detallePreguntas.forEach(function(p, idx) {
+      var cls = p.esCorrecta ? 'ok' : 'mal';
+      var ico = p.esCorrecta ? 'OK' : 'X';
+      html += '<div class="preg ' + cls + '">' +
+        '<strong>' + (idx + 1) + '. ' + _escHtml(p.enunciado) + '</strong><br>' +
+        '<span style="color:#555">Respuesta: ' + _escHtml(p.elegida || '—') + ' ' + ico + '</span>';
+      if (!p.esCorrecta && p.correcta) {
+        html += '<br><span style="color:#137333;font-size:10pt">Correcta: ' +
+                _escHtml(p.correcta) + '</span>';
+      }
+      if (p.justificacion) {
+        html += '<br><span style="color:#9e9e9e;font-size:9pt">' +
+                _escHtml(p.justificacion) + '</span>';
+      }
+      html += '</div>';
+    });
+  }
+
+  html += '<div class="footer">Generado por GeCO Lab — ' +
+          new Date().toLocaleString('es-AR') + '</div>';
+  html += '</body></html>';
+  return html;
+}
+
+function _construirHtmlPlan(fila) {
+  var html = '<html><head><meta charset="UTF-8"><style>' +
+    'body{font-family:Arial,sans-serif;font-size:11pt;color:#212121}' +
+    'h1{font-size:14pt;color:#e65100;border-bottom:2px solid #e65100;padding-bottom:6px}' +
+    '.tabla{width:100%;border-collapse:collapse;margin-bottom:14px}' +
+    '.tabla td{padding:6px 10px;border:1px solid #e0e0e0;vertical-align:top}' +
+    '.tabla .lbl{font-weight:bold;background:#fff3e0;width:35%;color:#555;font-size:10pt}' +
+    '.footer{margin-top:20px;font-size:9pt;color:#9e9e9e;border-top:1px solid #eee;padding-top:8px}' +
+    '</style></head><body>';
+
+  html += '<h1>GeCO Lab — Plan de Accion</h1>';
+  html += '<table class="tabla">';
+  html += _fila('ID Plan',          String(fila[0]  || ''));
+  html += _fila('ID Evaluacion',    String(fila[1]  || ''));
+  html += _fila('Fecha generacion', fila[2]  ? formatFecha(new Date(fila[2]))  : '—');
+  html += _fila('Evaluado',         String(fila[3]  || ''));
+  html += _fila('Dominio',          String(fila[4]  || ''));
+  html += _fila('Puntaje previo',   (fila[5] ? fila[5] + '%' : '—'));
+  html += _fila('Escala previa',    String(fila[6]  || ''));
+  html += _fila('Tipo de accion',   String(fila[7]  || ''));
+  html += _fila('Descripcion',      String(fila[8]  || ''));
+  html += _fila('Responsable',      String(fila[9]  || '—'));
+  html += _fila('Fecha objetivo',   fila[10] ? formatFecha(new Date(fila[10])) : '—');
+  html += _fila('Estado',           String(fila[11] || ''));
+  html += _fila('Fecha cierre',     fila[12] ? formatFecha(new Date(fila[12])) : '—');
+  html += _fila('Re-evaluacion',    String(fila[13] || '—'));
+  html += _fila('Resultado final',  String(fila[14] || '—'));
+  if (fila[15]) html += _fila('Notas', String(fila[15]));
+  html += '</table>';
+
+  html += '<div class="footer">Generado por GeCO Lab — ' +
+          new Date().toLocaleString('es-AR') + '</div>';
+  html += '</body></html>';
+  return html;
+}
+
+// ------------------------------------------------------------------
+// MOTOR: HTML → Google Doc → PDF → Drive
+// CORRECCIÓN: usa Drive.Files.insert con convert:true para convertir
+//             el HTML en un Google Doc con formato real.
+// ------------------------------------------------------------------
+
+// ============================================================
+// INSTRUCCIÓN: Parche puntual para ExportPDF.gs
+//
+// Si ya aplicaste PRESENCIAL_7, buscá la función _htmlAPDF()
+// y reemplazá SOLO ese bloque con el código de abajo.
+//
+// El error "Drive.Files.insert is not a function" ocurre porque
+// el proyecto usa Drive API v3 (la que se agrega por defecto).
+// En v3 el método es Drive.Files.create() y el campo se llama
+// "name" en lugar de "title". No hay diferencia en el resultado.
+// ============================================================
+
+function _htmlAPDF(htmlContent, titulo) {
+  var tempDocId = null;
+  try {
+    // Crear Google Doc a partir del HTML
+    // Drive API v3: "name" en lugar de "title", sin {convert: true}
+    // (la conversión queda implícita en el mimeType de destino)
+    var htmlBlob = Utilities.newBlob(htmlContent, 'text/html', titulo + '.html');
+    var tempDoc  = Drive.Files.create(
+      {
+        name:     titulo + '_TEMP',
+        mimeType: 'application/vnd.google-apps.document'
+      },
+      htmlBlob
+    );
+    tempDocId = tempDoc.id;
+
+    // Exportar el Google Doc como PDF
+    var exportUrl = 'https://docs.google.com/document/d/' + tempDocId + '/export?format=pdf';
+    var response  = UrlFetchApp.fetch(exportUrl, {
+      headers:            { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      throw new Error('Error exportando PDF: HTTP ' + response.getResponseCode());
+    }
+
+    // Guardar PDF en la carpeta Drive del cliente
+    var folder  = DriveApp.getFolderById(getDriveFolderId());
+    var pdfBlob = response.getBlob().setName(titulo + '.pdf');
+    var pdfFile = folder.createFile(pdfBlob);
+
+    // Eliminar Doc temporal
+    DriveApp.getFileById(tempDocId).setTrashed(true);
+
+    gLogI('ExportPDF', 'PDF generado: ' + pdfFile.getName() + ' — ' + pdfFile.getUrl());
+
+    return {
+      ok:     true,
+      pdfUrl: pdfFile.getUrl(),
+      pdfId:  pdfFile.getId()
+    };
+
+  } catch (e) {
+    if (tempDocId) {
+      try { DriveApp.getFileById(tempDocId).setTrashed(true); } catch (_) {}
+    }
+    gLogE('ExportPDF', '_htmlAPDF: ' + e.message);
+    throw e;
+  }
+}
+
+// ------------------------------------------------------------------
+// HELPERS
+// ------------------------------------------------------------------
+
+function _fila(label, valor) {
+  return '<tr><td class="lbl">' + _escHtml(label) + '</td><td>' +
+         _escHtml(String(valor || '—')) + '</td></tr>';
+}
+
+function _escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function _obtenerDetalleClaves(ss, idEvaluacion) {
+  try {
+    var hojaC = ss.getSheetByName('Claves_Evaluacion');
+    if (!hojaC || hojaC.getLastRow() < 2) return [];
+    var datos = hojaC.getDataRange().getValues();
+    return datos.slice(1)
+      .filter(function(r) { return String(r[1]).trim() === idEvaluacion.trim(); })
+      .map(function(r) {
+        return {
+          numero:        Number(r[2]) || 0,
+          enunciado:     String(r[3] || ''),
+          correcta:      String(r[4] || ''),
+          justificacion: String(r[5] || ''),
+          elegida:       '',
+          esCorrecta:    false
+        };
+      });
+  } catch (e) { return []; }
+}
+
+// ------------------------------------------------------------------
+// INTEGRACIÓN CON DIÁLOGOS HTML
+// ------------------------------------------------------------------
+
+function exportarEvaluacionComoURL(idEvaluacion) {
+  return exportarResultadoEvaluacion(idEvaluacion);
+}
+
+function exportarPlanComoURL(idAccion) {
+  return exportarPlanAccion(idAccion);
+}
+
+// ------------------------------------------------------------------
+// FUNCIONES DE PRUEBA
+// ------------------------------------------------------------------
+
+function TEST_exportarEvaluacion() {
+  var ss  = getSS();
+  var reg = ss.getSheetByName('Registro_Competencias');
+  if (!reg || reg.getLastRow() < 2) {
+    Logger.log('TEST: No hay evaluaciones.'); return;
+  }
+  var datos = reg.getDataRange().getValues();
+  var completada = datos.slice(1).find(function(r) { return String(r[22]) === 'Completado'; });
+  if (!completada) { Logger.log('TEST: No hay completadas.'); return; }
+
+  var res = exportarResultadoEvaluacion(String(completada[0]));
+  Logger.log('TEST exportar evaluación: ' + JSON.stringify(res));
+}
+
+function TEST_exportarPlan() {
+  var ss   = getSS();
+  var plan = ss.getSheetByName('Plan_Acciones');
+  if (!plan || plan.getLastRow() < 2) {
+    Logger.log('TEST: No hay planes.'); return;
+  }
+  var datos = plan.getDataRange().getValues();
+  var res = exportarPlanAccion(String(datos[1][0]));
+  Logger.log('TEST exportar plan: ' + JSON.stringify(res));
+}

@@ -1,0 +1,357 @@
+// ============================================================
+// GeCO Lab — PlanAcciones.gs v2
+// CAMBIOS respecto a v1:
+//   • crearPlanAccion() usa params.tipoPlan si viene (prioridad sobre
+//     la lógica por escala anterior). Permite pasar "Toma de conciencia"
+//     desde registrarEvaluacionRubrica().
+//   • La descripción del plan incluye la brecha cuando se pasa params.brecha.
+//   • El plazo por defecto se ajusta: Toma de conciencia = 90 días.
+//   Sin otros cambios funcionales.
+// ============================================================
+
+// ------------------------------------------------------------------
+// CREACIÓN
+// ------------------------------------------------------------------
+
+/**
+ * Crea una fila en Plan_Acciones.
+ *
+ * @param {Object} params
+ *   - ss           {Spreadsheet}
+ *   - idEvaluacion {string}
+ *   - evaluado     {string}
+ *   - dominio      {string}
+ *   - puntajePct   {number}
+ *   - escala       {string}
+ *   - tipoPlan     {string}  NUEVO: 'Capacitación' | 'Toma de conciencia' | etc.
+ *                            Si se omite, se deriva de la escala (comportamiento anterior).
+ *   - brecha       {string}  NUEVO: texto de brecha para enriquecer la descripción.
+ * @returns {string} ID_Accion generado
+ */
+function crearPlanAccion(params) {
+  try {
+    const ss   = params.ss || _getSS_PA();
+    const hoja = ss.getSheetByName('Plan_Acciones');
+    if (!hoja) throw new Error('No existe Plan_Acciones. Ejecutar setupCompleto().');
+
+    const ahora = new Date();
+    const idAccion = _generarIdAccion(hoja, ahora);
+
+    // ── Tipo de acción ───────────────────────────────────────────
+    // Prioridad: params.tipoPlan → lógica por escala (compatibilidad legado)
+    var tipo;
+    if (params.tipoPlan) {
+      tipo = params.tipoPlan;
+    } else {
+      tipo = params.escala === 'Insuficiente' ? 'Capacitación' : 'Re-evaluación';
+    }
+
+    // ── Plazo según tipo ─────────────────────────────────────────
+    // Capacitación Insuficiente → 30 días
+    // Capacitación Regular → 60 días
+    // Toma de conciencia → 90 días (se programa en próxima jornada)
+    // Re-evaluación → 60 días
+    var diasPlazo;
+    if (tipo === 'Toma de conciencia') {
+      diasPlazo = 90;
+    } else if (params.escala === 'Insuficiente') {
+      diasPlazo = 30;
+    } else {
+      diasPlazo = 60;
+    }
+    const fechaObj = new Date(ahora.getTime() + diasPlazo * 24 * 60 * 60 * 1000);
+
+    // ── Descripción ──────────────────────────────────────────────
+    var desc;
+    var brechaInfo = params.brecha ? ' Brecha detectada: ' + params.brecha + '.' : '';
+    if (tipo === 'Toma de conciencia') {
+      desc = 'Actividad de toma de conciencia en "' + params.dominio + '".' + brechaInfo +
+             ' Incluir en la próxima jornada de difusión del SGC o reunión de equipo.';
+    } else if (tipo === 'Capacitación') {
+      desc = 'Capacitación en "' + params.dominio + '".' + brechaInfo +
+             ' Puntaje/nivel obtenido: ' + (params.puntajePct ? params.puntajePct + '%' : '—') + '.';
+    } else {
+      desc = tipo + ' en "' + params.dominio + '".' + brechaInfo;
+    }
+
+    // ── Insertar fila ────────────────────────────────────────────
+    var colA = hoja.getRange(2, 1, Math.max(hoja.getLastRow() + 1, 2), 1).getValues();
+    var filaDestino = 2;
+    for (var r = 0; r < colA.length; r++) {
+      if (!colA[r][0]) { filaDestino = r + 2; break; }
+      filaDestino = r + 3;
+    }
+
+    hoja.getRange(filaDestino, 1, 1, 16).setValues([[
+      idAccion,            // A
+      params.idEvaluacion, // B
+      ahora,               // C
+      params.evaluado,     // D
+      params.dominio,      // E
+      params.puntajePct || '', // F
+      params.escala,       // G
+      tipo,                // H
+      desc,                // I
+      '',                  // J — Responsable
+      fechaObj,            // K
+      'Pendiente',         // L
+      '',                  // M
+      '',                  // N
+      '',                  // O
+      ''                   // P
+    ]]);
+
+    Logger.log('[PlanAcciones] Plan creado: ' + idAccion +
+               ' | Tipo: ' + tipo +
+               ' | ' + params.evaluado + ' / ' + params.dominio);
+    return idAccion;
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] crearPlanAccion error: ' + e.message);
+    throw e;
+  }
+}
+
+// ------------------------------------------------------------------
+// LECTURA
+// ------------------------------------------------------------------
+
+function getPlanesAccion(filtros) {
+  filtros = filtros || {};
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const hoy   = new Date();
+    const resultado = [];
+
+    for (var i = 1; i < datos.length; i++) {
+      const fila = datos[i];
+      if (!fila[0]) continue;
+
+      const obj = _filaAObjPA(fila);
+
+      if (filtros.estado   && obj.estado   !== filtros.estado)   continue;
+      if (filtros.evaluado && !obj.evaluado.toLowerCase().includes(filtros.evaluado.toLowerCase())) continue;
+      if (filtros.dominio  && !obj.dominio.toLowerCase().includes(filtros.dominio.toLowerCase()))   continue;
+
+      if (filtros.soloVencidos) {
+        if (obj.estado === 'Cerrado') continue;
+        const fechaObj = obj.fechaObjetivo ? new Date(obj.fechaObjetivo) : null;
+        if (!fechaObj || fechaObj >= hoy) continue;
+      }
+
+      resultado.push(obj);
+    }
+
+    resultado.sort(function(a, b) {
+      return new Date(b.fechaGeneracion) - new Date(a.fechaGeneracion);
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] getPlanesAccion error: ' + e.message);
+    return [];
+  }
+}
+
+function getPlanesActivos() {
+  const planes = getPlanesAccion({ estado: '' });
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  return planes
+    .filter(function(p) { return p.estado !== 'Cerrado'; })
+    .map(function(p) {
+      if (p.fechaObjetivo) {
+        const fo = new Date(p.fechaObjetivo);
+        fo.setHours(0, 0, 0, 0);
+        p.diasRestantes = Math.round((fo - hoy) / (1000 * 60 * 60 * 24));
+      } else {
+        p.diasRestantes = null;
+      }
+      return p;
+    })
+    .sort(function(a, b) {
+      const ar = a.diasRestantes === null ? 9999 : a.diasRestantes;
+      const br = b.diasRestantes === null ? 9999 : b.diasRestantes;
+      return ar - br;
+    });
+}
+
+function getPlanesDeEvaluacion(idEvaluacion) {
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return [];
+    const datos = hoja.getDataRange().getValues();
+    return datos.slice(1)
+      .filter(function(f) { return String(f[1]).trim() === idEvaluacion.trim(); })
+      .map(_filaAObjPA);
+  } catch (e) { return []; }
+}
+
+// ------------------------------------------------------------------
+// ACTUALIZACIÓN
+// ------------------------------------------------------------------
+
+function actualizarPlanAccion(idAccion, cambios) {
+  try {
+    if (!idAccion) return { ok: false, error: 'ID_Accion requerido.' };
+
+    const hoja = _hojaPlanAcciones();
+    const datos = hoja.getDataRange().getValues();
+    var filaIdx = -1;
+
+    for (var i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idAccion.trim()) { filaIdx = i + 1; break; }
+    }
+    if (filaIdx < 0) return { ok: false, error: 'No se encontró el plan: ' + idAccion };
+
+    const mapa = {
+      tipoAccion: 8, descripcion: 9, responsable: 10, fechaObjetivo: 11,
+      estado: 12, fechaCierre: 13, idReevaluacion: 14, resultadoFinal: 15, notas: 16
+    };
+
+    Object.keys(cambios).forEach(function(campo) {
+      const col = mapa[campo];
+      if (col) hoja.getRange(filaIdx, col).setValue(cambios[campo]);
+    });
+
+    if (cambios.estado === 'Cerrado' && !cambios.fechaCierre) {
+      hoja.getRange(filaIdx, 13).setValue(new Date());
+    }
+    if ((cambios.estado === 'Pendiente' || cambios.estado === 'En Curso') && !cambios.fechaCierre) {
+      hoja.getRange(filaIdx, 13).setValue('');
+    }
+
+    Logger.log('[PlanAcciones] Plan actualizado: ' + idAccion);
+    return { ok: true };
+
+  } catch (e) {
+    Logger.log('[PlanAcciones] actualizarPlanAccion error: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+function cerrarPlanAccion(idAccion, notas) {
+  const cambios = { estado: 'Cerrado' };
+  if (notas) cambios.notas = notas;
+  return actualizarPlanAccion(idAccion, cambios);
+}
+
+function vincularReevaluacionAPlan(idAccion, idReevaluacion, resultadoFinal) {
+  const cambios = { idReevaluacion: idReevaluacion, resultadoFinal: resultadoFinal };
+  if (resultadoFinal === 'Bueno' || resultadoFinal === 'Excelente') {
+    cambios.estado = 'Cerrado';
+    cambios.notas  = 'Cerrado automáticamente tras re-evaluación: ' + resultadoFinal + '.';
+  }
+  return actualizarPlanAccion(idAccion, cambios);
+}
+
+function buscarPlanAbierto(evaluadoNombre, dominio) {
+  try {
+    const hoja = _hojaPlanAcciones();
+    if (!hoja || hoja.getLastRow() < 2) return null;
+    const datos = hoja.getDataRange().getValues();
+    const nombreNorm  = evaluadoNombre.trim().toLowerCase();
+    const dominioNorm = dominio.trim().toLowerCase();
+    var ultimo = null, ultimaFecha = null;
+
+    for (var i = 1; i < datos.length; i++) {
+      const fila = datos[i];
+      if (String(fila[11]) === 'Cerrado') continue;
+      if (String(fila[3]).trim().toLowerCase() !== nombreNorm)  continue;
+      if (String(fila[4]).trim().toLowerCase() !== dominioNorm) continue;
+      const fecha = fila[2] ? new Date(fila[2]) : null;
+      if (!ultimaFecha || (fecha && fecha > ultimaFecha)) { ultimaFecha = fecha; ultimo = _filaAObjPA(fila); }
+    }
+    return ultimo;
+  } catch (e) { return null; }
+}
+
+// ------------------------------------------------------------------
+// ESTADÍSTICAS
+// ------------------------------------------------------------------
+
+function getResumenPlanesAccion() {
+  const activos = getPlanesActivos();
+  const todos   = getPlanesAccion({});
+  return {
+    pendientes:     todos.filter(function(p) { return p.estado === 'Pendiente'; }).length,
+    enCurso:        todos.filter(function(p) { return p.estado === 'En Curso';  }).length,
+    cerrados:       todos.filter(function(p) { return p.estado === 'Cerrado';   }).length,
+    vencidos:       activos.filter(function(p) { return p.diasRestantes !== null && p.diasRestantes < 0; }).length,
+    porVencer7dias: activos.filter(function(p) { return p.diasRestantes !== null && p.diasRestantes >= 0 && p.diasRestantes <= 7; }).length
+  };
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+function _hojaPlanAcciones() { return _getSS_PA().getSheetByName('Plan_Acciones'); }
+
+function _getSS_PA() {
+  try { const id = getSpreadsheetId(); if (id) return SpreadsheetApp.openById(id); } catch (e) {}
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function _filaAObjPA(fila) {
+  return {
+    idAccion:       String(fila[0]  || ''),
+    idEvaluacion:   String(fila[1]  || ''),
+    fechaGeneracion: fila[2]  ? _formatFecha(new Date(fila[2]))  : '',
+    evaluado:       String(fila[3]  || ''),
+    dominio:        String(fila[4]  || ''),
+    puntajePct:     Number(fila[5]) || 0,
+    escala:         String(fila[6]  || ''),
+    tipoAccion:     String(fila[7]  || ''),
+    descripcion:    String(fila[8]  || ''),
+    responsable:    String(fila[9]  || ''),
+    fechaObjetivo:  fila[10] ? _formatFecha(new Date(fila[10])) : '',
+    estado:         String(fila[11] || 'Pendiente'),
+    fechaCierre:    fila[12] ? _formatFecha(new Date(fila[12])) : '',
+    idReevaluacion: String(fila[13] || ''),
+    resultadoFinal: String(fila[14] || ''),
+    notas:          String(fila[15] || '')
+  };
+}
+
+function _generarIdAccion(hoja, ahora) {
+  const fecha   = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'yyyyMMdd');
+  const prefijo = 'ACC-' + fecha + '-';
+  if (hoja.getLastRow() < 2) return prefijo + '001';
+  const ids = hoja.getRange(2, 1, hoja.getLastRow() - 1, 1).getValues()
+    .map(function(r) { return String(r[0]); })
+    .filter(function(id) { return id.indexOf(prefijo) === 0; });
+  var max = 0;
+  ids.forEach(function(id) {
+    const n = parseInt(id.split('-').pop(), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+  return prefijo + String(max + 1).padStart(3, '0');
+}
+
+function _formatFecha(d) {
+  try { return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy'); } catch (e) { return ''; }
+}
+
+// ------------------------------------------------------------------
+// PRUEBAS
+// ------------------------------------------------------------------
+
+function TEST_crearPlanAccion() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const res = crearPlanAccion({
+    ss: ss, idEvaluacion: 'EVAL-TEST-001', evaluado: 'Juan Pérez',
+    dominio: 'Política de Calidad', puntajePct: 45, escala: 'Regular',
+    tipoPlan: 'Toma de conciencia', brecha: '+1 nivel'
+  });
+  Logger.log('TEST crearPlanAccion → ID: ' + res);
+}
+
+function TEST_getPlanesActivos() {
+  Logger.log('TEST getPlanesActivos: ' + JSON.stringify(getPlanesActivos().slice(0, 3)));
+}

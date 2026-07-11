@@ -1,0 +1,449 @@
+// ============================================================
+// GeCO Lab — Utils.gs
+// Utilidades compartidas, hardening y diagnóstico del sistema.
+// Fase 6 — sin dependencias con otros módulos (cargado primero).
+// ============================================================
+
+// ------------------------------------------------------------------
+// LOGGING CENTRALIZADO
+// ------------------------------------------------------------------
+
+/**
+ * Logger con nivel y contexto.
+ * Reemplaza los Logger.log() dispersos en producción si se desea
+ * centralizar en una hoja de auditoría.
+ *
+ * Niveles: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
+ * En producción se puede subir el nivel mínimo a 'WARN'.
+ */
+var GeCO_LOG_LEVEL = 'INFO'; // cambiar a 'WARN' para silenciar DEBUG/INFO
+
+var _NIVELES_ORDEN = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+
+function gLog(nivel, modulo, mensaje) {
+  if ((_NIVELES_ORDEN[nivel] || 0) < (_NIVELES_ORDEN[GeCO_LOG_LEVEL] || 1)) return;
+  var prefijo = '[' + nivel + '][' + modulo + '] ';
+  Logger.log(prefijo + mensaje);
+}
+
+// Shortcuts
+function gLogD(mod, msg) { gLog('DEBUG', mod, msg); }
+function gLogI(mod, msg) { gLog('INFO',  mod, msg); }
+function gLogW(mod, msg) { gLog('WARN',  mod, msg); }
+function gLogE(mod, msg) { gLog('ERROR', mod, msg); }
+
+// ------------------------------------------------------------------
+// RETRY PARA LLAMADAS EXTERNAS (Claude API / UrlFetch)
+// ------------------------------------------------------------------
+
+/**
+ * Ejecuta una función con reintentos exponenciales.
+ * Útil para llamadas a la API de Claude que pueden fallar por timeout.
+ *
+ * @param {Function} fn          — función a ejecutar (sin args)
+ * @param {number}   maxIntentos — por defecto 3
+ * @param {number}   baseMs      — espera inicial en ms (por defecto 1500)
+ * @returns {*} resultado de fn()
+ * @throws {Error} si todos los intentos fallan
+ */
+function conReintentos(fn, maxIntentos, baseMs) {
+  maxIntentos = maxIntentos || 3;
+  baseMs      = baseMs      || 1500;
+  var lastError;
+  for (var i = 0; i < maxIntentos; i++) {
+    try {
+      return fn();
+    } catch (e) {
+      lastError = e;
+      if (i < maxIntentos - 1) {
+        var espera = baseMs * Math.pow(2, i);
+        gLogW('Utils', 'Intento ' + (i + 1) + '/' + maxIntentos + ' falló: ' + e.message +
+              ' — reintentando en ' + espera + 'ms');
+        Utilities.sleep(espera);
+      }
+    }
+  }
+  gLogE('Utils', 'Todos los reintentos fallaron: ' + lastError.message);
+  throw lastError;
+}
+
+// ------------------------------------------------------------------
+// VALIDACIÓN DE ESTRUCTURA DE HOJAS
+// ------------------------------------------------------------------
+
+/**
+ * Verifica que todas las hojas necesarias existen y tienen encabezados.
+ * Llamar desde el menú de diagnóstico o al inicio de operaciones críticas.
+ *
+ * @returns {{ ok: boolean, faltantes: string[], advertencias: string[] }}
+ */
+function verificarEstructura() {
+  var ss;
+  try {
+    ss = SpreadsheetApp.getActiveSpreadsheet();
+  } catch (e) {
+    return { ok: false, faltantes: ['No se pudo abrir el Spreadsheet'], advertencias: [] };
+  }
+
+  var hojasRequeridas = [
+    'Config',
+    'Personas',
+    'Puestos_Competencias',
+    'Claves_Evaluacion',
+    'Registro_Competencias',
+    'Plan_Acciones'
+  ];
+
+  var faltantes    = [];
+  var advertencias = [];
+
+  hojasRequeridas.forEach(function(nombre) {
+    var hoja = ss.getSheetByName(nombre);
+    if (!hoja) {
+      faltantes.push(nombre);
+    } else if (hoja.getLastRow() < 1) {
+      advertencias.push(nombre + ': existe pero está completamente vacía (¿falta encabezado?)');
+    }
+  });
+
+  // Verificar columnas críticas de Registro_Competencias
+  var reg = ss.getSheetByName('Registro_Competencias');
+  if (reg && reg.getLastRow() >= 1) {
+    var headers = reg.getRange(1, 1, 1, reg.getLastColumn()).getValues()[0];
+    var colW = headers[22]; // índice 22 = col W = Estado
+    if (!colW || String(colW).toLowerCase() !== 'estado') {
+      advertencias.push('Registro_Competencias: columna W no es "Estado" (¿versión antigua?)');
+    }
+  }
+
+  // Verificar Script Properties críticas
+  var props = PropertiesService.getScriptProperties().getProperties();
+  if (!props['CLAUDE_API_KEY']) {
+    advertencias.push('Script Properties: CLAUDE_API_KEY no está configurada');
+  }
+  if (!props['DRIVE_FOLDER_ID']) {
+    advertencias.push('Script Properties: DRIVE_FOLDER_ID no está configurada');
+  }
+  if (!props['SPREADSHEET_ID']) {
+    advertencias.push('Script Properties: SPREADSHEET_ID no está configurada (necesaria para triggers)');
+  }
+
+  return {
+    ok:          faltantes.length === 0,
+    faltantes:   faltantes,
+    advertencias: advertencias
+  };
+}
+
+/**
+ * Versión UI de verificarEstructura() — muestra resultado en un alert.
+ * Agregar al menú GeCO Lab → Diagnóstico del sistema.
+ */
+function diagnosticarSistema() {
+  var res    = verificarEstructura();
+  var config = diagnosticarConfig ? diagnosticarConfig() : null; // Config.gs
+
+  var lineas = ['══════════════════════════════'];
+
+  if (res.ok && res.advertencias.length === 0) {
+    lineas.push('✅ SISTEMA OK — todas las hojas y propiedades configuradas.');
+  } else {
+    if (res.faltantes.length > 0) {
+      lineas.push('❌ HOJAS FALTANTES:');
+      res.faltantes.forEach(function(f) { lineas.push('  • ' + f); });
+      lineas.push('  → Ejecutar: GeCO Lab → Inicializar/actualizar hojas');
+    }
+    if (res.advertencias.length > 0) {
+      lineas.push('⚠️ ADVERTENCIAS:');
+      res.advertencias.forEach(function(a) { lineas.push('  • ' + a); });
+    }
+  }
+
+  // Triggers activos
+  var triggers = ScriptApp.getProjectTriggers();
+  var triggersForm = triggers.filter(function(t) {
+    return t.getEventType() === ScriptApp.EventType.ON_FORM_SUBMIT;
+  });
+  lineas.push('');
+  lineas.push('🔔 Triggers activos: ' + triggers.length +
+              ' (' + triggersForm.length + ' de formulario)');
+
+  lineas.push('══════════════════════════════');
+
+  SpreadsheetApp.getUi().alert('Diagnóstico GeCO Lab\n\n' + lineas.join('\n'));
+}
+
+// ------------------------------------------------------------------
+// GUARD DE PARÁMETROS
+// ------------------------------------------------------------------
+
+/**
+ * Lanza un Error si algún campo requerido está vacío.
+ * @param {Object} obj
+ * @param {string[]} campos
+ * @param {string} contexto — nombre de la función que llama (para el mensaje)
+ */
+function requerirCampos(obj, campos, contexto) {
+  campos.forEach(function(campo) {
+    var val = obj ? obj[campo] : undefined;
+    if (val === undefined || val === null || String(val).trim() === '') {
+      throw new Error('[' + (contexto || 'GeCO') + '] Campo requerido ausente: ' + campo);
+    }
+  });
+}
+
+// ------------------------------------------------------------------
+// SANITIZACIÓN DE STRINGS
+// ------------------------------------------------------------------
+
+/** Elimina caracteres que rompen JSON o HTML en campos de texto libre. */
+function sanitizar(s) {
+  return String(s || '').trim().replace(/[\x00-\x1F\x7F]/g, ' ');
+}
+
+/** Trunca a N caracteres con elipsis si es necesario. */
+function truncar(s, n) {
+  s = String(s || '');
+  return s.length > n ? s.substring(0, n - 1) + '…' : s;
+}
+
+// ------------------------------------------------------------------
+// FECHA HELPERS
+// ------------------------------------------------------------------
+
+/**
+ * Formatea una fecha al formato dd/MM/yyyy.
+ * Devuelve '—' si la entrada es inválida.
+ */
+function formatFecha(d) {
+  try {
+    if (!d) return '—';
+    var fecha = d instanceof Date ? d : new Date(d);
+    if (isNaN(fecha.getTime())) return '—';
+    return Utilities.formatDate(fecha, Session.getScriptTimeZone(), 'dd/MM/yyyy');
+  } catch (e) { return '—'; }
+}
+
+/**
+ * Formatea una fecha con hora: dd/MM/yyyy HH:mm.
+ */
+function formatFechaHora(d) {
+  try {
+    if (!d) return '—';
+    var fecha = d instanceof Date ? d : new Date(d);
+    if (isNaN(fecha.getTime())) return '—';
+    return Utilities.formatDate(fecha, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+  } catch (e) { return '—'; }
+}
+
+/**
+ * Días entre dos fechas (positivo = futuro, negativo = pasado).
+ */
+function diasEntre(desde, hasta) {
+  var d1 = desde instanceof Date ? desde : new Date(desde);
+  var d2 = hasta instanceof Date ? hasta : new Date(hasta);
+  d1.setHours(0, 0, 0, 0);
+  d2.setHours(0, 0, 0, 0);
+  return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+}
+
+// ------------------------------------------------------------------
+// SPREADSHEET HELPERS
+// ------------------------------------------------------------------
+
+/**
+ * Obtiene el Spreadsheet de forma segura:
+ * primero por SPREADSHEET_ID (Script Properties),
+ * luego por getActiveSpreadsheet().
+ * Centraliza la lógica que se repite en todos los módulos.
+ */
+function getSS() {
+  try {
+    var idProp = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    if (idProp) return SpreadsheetApp.openById(idProp);
+  } catch (e) {
+    gLogW('Utils', 'No se pudo abrir por ID, usando activo: ' + e.message);
+  }
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+/**
+ * Obtiene una hoja por nombre o lanza un error descriptivo.
+ * @param {Spreadsheet} ss
+ * @param {string} nombre
+ * @returns {Sheet}
+ */
+function getHoja(ss, nombre) {
+  var hoja = ss.getSheetByName(nombre);
+  if (!hoja) throw new Error('No se encontró la hoja "' + nombre + '". Ejecutar setupCompleto().');
+  return hoja;
+}
+
+/**
+ * Busca una fila en una hoja por valor en una columna.
+ * @param {Sheet} hoja
+ * @param {number} colIdx  — índice 0-based
+ * @param {string} valor
+ * @returns {{ filaIdx: number, datosFila: Array }|null}
+ *   filaIdx es 1-based (para getRange), null si no se encuentra.
+ */
+function buscarFilaPorValor(hoja, colIdx, valor) {
+  if (hoja.getLastRow() < 2) return null;
+  var datos = hoja.getDataRange().getValues();
+  var valorNorm = String(valor).trim();
+  for (var i = 1; i < datos.length; i++) {
+    if (String(datos[i][colIdx]).trim() === valorNorm) {
+      return { filaIdx: i + 1, datosFila: datos[i] };
+    }
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------
+// LIMPIAR EVALUACIONES HUÉRFANAS
+// ------------------------------------------------------------------
+
+/**
+ * Busca evaluaciones en Registro_Competencias cuyo Form fue eliminado de Drive.
+ * Las marca como 'Abandonada' para limpiar el estado del sistema.
+ * SÓLO para mantenimiento — no llamar en flujos normales.
+ *
+ * @returns {{ revisadas: number, marcadas: number }}
+ */
+function limpiarEvaluacionesHuerfanas() {
+  var ss      = getSS();
+  var hojaReg = getHoja(ss, 'Registro_Competencias');
+  var datos   = hojaReg.getDataRange().getValues();
+  var revisadas = 0, marcadas = 0;
+
+  for (var i = 1; i < datos.length; i++) {
+    var estado  = String(datos[i][22] || '');
+    var formUrl = String(datos[i][19] || '');
+    if (estado !== 'Pendiente' && estado !== 'En Curso') continue;
+    revisadas++;
+
+    // Si tiene Form URL, verificar que el archivo aún existe
+    if (formUrl) {
+      var formId = _extraerIdDeUrl(formUrl);
+      if (formId) {
+        try {
+          DriveApp.getFileById(formId); // lanza si no existe
+        } catch (e) {
+          hojaReg.getRange(i + 1, 23).setValue('Abandonada');
+          marcadas++;
+          gLogW('Utils', 'Evaluación huérfana marcada: ' + String(datos[i][0]));
+        }
+      }
+    }
+  }
+
+  gLogI('Utils', 'limpiarEvaluacionesHuerfanas: ' + revisadas + ' revisadas, ' + marcadas + ' marcadas.');
+  return { revisadas: revisadas, marcadas: marcadas };
+}
+
+function _extraerIdDeUrl(url) {
+  // Extrae el ID de un URL de Google Forms/Docs
+  var m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+// ------------------------------------------------------------------
+// DEDUPLICAR TRIGGERS
+// ------------------------------------------------------------------
+
+/**
+ * Elimina triggers duplicados del mismo formId.
+ * Útil si instalarTriggerForm() fue llamado más de una vez.
+ * @param {string} [formId] — si se omite, limpia todos los duplicados
+ */
+function deduplicarTriggers(formId) {
+  var triggers = ScriptApp.getProjectTriggers();
+  var vistosId = {};
+  var eliminados = 0;
+
+  triggers.forEach(function(t) {
+    if (t.getEventType() !== ScriptApp.EventType.ON_FORM_SUBMIT) return;
+    var id;
+    try { id = t.getTriggerSourceId(); } catch (e) { return; }
+    if (formId && id !== formId) return;
+
+    if (vistosId[id]) {
+      ScriptApp.deleteTrigger(t);
+      eliminados++;
+      gLogI('Utils', 'Trigger duplicado eliminado para formId: ' + id);
+    } else {
+      vistosId[id] = true;
+    }
+  });
+
+  gLogI('Utils', 'deduplicarTriggers: ' + eliminados + ' eliminados.');
+  return eliminados;
+}
+
+// ------------------------------------------------------------------
+// VERIFICACIÓN DE API KEY
+// ------------------------------------------------------------------
+
+/**
+ * Prueba que la API key de Claude sea válida haciendo una llamada mínima.
+ * @returns {{ ok: boolean, modelo?: string, error?: string }}
+ */
+function verificarApiKey() {
+  try {
+    var url = 'https://api.anthropic.com/v1/messages';
+    var payload = {
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 10,
+      messages:   [{ role: 'user', content: 'di "ok"' }]
+    };
+    var options = {
+      method:          'post',
+      contentType:     'application/json',
+      headers: {
+        'x-api-key':          getClaudeApiKey(),
+        'anthropic-version':  '2023-06-01'
+      },
+      payload:          JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+    var resp = UrlFetchApp.fetch(url, options);
+    var code = resp.getResponseCode();
+    if (code === 200) {
+      var data = JSON.parse(resp.getContentText());
+      return { ok: true, modelo: data.model };
+    } else {
+      var err = JSON.parse(resp.getContentText());
+      return { ok: false, error: 'HTTP ' + code + ': ' + (err.error ? err.error.message : 'sin detalle') };
+    }
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function TEST_verificarApiKey() {
+  var res = verificarApiKey();
+  SpreadsheetApp.getUi().alert(
+    res.ok
+      ? '✅ API Key válida\nModelo: ' + res.modelo
+      : '❌ API Key inválida\n' + res.error
+  );
+}
+
+// ------------------------------------------------------------------
+// MENÚ DE DIAGNÓSTICO (llamar desde onOpen si se desea)
+// ------------------------------------------------------------------
+
+/**
+ * Agrega submenú de herramientas de diagnóstico.
+ * Llamar desde onOpen() con:
+ *   menu.addSubMenu(crearSubmenuDiagnostico())
+ */
+function crearSubmenuDiagnostico() {
+  return SpreadsheetApp.getUi()
+    .createMenu('🔧 Diagnóstico')
+    .addItem('🩺 Verificar estructura del sistema', 'diagnosticarSistema')
+    .addItem('🔑 Verificar API key de Claude',      'TEST_verificarApiKey')
+    .addItem('🔔 Listar triggers activos',          'listarTriggers')
+    .addItem('🧹 Deduplicar triggers',              'deduplicarTriggers')
+    .addItem('⚙️ Ver configuración (Config.gs)',    'diagnosticarConfig');
+}

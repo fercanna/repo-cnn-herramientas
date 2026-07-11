@@ -1,0 +1,378 @@
+// ============================================================
+//  modulo_importar_stock_inicial.gs
+//  BIONOA v2.4 — Importación de stock físico inicial
+//  Autor: Fernando / Asistente técnico
+//  Fecha: 2026-03
+// ============================================================
+//
+//  FLUJO:
+//  1. FormularioImportStock.html sube el Excel, SheetJS lo parsea
+//     en el browser y envía un array JSON de filas válidas (pre-filtradas)
+//  2. importarStockInicial(payload) valida cada código contra la
+//     hoja Insumos (catálogo del área)
+//  3. Las filas válidas se escriben en batch en:
+//        - Detalle_Recepciones  (trazabilidad completa)
+//        - Movimientos_Inventario (tipo "Ajuste inicial")
+//  4. Se llama a actualizarStockIncremental() para actualizar
+//     Stock_Actual solo con los lotes afectados (ya optimizado en v2.3)
+//  5. Devuelve un objeto con resultado para renderizar en el HTML
+//
+//  IMPORTANTE:
+//  - NO modifica datos existentes, solo agrega filas nuevas
+//  - Si el código no está en Insumos → salta y reporta
+//  - Idempotente si se corre dos veces: suma stock (no pisa)
+//    → el usuario debe asegurarse de correrlo una sola vez por área
+// ============================================================
+
+/**
+ * Abre el formulario de importación de stock inicial.
+ * Se llama desde el menú onOpen().
+ */
+function mostrarFormularioImportStock() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioImportStock')
+    .setWidth(820)
+    .setHeight(680)
+    .setTitle('Importar Stock Inicial');
+  SpreadsheetApp.getUi().showModalDialog(html, '📦 Importar Stock Inicial');
+}
+
+// ────────────────────────────────────────────────────────────
+//  FUNCIÓN PRINCIPAL — llamada desde el HTML
+// ────────────────────────────────────────────────────────────
+
+/**
+ * @param {Array<Object>} payload  Array de objetos desde el HTML:
+ *   { codigo, cantidad, lote, vencimiento, obs }
+ *   Solo contienen filas pre-validadas en formato (sin errores de parseo).
+ *   La validación de existencia en catálogo la hacemos acá.
+ *
+ * @returns {Object} { ok, importadas, saltadas, errores[], tiempo, mensaje }
+ */
+function importarStockInicial(payload) {
+  const t0 = Date.now();
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // ── 1. Cargar catálogo de Insumos en memoria ──────────────
+    const shInsumos = ss.getSheetByName('Insumos');
+    if (!shInsumos) throw new Error('No se encontró la hoja "Insumos".');
+
+    const datosInsumos = shInsumos.getDataRange().getValues();
+    // Col A = codigo_insumo, Col B = nombre/descripcion, Col C = unidad, Col D = proveedor_principal, etc.
+    // Construimos un mapa codigo → { nombre, unidad, proveedor }
+    const catalogoMap = {};
+    for (let i = 1; i < datosInsumos.length; i++) {  // i=0 es encabezado
+      const cod = String(datosInsumos[i][0] || '').trim();
+      if (!cod) continue;
+      catalogoMap[cod] = {
+  nombre:    String(datosInsumos[i][1] || '').trim(),
+  categoria: String(datosInsumos[i][2] || '').trim(),  // ← agregar
+  unidad:    String(datosInsumos[i][3] || '').trim(),
+  proveedor: String(datosInsumos[i][4] || '').trim()   // ← proveedor pasa a índice 4
+};
+    }
+
+    // ── 2. Separar filas válidas vs. inválidas ─────────────────
+    const filasOk  = [];
+    const saltadas = [];          // códigos no encontrados
+
+    payload.forEach(row => {
+      const cod = String(row.codigo || '').trim();
+      if (catalogoMap[cod]) {
+        filasOk.push({ ...row, ...catalogoMap[cod] });
+      } else {
+        saltadas.push(cod + (row.obs ? ` (${row.obs})` : ''));
+      }
+    });
+
+    if (filasOk.length === 0) {
+      return {
+        ok: true,
+        importadas: 0,
+        saltadas:   saltadas.length,
+        errores:    saltadas,
+        tiempo:     ((Date.now() - t0) / 1000).toFixed(1),
+        mensaje:    'Ningún código coincidió con el catálogo. Verificá los códigos del Excel.'
+      };
+    }
+
+    // ── 3. Preparar ID de importación (referencia única) ────────
+    const fechaHoy     = new Date();
+    const idImportacion = 'IMPORT-' + Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+
+    // ── 4. Construir filas para Movimientos_Inventario ──────────
+// Estructura real de Movimientos_Inventario (12 columnas):
+// A: id_movimiento | B: fecha | C: tipo_movimiento | D: codigo_insumo |
+// E: nombre_insumo | F: cantidad | G: referencia | H: usuario |
+// I: observaciones | J: lote | K: vencimiento | L: categoria
+
+const shMov = ss.getSheetByName('Movimientos_Inventario');
+    if (!shMov) throw new Error('No se encontró la hoja "Movimientos_Inventario".');
+
+const usuario = Session.getActiveUser().getEmail();
+
+const rowsMov = filasOk.map(r => [
+  idImportacion,                            // A: id_movimiento  ← era fechaHoy
+  fechaHoy,                                 // B: fecha          ← era 'Ajuste inicial'
+  'Ajuste inicial',                         // C: tipo_movimiento← era idImportacion
+  r.codigo,                                 // D: codigo_insumo  ✅
+  r.nombre,                                 // E: nombre_insumo  ✅
+  Number(r.cantidad),                       // F: cantidad       ✅
+  idImportacion,                            // G: referencia     ← era r.unidad
+  usuario,                                  // H: usuario        ← era r.lote
+  r.obs || 'Carga inicial de inventario',   // I: observaciones  ← era vencimiento
+  r.lote || 'SIN LOTE',                     // J: lote           ← era r.proveedor
+  parsearFecha_(r.vencimiento),             // K: vencimiento    ← era r.obs
+  r.categoria || ''                         // L: categoria      ← FALTABA
+]);
+
+    // Write batch — setValues es ~10x más rápido que appendRow en loop
+    const lastRowMov = shMov.getLastRow();
+    shMov.getRange(lastRowMov + 1, 1, rowsMov.length, rowsMov[0].length)
+         .setValues(rowsMov);
+
+    // ── 5. Escribir en Detalle_Recepciones (trazabilidad) ───────
+    // Esto es opcional pero mantiene coherencia con el modelo de datos.
+    // Si tu Detalle_Recepciones tiene una estructura diferente, ajustá las columnas.
+    const shDetRec = ss.getSheetByName('Detalle_Recepciones');
+    if (shDetRec) {
+      const rowsDetRec = filasOk.map(r => [
+        fechaHoy,                             // A: fecha_recepcion
+        idImportacion,                        // B: id_recepcion (referencia)
+        r.codigo,                             // C: codigo_insumo
+        r.nombre,                             // D: descripcion
+        Number(r.cantidad),                   // E: cantidad_recibida
+        r.unidad,                             // F: unidad_medida
+        r.lote || 'SIN LOTE',                 // G: lote
+        parsearFecha_(r.vencimiento),         // H: vencimiento
+        '',                                   // I: precio_unitario (vacío en carga inicial)
+        r.proveedor,                          // J: proveedor
+        'Carga inicial de inventario',        // K: observaciones
+        'IMPORT_STOCK_INICIAL'                // L: tipo_origen (para filtrar en auditorías)
+      ]);
+      const lastRowDR = shDetRec.getLastRow();
+      shDetRec.getRange(lastRowDR + 1, 1, rowsDetRec.length, rowsDetRec[0].length)
+              .setValues(rowsDetRec);
+    }
+
+    // ── 6. Actualizar Stock_Actual (incremental) ─────────────────
+    // Pasamos solo los lotes afectados — igual que en recepción optimizada
+    const lotesAfectados = filasOk.map(r => ({
+      codigo:      r.codigo,
+      lote:        r.lote || 'SIN LOTE',
+      cantidad:    Number(r.cantidad),
+      vencimiento: parsearFecha_(r.vencimiento),
+      proveedor:   r.proveedor,
+      nombre:      r.nombre,
+      unidad:      r.unidad
+    }));
+
+    actualizarStockInicialEnStock_(ss, lotesAfectados, fechaHoy);
+
+    // ── 7. Resultado ─────────────────────────────────────────────
+    const tiempo = ((Date.now() - t0) / 1000).toFixed(1);
+    Logger.log(`[importarStockInicial] OK: ${filasOk.length} filas, ${saltadas.length} saltadas, ${tiempo}s`);
+
+    return {
+      ok:         true,
+      importadas: filasOk.length,
+      saltadas:   saltadas.length,
+      errores:    saltadas,
+      tiempo:     tiempo,
+      mensaje:    ''
+    };
+
+  } catch (err) {
+    Logger.log('[importarStockInicial] ERROR: ' + err.message);
+    return {
+      ok:         false,
+      importadas: 0,
+      saltadas:   0,
+      errores:    [],
+      tiempo:     ((Date.now() - t0) / 1000).toFixed(1),
+      mensaje:    err.message
+    };
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+//  ACTUALIZACIÓN DE STOCK_ACTUAL
+//  Estructura real confirmada (captura 28/02/2026):
+//  A: codigo_insumo | B: descripcion | C: stock_disponible |
+//  D: stock_critico  | E: estado_stock | F: ultima_actualizacion |
+//  G: lote           | H: vencimiento  | I: categoria
+//
+//  ⚠️ Una fila por INSUMO (stock agregado), no por lote.
+//  La importación SUMA cantidad a stock_disponible (col C).
+//  Lote y vencimiento (cols G/H) se actualizan solo si están vacíos,
+//  o si el Excel trae un único lote para ese insumo.
+//  Si un insumo tiene múltiples lotes en el Excel → se suma todo
+//  a stock_disponible y se guarda el lote/vencimiento del último.
+// ────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────
+//  ACTUALIZACIÓN DE STOCK_ACTUAL
+//  Estructura real confirmada:
+//  A: codigo_insumo | B: descripcion | C: stock_disponible |
+//  D: stock_critico  | E: estado_stock | F: ultima_actualizacion |
+//  G: lote           | H: vencimiento  | I: categoria
+//
+//  ✅ Una fila por codigo+lote (igual que actualizarStockIncremental)
+//  Si el mismo codigo+lote ya existe en Stock_Actual → suma cantidad.
+//  Si es nuevo → agrega fila nueva.
+//  Múltiples lotes del mismo código → múltiples filas. SIEMPRE.
+// ────────────────────────────────────────────────────────────
+
+function actualizarStockInicialEnStock_(ss, lotesAfectados, fecha) {
+  const shStock = ss.getSheetByName('Stock_Actual');
+  if (!shStock) throw new Error('No se encontró la hoja "Stock_Actual".');
+
+  const COL = {
+    codigo:      0,   // A
+    descripcion: 1,   // B
+    stock_disp:  2,   // C
+    stock_crit:  3,   // D
+    estado:      4,   // E
+    ultima_act:  5,   // F
+    lote:        6,   // G
+    vencimiento: 7,   // H
+    categoria:   8    // I
+  };
+  const N_COLS = 9;
+
+  // Leer Stock_Actual completo
+  const lastRow = shStock.getLastRow();
+  let stockData = lastRow > 1
+    ? shStock.getRange(2, 1, lastRow - 1, N_COLS).getValues()
+    : [];
+
+  // Mapa de lookup: "codigo|lote" → índice en stockData
+  // ✅ CLAVE DEL FIX: la llave incluye el lote, no solo el código
+  const llaveMap = {};
+  stockData.forEach((row, idx) => {
+    const cod  = String(row[COL.codigo] || '').trim();
+    const lote = String(row[COL.lote]   || '').trim();
+    if (cod) llaveMap[cod + '|' + lote] = idx;
+  });
+
+  // Leer stock_critico del catálogo para mantenerlo si ya existe
+  const shInsumos = ss.getSheetByName('Insumos');
+  const criticoMap = {};
+  if (shInsumos) {
+    const datosIns = shInsumos.getDataRange().getValues();
+    const hdr = datosIns[0].map(h => String(h).toLowerCase().trim());
+    const iCod  = hdr.indexOf('codigo_insumo');
+    const iCrit = hdr.indexOf('stock_critico');
+    if (iCod !== -1 && iCrit !== -1) {
+      for (let i = 1; i < datosIns.length; i++) {
+        const c = String(datosIns[i][iCod] || '').trim();
+        if (c) criticoMap[c] = Number(datosIns[i][iCrit]) || 0;
+      }
+    }
+  }
+
+  const nuevasFilas = [];
+  const toUpdate    = [];  // índices en stockData que hay que reescribir
+
+  lotesAfectados.forEach(r => {
+    const cod   = String(r.codigo || '').trim();
+    const lote  = String(r.lote   || 'SIN LOTE').trim();
+    const llave = cod + '|' + lote;
+
+    if (llaveMap.hasOwnProperty(llave)) {
+      // ── Lote ya existe: solo sumar cantidad y actualizar fecha ──
+      const idx = llaveMap[llave];
+      stockData[idx][COL.stock_disp] = (Number(stockData[idx][COL.stock_disp]) || 0) + r.cantidad;
+      stockData[idx][COL.ultima_act] = fecha;
+      toUpdate.push(idx);
+
+    } else {
+      // ── Lote nuevo: crear fila completa ────────────────────────
+      const fila = new Array(N_COLS).fill('');
+      fila[COL.codigo]      = cod;
+      fila[COL.descripcion] = r.nombre  || '';
+      fila[COL.stock_disp]  = r.cantidad;
+      fila[COL.stock_crit]  = criticoMap[cod] || '';
+      fila[COL.estado]      = 'OK';
+      fila[COL.ultima_act]  = fecha;
+      fila[COL.lote]        = lote;
+      fila[COL.vencimiento] = r.vencimiento || '';
+      fila[COL.categoria]   = r.categoria   || '';
+      nuevasFilas.push(fila);
+      llaveMap[llave] = stockData.length;
+      stockData.push(fila);
+    }
+  });
+
+  // Recalcular estado para todos los códigos afectados
+  // (considera stock total del código a través de todos sus lotes)
+  const codigosAfectados = {};
+  lotesAfectados.forEach(r => { codigosAfectados[String(r.codigo).trim()] = true; });
+
+  const stockTotalPorCodigo = {};
+  stockData.forEach(row => {
+    const cod = String(row[COL.codigo] || '').trim();
+    if (codigosAfectados[cod]) {
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + (Number(row[COL.stock_disp]) || 0);
+    }
+  });
+
+  stockData.forEach((row, idx) => {
+    const cod = String(row[COL.codigo] || '').trim();
+    if (!codigosAfectados[cod]) return;
+    const critico = Number(row[COL.stock_crit]) || criticoMap[cod] || 0;
+    const total   = stockTotalPorCodigo[cod] || 0;
+    const nuevoEstado = total <= 0 ? 'Agotado' : total <= critico ? 'Crítico' : 'OK';
+    if (row[COL.estado] !== nuevoEstado) {
+      stockData[idx][COL.estado] = nuevoEstado;
+      if (toUpdate.indexOf(idx) === -1) toUpdate.push(idx);
+    }
+  });
+
+  // ── Batch write: filas existentes modificadas ─────────────────
+  toUpdate.forEach(idx => {
+    const rowNum = idx + 2;
+    const row    = stockData[idx];
+    // Escribir las columnas que pueden cambiar: C, E, F
+    shStock.getRange(rowNum, COL.stock_disp + 1, 1, 1).setValue(row[COL.stock_disp]);
+    shStock.getRange(rowNum, COL.estado     + 1, 1, 1).setValue(row[COL.estado]);
+    shStock.getRange(rowNum, COL.ultima_act + 1, 1, 1).setValue(row[COL.ultima_act]);
+  });
+
+  // ── Batch write: filas nuevas ─────────────────────────────────
+  if (nuevasFilas.length > 0) {
+    const firstNewRow = shStock.getLastRow() + 1;
+    shStock.getRange(firstNewRow, 1, nuevasFilas.length, N_COLS)
+           .setValues(nuevasFilas);
+  }
+
+  // Ordenar por vencimiento FIFO (igual que actualizarStockActual)
+  const totalRows = shStock.getLastRow();
+  if (totalRows > 2) {
+    shStock.getRange(2, 1, totalRows - 1, N_COLS).sort({ column: 8, ascending: true });
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+//  UTILIDADES PRIVADAS
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Convierte string "DD/MM/AAAA" o "DD/MM/AA" a Date.
+ * Si está vacío o es inválido, devuelve string vacío.
+ */
+function parsearFecha_(str) {
+  if (!str || String(str).trim() === '') return '';
+  if (str instanceof Date) return str;
+
+  const partes = String(str).trim().split('/');
+  if (partes.length !== 3) return str;  // devolver tal cual si no parsea
+
+  let [dd, mm, aaaa] = partes.map(Number);
+  if (aaaa < 100) aaaa += 2000;  // "26" → 2026
+
+  const fecha = new Date(aaaa, mm - 1, dd);
+  return isNaN(fecha.getTime()) ? str : fecha;
+}
+

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; color: #333; }
+    
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; background: white; }
+    th { background-color: #f8f9fa; text-align: left; padding: 10px; border-bottom: 2px solid #dee2e6; color: #495057; font-weight: 600; }
+    td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:hover { background-color: #f1f3f4; }
+    
+    /* Expandible de items */
+    .items-detalle { 
+      display: none; 
+      margin-top: 8px; 
+      padding: 10px; 
+      background: #f8f9fa; 
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .items-detalle.visible { display: block; }
+    .item-pendiente { 
+      padding: 4px 0; 
+      border-bottom: 1px dashed #dee2e6;
+    }
+    .item-pendiente:last-child { border-bottom: none; }
+    
+    /* Botón expandir */
+    .btn-expand { 
+      cursor: pointer; 
+      color: #1967d2; 
+      font-size: 11px;
+      text-decoration: underline;
+      border: none;
+      background: none;
+      padding: 0;
+    }
+
+    /* Estado badges */
+    .status-badge { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status-pendiente { background-color: #fff3cd; color: #856404; }
+    .status-parcial { background-color: #d1e7dd; color: #0f5132; }
+
+    /* ✅ NUEVO: Badge de progreso de items */
+    .progreso-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+    .progreso-ok { background: #d1e7dd; color: #0f5132; }
+    .progreso-parcial { background: #fff3cd; color: #856404; }
+    .progreso-sin { background: #f8f9fa; color: #6c757d; border: 1px solid #dee2e6; }
+
+    /* ✅ NUEVO: Fechas de entrega con alertas */
+    .fecha-normal { color: #333; }
+    .fecha-vencida { 
+      color: #d93025; 
+      font-weight: bold;
+    }
+    .fecha-vencida::before { content: '🔴 '; }
+    .fecha-proxima { color: #856404; font-weight: bold; }
+    .fecha-proxima::before { content: '🟡 '; }
+
+    /* Barra resumen de alertas */
+    .alerta-bar {
+      display: none;
+      background: #fce8e6;
+      border: 1px solid #f28b82;
+      border-radius: 6px;
+      padding: 10px 15px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #c62828;
+    }
+    
+    /* Botonera */
+    .toolbar { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; }
+    .btn { padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px; transition: background 0.2s; }
+    .btn-print { background: #4285f4; color: white; }
+    .btn-copy { background: #e8f0fe; color: #1967d2; }
+    
+    /* Filtros */
+    .filtros { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+    .filtros label { font-weight: bold; font-size: 12px; color: #555; margin: 0; }
+    .filtros select { width: auto; padding: 6px 10px; font-size: 12px; }
+    
+    .empty-state { text-align: center; color: #666; margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 8px; }
+    .loader { text-align: center; margin-top: 20px; color: #4285f4; }
+    
+    @media print {
+      .toolbar, .loader, .btn-expand, .filtros, .alerta-bar { display: none !important; }
+      .items-detalle { display: block !important; }
+      body { padding: 0; }
+      table { border: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- ✅ NUEVO: Barra de alerta de demoras -->
+  <div class="alerta-bar" id="alertaBar"></div>
+
+  <div class="toolbar" id="toolbar" style="display:none;">
+    <button class="btn btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
+    <button class="btn btn-copy" onclick="copiarTabla()">📋 Copiar a Excel</button>
+  </div>
+
+  <!-- ✅ NUEVO: Filtros rápidos -->
+  <div class="filtros" id="filtros" style="display:none;">
+    <label>Filtrar:</label>
+    <select id="filtroEstado" onchange="aplicarFiltros()">
+      <option value="">Todos los estados</option>
+      <option value="Pendiente">Solo Pendientes</option>
+      <option value="Recepción Parcial">Solo Parciales</option>
+    </select>
+    <select id="filtroAlerta" onchange="aplicarFiltros()">
+      <option value="">Todas las fechas</option>
+      <option value="vencida">Entrega vencida</option>
+      <option value="proxima">Vence en 3 días</option>
+    </select>
+    <span id="contadorFiltro" style="font-size: 12px; color: #666;"></span>
+  </div>
+
+  <div id="loader" class="loader">
+    <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+    Buscando órdenes pendientes...
+  </div>
+  
+  <div id="content">
+    <div id="tablaContainer"></div>
+  </div>
+  
+  <div id="mensajeCopia" style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 8px 16px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity 0.3s;">
+    ✅ Tabla copiada al portapapeles
+  </div>
+
+  <script>
+    let ordenesGlobal = [];
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(dibujarTabla)
+        .withFailureHandler(mostrarError)
+        .getOrdenesPendientes();
+    };
+
+    // ✅ NUEVO: Analiza si una fecha de entrega está vencida o próxima
+    function estadoFecha(fechaStr) {
+      if (!fechaStr || fechaStr === '-') return 'normal';
+      // fechaStr viene como dd/MM/yyyy
+      const partes = fechaStr.split('/');
+      if (partes.length !== 3) return 'normal';
+      const fecha = new Date(partes[2], partes[1]-1, partes[0]);
+      const diffDias = Math.floor((fecha - hoy) / (1000*60*60*24));
+      if (diffDias < 0) return 'vencida';
+      if (diffDias <= 3) return 'proxima';
+      return 'normal';
+    }
+
+    function dibujarTabla(ordenes) {
+      document.getElementById('loader').style.display = 'none';
+      const container = document.getElementById('tablaContainer');
+      ordenesGlobal = ordenes;
+
+      if (!ordenes || ordenes.length === 0) {
+        container.innerHTML = '<div class="empty-state">✅ <strong>Todo al día</strong><br>No hay órdenes pendientes de recepción.</div>';
+        return;
+      }
+
+      document.getElementById('toolbar').style.display = 'flex';
+      document.getElementById('filtros').style.display = 'flex';
+
+      // ✅ Barra de alertas de demora
+      const vencidas = ordenes.filter(o => estadoFecha(o.fecha_entrega_estimada) === 'vencida');
+      if (vencidas.length > 0) {
+        const bar = document.getElementById('alertaBar');
+        bar.style.display = 'block';
+        bar.innerHTML = `🔴 <strong>${vencidas.length} orden(es) con fecha de entrega vencida</strong>: ${vencidas.map(o => o.numero_orden).join(', ')} — Considerá hacer seguimiento con el proveedor.`;
+      }
+
+      renderTabla(ordenes);
+    }
+
+    function renderTabla(ordenes) {
+      const container = document.getElementById('tablaContainer');
+      
+      // ✅ NUEVO: columna Entrega Estimada
+      let html = '<table id="tablaDatos"><thead><tr>';
+      html += '<th>Orden</th><th>Proveedor</th><th>Emitida</th><th>Entrega Est.</th><th>Estado</th><th>Progreso</th><th>Items Pendientes</th>';
+      html += '</tr></thead><tbody>';
+      
+      ordenes.forEach((orden, idx) => {
+        const cssClass = orden.estado === 'Recepción Parcial' ? 'status-parcial' : 'status-pendiente';
+        const total = orden.total_orden ? '$' + parseFloat(orden.total_orden).toFixed(2) : '-';
+        const cantPendientes = orden.items_pendientes ? orden.items_pendientes.length : 0;
+        
+        // ✅ Badge de progreso
+        let progresoBadge = '';
+        if (orden.estado === 'Recepción Parcial') {
+          const totalItems = (orden.items_pendientes || []).length; // pendientes restantes
+          progresoBadge = `<span class="progreso-badge progreso-parcial">⚠️ parcial</span>`;
+        } else {
+          progresoBadge = `<span class="progreso-badge progreso-sin">nuevo</span>`;
+        }
+
+        // ✅ Fecha de entrega con color
+        const efEstado = estadoFecha(orden.fecha_entrega_estimada);
+        const fechaEntrega = orden.fecha_entrega_estimada || '—';
+        const fechaClass = 'fecha-' + efEstado;
+
+        html += `<tr data-estado="${orden.estado}" data-fecha-estado="${efEstado}">
+          <td><strong>${orden.numero_orden}</strong></td>
+          <td>${orden.proveedor}</td>
+          <td>${orden.fecha_emision}</td>
+          <td><span class="${fechaClass}">${fechaEntrega}</span></td>
+          <td><span class="status-badge ${cssClass}">${orden.estado}</span></td>
+          <td>${progresoBadge}</td>
+          <td>
+            <button class="btn-expand" onclick="toggleItems(${idx})">
+              ${cantPendientes} producto(s) ▼
+            </button>
+            <div class="items-detalle" id="items-${idx}">
+              ${dibujarItemsPendientes(orden.items_pendientes)}
+            </div>
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+      actualizarContador(ordenes.length);
+    }
+
+    function dibujarItemsPendientes(items) {
+      if (!items || items.length === 0) return '<em>Sin items pendientes</em>';
+      
+      let html = '<div style="font-weight: bold; margin-bottom: 5px; color: #202124;">Detalle pendiente:</div>';
+      items.forEach(item => {
+        const pct = item.solicitado > 0 ? Math.round((item.recibido / item.solicitado) * 100) : 0;
+        html += `<div class="item-pendiente">
+          <strong>${item.descripcion}</strong> (${item.codigo})<br>
+          <span style="color: #5f6368;">
+            Pedido: ${item.solicitado} | Recibido: <span style="color:#1e7e34;font-weight:bold;">${item.recibido}</span> (${pct}%) | 
+            <strong style="color: #d93025;">Pendiente: ${item.pendiente}</strong>
+          </span>
+        </div>`;
+      });
+      return html;
+    }
+
+    // ✅ NUEVO: Filtros aplicados sin recargar del servidor
+    function aplicarFiltros() {
+      const filtroEstado = document.getElementById('filtroEstado').value;
+      const filtroAlerta = document.getElementById('filtroAlerta').value;
+      
+      let filtradas = ordenesGlobal;
+      
+      if (filtroEstado) {
+        filtradas = filtradas.filter(o => o.estado === filtroEstado);
+      }
+      if (filtroAlerta) {
+        filtradas = filtradas.filter(o => estadoFecha(o.fecha_entrega_estimada) === filtroAlerta);
+      }
+      
+      renderTabla(filtradas);
+    }
+
+    function actualizarContador(n) {
+      document.getElementById('contadorFiltro').textContent = n + ' orden(es) mostradas';
+    }
+
+    function toggleItems(idx) {
+      const div = document.getElementById(`items-${idx}`);
+      div.classList.toggle('visible');
+    }
+
+    function copiarTabla() {
+      document.querySelectorAll('.items-detalle').forEach(div => div.classList.add('visible'));
+      const tabla = document.getElementById('tablaDatos');
+      if (!tabla) return;
+      const range = document.createRange();
+      range.selectNode(tabla);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      try {
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        mostrarNotificacion();
+      } catch (err) {
+        alert('No se pudo copiar automáticamente. Seleccioná la tabla y presioná Ctrl+C');
+      }
+    }
+
+    function mostrarNotificacion() {
+      const msg = document.getElementById('mensajeCopia');
+      msg.style.opacity = '1';
+      setTimeout(() => { msg.style.opacity = '0'; }, 2000);
+    }
+
+    function mostrarError(e) {
+      document.getElementById('loader').innerHTML = '<div style="color:#d93025">❌ Error: ' + e.message + '</div>';
+    }
+  </script>
+</body>
+</html>

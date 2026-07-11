@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Lista de No Conformidades{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>No Conformidades</h1>
+        <a href="{{ url_for('main.nueva_nc') }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Nueva NC
+        </a>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="estado" class="form-label">Estado</label>
+                    <select class="form-select" name="estado" id="estado">
+                        <option value="">Todos</option>
+                        <option value="Abierta" {% if request.args.get('estado') == 'Abierta' %}selected{% endif %}>Abierta</option>
+                        <option value="En proceso" {% if request.args.get('estado') == 'En proceso' %}selected{% endif %}>En proceso</option>
+                        <option value="Cerrada" {% if request.args.get('estado') == 'Cerrada' %}selected{% endif %}>Cerrada</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="area" class="form-label">Área</label>
+                    <select class="form-select" name="area" id="area">
+                        <option value="">Todas</option>
+                        {% for area in areas %}
+                            <option value="{{ area }}" {% if request.args.get('area') == area %}selected{% endif %}>{{ area }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <button type="submit" class="btn btn-primary d-block w-100">
+                        <i class="bi bi-search"></i> Filtrar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabla de NC -->
+    <div class="card">
+        <div class="card-body">
+            {% if no_conformidades %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>N° NC</th>
+                                <th>Fecha Detección</th>
+                                <th>Descripción</th>
+                                <th>Área</th>
+                                <th>Tipo</th>
+                                <th>Severidad</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for nc in no_conformidades %}
+                            <tr>
+                                <td><strong>{{ nc.numero_nc }}</strong></td>
+                                <td>{{ nc.fecha_deteccion.strftime('%d/%m/%Y') }}</td>
+                                <td>{{ nc.descripcion[:100] }}...</td>
+                                <td>{{ nc.area_afectada }}</td>
+                                <td>
+                                    <span class="badge {% if nc.tipo_nc == 'Mayor' %}bg-danger{% elif nc.tipo_nc == 'Menor' %}bg-warning{% else %}bg-info{% endif %}">
+                                        {{ nc.tipo_nc }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge {% if nc.severidad == 'Alta' %}bg-danger{% elif nc.severidad == 'Media' %}bg-warning{% else %}bg-secondary{% endif %}">
+                                        {{ nc.severidad }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if nc.estado == 'Abierta' %}
+                                        <span class="badge bg-danger">{{ nc.estado }}</span>
+                                    {% elif nc.estado == 'En proceso' %}
+                                        <span class="badge bg-warning">{{ nc.estado }}</span>
+                                    {% else %}
+                                        <span class="badge bg-success">{{ nc.estado }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('main.ver_nc', id=nc.id) }}" class="btn btn-sm btn-info">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <a href="{{ url_for('main.editar_nc', id=nc.id) }}" class="btn btn-sm btn-warning">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Paginación -->
+                {% if pagination.pages > 1 %}
+                <nav aria-label="Paginación">
+                    <ul class="pagination justify-content-center">
+                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.listar_nc', page=pagination.prev_num) }}">Anterior</a>
+                        </li>
+                        {% for page_num in pagination.iter_pages() %}
+                            {% if page_num %}
+                                <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                                    <a class="page-link" href="{{ url_for('main.listar_nc', page=page_num) }}">{{ page_num }}</a>
+                                </li>
+                            {% else %}
+                                <li class="page-item disabled"><span class="page-link">...</span></li>
+                            {% endif %}
+                        {% endfor %}
+                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.listar_nc', page=pagination.next_num) }}">Siguiente</a>
+                        </li>
+                    </ul>
+                </nav>
+                {% endif %}
+            {% else %}
+                <p class="text-muted text-center">No se encontraron no conformidades.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

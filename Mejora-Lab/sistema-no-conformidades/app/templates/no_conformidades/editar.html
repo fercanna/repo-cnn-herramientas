@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Editar {{ nc.numero_nc }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Editar No Conformidad: {{ nc.numero_nc }}</h1>
+
+    <div class="card">
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('main.editar_nc', id=nc.id) }}">
+                <div class="row">
+                    <!-- Información básica -->
+                    <div class="col-md-6">
+                        <h5 class="mb-3">Información Básica</h5>
+
+                        <div class="mb-3">
+                            <label for="descripcion" class="form-label">Descripción de la NC *</label>
+                            <textarea class="form-control" id="descripcion" name="descripcion" rows="4" required>{{ nc.descripcion }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="area_afectada" class="form-label">Área Afectada *</label>
+                            <input type="text" class="form-control" id="area_afectada" name="area_afectada"
+                                   value="{{ nc.area_afectada }}" list="areas_list" required>
+                            <datalist id="areas_list">
+                                {% for area in areas %}
+                                    <option value="{{ area }}">
+                                {% endfor %}
+                            </datalist>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="tipo_nc" class="form-label">Tipo de NC *</label>
+                            <select class="form-select" id="tipo_nc" name="tipo_nc" required>
+                                <option value="Mayor" {% if nc.tipo_nc == 'Mayor' %}selected{% endif %}>Mayor</option>
+                                <option value="Menor" {% if nc.tipo_nc == 'Menor' %}selected{% endif %}>Menor</option>
+                                <option value="Observación" {% if nc.tipo_nc == 'Observación' %}selected{% endif %}>Observación</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="severidad" class="form-label">Severidad *</label>
+                            <select class="form-select" id="severidad" name="severidad" required>
+                                <option value="Alta" {% if nc.severidad == 'Alta' %}selected{% endif %}>Alta</option>
+                                <option value="Media" {% if nc.severidad == 'Media' %}selected{% endif %}>Media</option>
+                                <option value="Baja" {% if nc.severidad == 'Baja' %}selected{% endif %}>Baja</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="estado" class="form-label">Estado *</label>
+                            <select class="form-select" id="estado" name="estado" required>
+                                <option value="Abierta" {% if nc.estado == 'Abierta' %}selected{% endif %}>Abierta</option>
+                                <option value="En proceso" {% if nc.estado == 'En proceso' %}selected{% endif %}>En proceso</option>
+                                <option value="Cerrada" {% if nc.estado == 'Cerrada' %}selected{% endif %}>Cerrada</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="responsable" class="form-label">Responsable</label>
+                            <input type="text" class="form-control" id="responsable" name="responsable" value="{{ nc.responsable or '' }}">
+                        </div>
+                    </div>
+
+                    <!-- Análisis y acciones -->
+                    <div class="col-md-6">
+                        <h5 class="mb-3">Análisis y Acciones</h5>
+
+                        <div class="mb-3">
+                            <label for="causa_raiz" class="form-label">Causa Raíz</label>
+                            <textarea class="form-control" id="causa_raiz" name="causa_raiz" rows="3">{{ nc.causa_raiz or '' }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="accion_inmediata" class="form-label">Acción Inmediata</label>
+                            <textarea class="form-control" id="accion_inmediata" name="accion_inmediata" rows="3">{{ nc.accion_inmediata or '' }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="accion_correctiva" class="form-label">Acción Correctiva</label>
+                            <textarea class="form-control" id="accion_correctiva" name="accion_correctiva" rows="3">{{ nc.accion_correctiva or '' }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="accion_preventiva" class="form-label">Acción Preventiva</label>
+                            <textarea class="form-control" id="accion_preventiva" name="accion_preventiva" rows="3">{{ nc.accion_preventiva or '' }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="observaciones" class="form-label">Observaciones</label>
+                            <textarea class="form-control" id="observaciones" name="observaciones" rows="3">{{ nc.observaciones or '' }}</textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="modificado_por" class="form-label">Modificado por *</label>
+                            <input type="text" class="form-control" id="modificado_por" name="modificado_por" required>
+                        </div>
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <a href="{{ url_for('main.ver_nc', id=nc.id) }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancelar
+                        </a>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal">
+                            <i class="bi bi-trash"></i> Eliminar
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Guardar Cambios
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmación de eliminación -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmar Eliminación</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                ¿Está seguro que desea eliminar la NC {{ nc.numero_nc }}? Esta acción no se puede deshacer.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <form method="POST" action="{{ url_for('main.eliminar_nc', id=nc.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">Eliminar</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

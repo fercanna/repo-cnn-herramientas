@@ -1,0 +1,23 @@
+# Secretos — nunca versionar
+.env
+.env.*
+!*.env.example
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Bases de datos locales
+*.db
+*.sqlite
+*.sqlite3
+instance/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 18px; margin: 0; background: #f8f9fa; font-size: 14px; }
+    h2 { margin: 0 0 4px; color: #c62828; font-size: 17px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; font-size: 13px; }
+    select, textarea, input[type="text"] {
+      width: 100%; padding: 8px 10px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 13px; background: #fff;
+    }
+    textarea { resize: vertical; min-height: 65px; }
+    select:focus, textarea:focus { outline: none; border-color: #ea4335; box-shadow: 0 0 0 2px #fce8e6; }
+
+    /* Buscador rápido */
+    .search-bar {
+      position: relative; margin-bottom: 10px;
+    }
+    .search-bar input {
+      padding-left: 34px;
+    }
+    .search-bar .ico {
+      position: absolute; left: 10px; top: 50%;
+      transform: translateY(-50%); color: #888;
+    }
+
+    /* Detalle del movimiento */
+    #detalleMov { display: none; margin: 10px 0; }
+
+    .mov-info {
+      background: #fff3e0; border-left: 5px solid #fb8c00;
+      padding: 10px 14px; border-radius: 4px; font-size: 13px;
+    }
+    .mov-info .fila { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .mov-info .etiqueta { color: #5f6368; }
+    .mov-info .valor { font-weight: bold; color: #333; }
+    .mov-info .valor-grande { font-weight: bold; color: #c62828; font-size: 16px; }
+
+    .advertencia {
+      background: #fce8e6; border: 1px solid #ef9a9a;
+      border-radius: 6px; padding: 12px 14px;
+      font-size: 13px; color: #b71c1c; margin: 10px 0;
+    }
+    .advertencia strong { display: block; margin-bottom: 4px; }
+
+    .actions { display: flex; gap: 8px; margin-top: 18px; }
+    .btn { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+    .btn-success   { background: #34a853; color: white; }
+    .btn-success:hover  { background: #2d9248; }
+    .btn-success:disabled { background: #a8d5b5; cursor: not-allowed; }
+    .btn-secondary { background: #e8eaed; color: #3c4043; }
+
+    .message { padding: 10px 14px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .loading { display: none; text-align: center; padding: 20px; color: #34a853; font-weight: bold; }
+
+    .empty-state { text-align: center; padding: 30px; color: #888; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>↩️ Cancelar Baja de Consumo</h2>
+  <p class="subtitle">Revierte un egreso por consumo. Las unidades vuelven al lote original en Stock_Actual.</p>
+
+  <div id="message" class="message"></div>
+
+  <div id="formContent">
+
+    <div class="form-group">
+      <label>Buscar movimiento de egreso</label>
+      <div class="search-bar">
+        <span class="ico">🔍</span>
+        <input type="text" id="busqueda"
+          placeholder="Buscar por insumo, código o referencia..."
+          oninput="filtrarMovimientos()">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="movSelect">Movimiento de egreso a anular *</label>
+      <select id="movSelect" size="6" onchange="onMovimientoChange()" style="height:140px;">
+        <option value="">⏳ Cargando...</option>
+      </select>
+      <div style="font-size: 11px; color: #888; margin-top: 4px;">
+        Mostrando egresos de los últimos 180 días · Hacé clic para seleccionar
+      </div>
+    </div>
+
+    <div id="detalleMov">
+      <div class="mov-info">
+        <div class="fila">
+          <span class="etiqueta">Insumo:</span>
+          <span class="valor" id="dInsumo">—</span>
+        </div>
+        <div class="fila">
+          <span class="etiqueta">Cantidad egresada:</span>
+          <span class="valor-grande" id="dCantidad">—</span>
+        </div>
+        <div class="fila">
+          <span class="etiqueta">Lote:</span>
+          <span class="valor" id="dLote">—</span>
+        </div>
+        <div class="fila">
+          <span class="etiqueta">Fecha:</span>
+          <span id="dFecha">—</span>
+        </div>
+        <div class="fila">
+          <span class="etiqueta">Registrado por:</span>
+          <span id="dUsuario">—</span>
+        </div>
+        <div class="fila" id="filaRef" style="display:none;">
+          <span class="etiqueta">Referencia:</span>
+          <span id="dRef">—</span>
+        </div>
+      </div>
+
+      <div class="advertencia">
+        <strong>✅ Esta acción devuelve stock</strong>
+        Las <strong id="cantAdvert">?</strong> unidades de <strong id="insAdvert">?</strong>
+        serán restituidas al lote <strong id="loteAdvert">?</strong> en Stock_Actual.
+        El egreso original queda marcado como ANULADO (no se elimina, se mantiene por auditoría).
+      </div>
+
+      <div class="form-group">
+        <label for="motivo">Motivo de anulación *</label>
+        <textarea id="motivo" placeholder="Ej: Se registró el consumo de más unidades de las reales / Error al escanear / Devolución al área..."></textarea>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-success" id="btnRestituir" onclick="confirmarAnulacion()" disabled>
+        ↩️ Restituir al Stock
+      </button>
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar sin cambios</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Revirtiendo egreso y restituyendo stock...</div>
+
+  <script>
+    let movimientos    = [];
+    let movFiltrados   = [];
+    let movSeleccionado = null;
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(function(data) {
+          movimientos  = data;
+          movFiltrados = data;
+          renderizarSelect(data);
+        })
+        .withFailureHandler(function(e) { mostrarMensaje('Error al cargar movimientos: ' + e.message, 'error'); })
+        .getMovimientosEgresoActivos();
+    };
+
+    function renderizarSelect(data) {
+      const sel = document.getElementById('movSelect');
+      if (!data || data.length === 0) {
+        sel.innerHTML = '<option value="">— Sin egresos activos en los últimos 180 días —</option>';
+        return;
+      }
+      sel.innerHTML = data.map(function(m) {
+        const label = m.fecha + ' | ' + m.descripcion + ' (' + m.codigo_insumo + ')' +
+                      ' — ' + m.cantidad + ' u. | Lote: ' + m.lote;
+        return '<option value="' + esc(m.id_movimiento) + '">' + esc(label) + '</option>';
+      }).join('');
+    }
+
+    function filtrarMovimientos() {
+      const busq = document.getElementById('busqueda').value.trim().toUpperCase();
+      if (busq.length < 2) {
+        movFiltrados = movimientos;
+      } else {
+        movFiltrados = movimientos.filter(function(m) {
+          return m.descripcion.toUpperCase().indexOf(busq) > -1 ||
+                 m.codigo_insumo.toUpperCase().indexOf(busq) > -1 ||
+                 m.referencia.toUpperCase().indexOf(busq) > -1 ||
+                 m.lote.toUpperCase().indexOf(busq) > -1;
+        });
+      }
+      renderizarSelect(movFiltrados);
+      document.getElementById('detalleMov').style.display = 'none';
+      document.getElementById('btnRestituir').disabled = true;
+      movSeleccionado = null;
+    }
+
+    function onMovimientoChange() {
+      const id = document.getElementById('movSelect').value;
+      movSeleccionado = movFiltrados.find(function(m) { return m.id_movimiento === id; });
+
+      const detalleEl    = document.getElementById('detalleMov');
+      const btnRestituir = document.getElementById('btnRestituir');
+
+      if (!movSeleccionado) {
+        detalleEl.style.display = 'none';
+        btnRestituir.disabled = true;
+        return;
+      }
+
+      document.getElementById('dInsumo').textContent  = movSeleccionado.descripcion + ' (' + movSeleccionado.codigo_insumo + ')';
+      document.getElementById('dCantidad').textContent = movSeleccionado.cantidad + ' u.';
+      document.getElementById('dLote').textContent    = movSeleccionado.lote + (movSeleccionado.vencimiento ? ' · Vence: ' + movSeleccionado.vencimiento : '');
+      document.getElementById('dFecha').textContent   = movSeleccionado.fecha;
+      document.getElementById('dUsuario').textContent = movSeleccionado.usuario || '—';
+
+      if (movSeleccionado.referencia) {
+        document.getElementById('dRef').textContent       = movSeleccionado.referencia;
+        document.getElementById('filaRef').style.display  = 'flex';
+      } else {
+        document.getElementById('filaRef').style.display  = 'none';
+      }
+
+      document.getElementById('cantAdvert').textContent  = movSeleccionado.cantidad;
+      document.getElementById('insAdvert').textContent   = movSeleccionado.descripcion;
+      document.getElementById('loteAdvert').textContent  = movSeleccionado.lote;
+
+      detalleEl.style.display = 'block';
+      btnRestituir.disabled = false;
+    }
+
+    function confirmarAnulacion() {
+      if (!movSeleccionado) return mostrarMensaje('Seleccioná un movimiento.', 'error');
+
+      const motivo = document.getElementById('motivo').value.trim();
+      if (!motivo) return mostrarMensaje('El motivo es obligatorio.', 'error');
+
+      const confirmMsg = '¿Anular egreso de ' + movSeleccionado.cantidad + ' u. de "' +
+        movSeleccionado.descripcion + '"?\n\nLas unidades volverán al stock del lote ' +
+        movSeleccionado.lote + '.';
+      if (!confirm(confirmMsg)) return;
+
+      document.getElementById('formContent').style.display = 'none';
+      document.getElementById('loading').style.display     = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          document.getElementById('loading').style.display = 'none';
+          if (result.ok) {
+            mostrarMensaje('✅ ' + result.mensaje, 'success');
+            setTimeout(function() { google.script.host.close(); }, 3000);
+          } else {
+            document.getElementById('formContent').style.display = 'block';
+            mostrarMensaje('❌ ' + result.mensaje, 'error');
+          }
+        })
+        .withFailureHandler(function(e) {
+          document.getElementById('loading').style.display     = 'none';
+          document.getElementById('formContent').style.display = 'block';
+          mostrarMensaje('❌ Error: ' + e.message, 'error');
+        })
+        .cancelarBaja(movSeleccionado.id_movimiento, motivo);
+    }
+
+    function mostrarMensaje(texto, tipo) {
+      const el = document.getElementById('message');
+      el.textContent = texto;
+      el.className = 'message ' + tipo;
+      el.style.display = 'block';
+    }
+
+    function esc(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+        .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>

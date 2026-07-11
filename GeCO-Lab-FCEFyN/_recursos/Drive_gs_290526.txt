@@ -1,0 +1,145 @@
+// ============================================================
+// Drive.gs — Lectura de documentos desde Google Drive
+// Sin backend. Apps Script lee Drive directamente.
+// ============================================================
+
+/**
+ * Lee el texto de un archivo dado su fileId.
+ * Soporta Google Docs, Slides, PDFs y archivos Office.
+ */
+function leerTextoDeArchivo(fileId) {
+  const file = DriveApp.getFileById(fileId);
+  const mimeType = file.getMimeType();
+
+  if (mimeType === MimeType.GOOGLE_DOCS) {
+    return DocumentApp.openById(fileId).getBody().getText();
+  }
+
+  if (mimeType === 'application/vnd.google-apps.presentation') {
+    const presentation = SlidesApp.openById(fileId);
+    return presentation.getSlides().map(function(slide, i) {
+      const textos = slide.getShapes()
+        .filter(function(shape) { return shape.getText; })
+        .map(function(shape) { return shape.getText().asString(); })
+        .filter(function(t) { return t.trim().length > 0; })
+        .join(' ');
+      return '[Diapositiva ' + (i + 1) + '] ' + textos;
+    }).join('\n');
+  }
+
+  if (mimeType === MimeType.PDF || _esArchivoOffice(mimeType)) {
+    return _extraerTextoConvertido(file);
+  }
+
+  if (mimeType === MimeType.PLAIN_TEXT) {
+    return file.getBlob().getDataAsString();
+  }
+
+  throw new Error('Tipo de archivo no soportado: ' + mimeType +
+    '. Convertí el archivo a PDF o Google Doc.');
+}
+
+function _esArchivoOffice(mimeType) {
+  const tipos = [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/msword',
+    'application/vnd.ms-powerpoint'
+  ];
+  return tipos.indexOf(mimeType) !== -1;
+}
+
+/**
+ * Exporta un archivo a texto plano usando la API de exportación de Drive.
+ * Funciona para PDFs y archivos Office sin necesitar el servicio avanzado Drive.
+ */
+function _extraerTextoConvertido(file) {
+  let tempDocId = null;
+  try {
+    const resource = {
+      title: '_temp_geco_' + file.getName(),
+      mimeType: MimeType.GOOGLE_DOCS
+    };
+    const tempDoc = Drive.Files.insert(resource, file.getBlob(), { convert: true });
+    tempDocId = tempDoc.id;
+    const texto = DocumentApp.openById(tempDocId).getBody().getText();
+    return texto;
+  } finally {
+    if (tempDocId) {
+      try { DriveApp.getFileById(tempDocId).setTrashed(true); } catch (_) {}
+    }
+  }
+}
+
+/**
+ * Lee documentos por sus fileIds directamente.
+ * Devuelve texto concatenado con separador por documento.
+ */
+function leerDocumentosPorIds(docIds, docNombres) {
+  const partes = [];
+  for (let i = 0; i < docIds.length; i++) {
+    try {
+      const texto = leerTextoDeArchivo(docIds[i]);
+      const nombre = docNombres[i] || docIds[i];
+      partes.push('=== ' + nombre + ' ===\n' + texto);
+    } catch (e) {
+      Logger.log('Error leyendo ' + docIds[i] + ': ' + e.message);
+      partes.push('=== [Error leyendo: ' + (docNombres[i] || docIds[i]) + '] ===');
+    }
+  }
+  return partes.join('\n\n');
+}
+
+/**
+ * Lee documentos por tema desde la hoja Config_Documentos.
+ * Columnas: Tema | FileId | Descripción
+ */
+function leerDocumentosPorTema(tema) {
+  const ss = SpreadsheetApp.openById(getSpreadsheetId());
+  const hoja = ss.getSheetByName('Config_Documentos');
+  if (!hoja) throw new Error('No existe la hoja Config_Documentos.');
+
+  const datos = hoja.getDataRange().getValues();
+  const docs = datos.slice(1).filter(function(row) {
+    return row[0].toString().toLowerCase() === tema.toLowerCase() && row[1];
+  });
+
+  if (docs.length === 0) {
+    throw new Error('No hay documentos configurados para el tema "' + tema + '".');
+  }
+
+  return docs.map(function(row) {
+    const texto = leerTextoDeArchivo(row[1]);
+    return '=== ' + row[2] + ' ===\n' + texto;
+  }).join('\n\n');
+}
+
+/**
+ * Lista todos los documentos de la carpeta configurada en DRIVE_FOLDER_ID.
+ * Usado por el diálogo de evaluación para mostrar el selector.
+ */
+function listarDocumentosCarpeta() {
+  const folderId = getDriveFolderId();
+  const folder = DriveApp.getFolderById(folderId);
+  const archivos = folder.getFiles();
+  const docs = [];
+
+  const tiposValidos = [
+    'application/pdf',
+    'application/vnd.google-apps.document',
+    'application/vnd.google-apps.presentation',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ];
+
+  while (archivos.hasNext()) {
+    const archivo = archivos.next();
+    if (tiposValidos.indexOf(archivo.getMimeType()) !== -1) {
+      docs.push({ id: archivo.getId(), nombre: archivo.getName() });
+    }
+  }
+
+  docs.sort(function(a, b) { return a.nombre.localeCompare(b.nombre); });
+  return docs;
+}

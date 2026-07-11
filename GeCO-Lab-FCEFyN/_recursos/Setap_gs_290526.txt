@@ -1,0 +1,532 @@
+// ============================================================
+// GeCO Lab — Setup.gs v2
+// Inicializa/actualiza todas las hojas del sistema.
+//
+// CÓMO USAR:
+//   Ejecutar setupCompleto() UNA sola vez por cliente.
+//   Es idempotente: no destruye datos existentes.
+//   Ejecutar setupCompleto() también cuando se agreguen hojas nuevas.
+// ============================================================
+
+/**
+ * Punto de entrada principal. Crea o actualiza todas las hojas.
+ */
+function setupCompleto() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  try {
+    setupConfig(ss);
+    setupPersonas(ss);
+    setupPuestosCompetencias(ss);
+    setupClavesEvaluacion(ss);
+    setupRegistroCompetencias(ss);
+    setupPlanAcciones(ss);
+
+    ui.alert('✅ GeCO Lab configurado correctamente.\n\n' +
+             'Próximo paso: completar la hoja "Config" con los datos del cliente\n' +
+             '(DRIVE_FOLDER_ID, NOMBRE_CLIENTE, NORMA_APLICABLE).\n\n' +
+             'La CLAUDE_API_KEY se configura en:\n' +
+             'Apps Script → Configuración del proyecto → Propiedades del script.');
+  } catch (e) {
+    ui.alert('❌ Error durante el setup:\n' + e.message);
+    Logger.log('[Setup] ERROR: ' + e.message);
+  }
+}
+
+// ============================================================
+// Hoja: Config
+// Parámetros editables por el evaluador sin tocar código.
+// ============================================================
+function setupConfig(ss) {
+  let hoja = ss.getSheetByName('Config');
+  if (!hoja) {
+    hoja = ss.insertSheet('Config');
+    Logger.log('[Setup] Hoja Config creada.');
+  }
+
+  // Encabezados
+  const encabezados = ['Parámetro', 'Valor', 'Descripción'];
+  hoja.getRange(1, 1, 1, 3).setValues([encabezados])
+    .setBackground('#37474f')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  // Valores por defecto (solo si la hoja estaba vacía)
+  if (hoja.getLastRow() < 2) {
+    const defaults = [
+      ['SPREADSHEET_ID',   '',                     'ID del Spreadsheet principal (dejar vacío = autodetectado)'],
+      ['DRIVE_FOLDER_ID',  '',                     '⚠️ REQUERIDO — ID de la carpeta Drive del cliente'],
+      ['CLAUDE_MODEL',     'claude-sonnet-4-5-20251022', 'Modelo de Claude para generación de preguntas'],
+      ['NOMBRE_CLIENTE',   'Mi Organización',       'Nombre visible en mails y reportes'],
+      ['NORMA_APLICABLE',  'ISO 9001:2015',         'Norma de referencia (contextualiza el prompt de Claude)'],
+      ['UMBRAL_EXCELENTE', 75,                      'Puntaje mínimo (%) para calificación Excelente'],
+      ['UMBRAL_BUENO',     60,                      'Puntaje mínimo (%) para calificación Bueno'],
+      ['UMBRAL_REGULAR',   40,                      'Puntaje mínimo (%) para calificación Regular (< = Insuficiente)'],
+    ];
+    hoja.getRange(2, 1, defaults.length, 3).setValues(defaults);
+
+    // Resaltar los campos requeridos
+    hoja.getRange('B3').setBackground('#fce8e6'); // DRIVE_FOLDER_ID vacío = rojo suave
+
+    // Nota de seguridad
+    hoja.getRange(defaults.length + 3, 1).setValue(
+      '⚠️  CLAUDE_API_KEY NO se guarda aquí. Configurar en: Apps Script → Propiedades del script.'
+    ).setFontColor('#c5221f').setFontStyle('italic');
+  }
+
+  // Formatos
+  hoja.setColumnWidth(1, 200);
+  hoja.setColumnWidth(2, 280);
+  hoja.setColumnWidth(3, 420);
+  hoja.setFrozenRows(1);
+
+  Logger.log('[Setup] ✅ Hoja Config lista.');
+}
+
+// ============================================================
+// Hoja: Personas
+// ============================================================
+function setupPersonas(ss) {
+  let hoja = ss.getSheetByName('Personas');
+  const esNueva = !hoja;
+  if (esNueva) {
+    hoja = ss.insertSheet('Personas');
+    Logger.log('[Setup] Hoja Personas creada.');
+  }
+
+  const encabezados = [
+    'ID_Persona',     // A — identificador único (ej: PER-001)
+    'Nombre',         // B
+    'Mail',           // C
+    'Puesto',         // D — cargo que determina competencias requeridas
+    'Área',           // E — sector/departamento
+    'Activo',         // F — TRUE/FALSE
+    'Riesgo_Pérdida', // G — Alto/Medio/Bajo (riesgo de perder know-how)
+    'Notas',          // H
+  ];
+
+  hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados])
+    .setBackground('#1e8e3e')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  // Anchos
+  [80, 180, 220, 180, 140, 70, 120, 240].forEach(function(w, i) {
+    hoja.setColumnWidth(i + 1, w);
+  });
+
+  // Checkboxes en Activo (col F)
+  hoja.getRange('F2:F200').insertCheckboxes();
+
+  // Validación: mail en col C
+  hoja.getRange('C2:C200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireTextContains('@')
+      .setHelpText('Ingresá un email válido.')
+      .build()
+  );
+
+  // Validación: Riesgo_Pérdida en col G
+  hoja.getRange('G2:G200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Alto', 'Medio', 'Bajo'], true)
+      .setHelpText('Riesgo de perder el know-how de esta persona.')
+      .build()
+  );
+
+  hoja.setFrozenRows(1);
+
+  // Fila de ejemplo solo si la hoja es nueva
+  if (esNueva) {
+    hoja.getRange('A2:H2').setValues([[
+      'PER-001', 'Ana García', 'ana@ejemplo.com', 'Analista de Calidad',
+      'Calidad', true, 'Bajo', 'Ejemplo — reemplazar con datos reales'
+    ]]);
+  }
+
+  Logger.log('[Setup] ✅ Hoja Personas lista.');
+}
+
+// ============================================================
+// Hoja: Puestos_Competencias
+// Matriz de competencias requeridas por puesto.
+// Es el corazón del Módulo 1 — DEFINIR.
+// ============================================================
+function setupPuestosCompetencias(ss) {
+  let hoja = ss.getSheetByName('Puestos_Competencias');
+  const esNueva = !hoja;
+  if (esNueva) {
+    hoja = ss.insertSheet('Puestos_Competencias');
+    Logger.log('[Setup] Hoja Puestos_Competencias creada.');
+  }
+
+  const encabezados = [
+    'ID_Competencia',   // A — ej: COMP-001
+    'Puesto',           // B — cargo al que aplica
+    'Dominio',          // C — nombre del área de saber
+    'Categoría',        // D — Técnico / Normativo / Herramientas / Blandas
+    'Naturaleza',       // E — Explícito (evaluable con Form) / Tácito (requiere presencial)
+    'Criticidad',       // F — Alta / Media / Baja
+    'Drive_ID',         // G — ID del documento fuente en Drive
+    'Drive_Nombre',     // H — nombre visible del documento
+    'Frecuencia_Meses', // I — 0 = a demanda; 6 = semestral; 12 = anual
+    'Activo',           // J — TRUE/FALSE
+  ];
+
+  hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados])
+    .setBackground('#7b1fa2')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  // Anchos
+  [100, 180, 220, 170, 110, 90, 170, 240, 130, 70].forEach(function(w, i) {
+    hoja.setColumnWidth(i + 1, w);
+  });
+
+  // Validaciones
+  hoja.getRange('D2:D200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Técnico', 'Normativo', 'Herramientas', 'Blandas'], true)
+      .build()
+  );
+  hoja.getRange('E2:E200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Explícito', 'Tácito'], true)
+      .setHelpText('Explícito = evaluación autónoma con Form. Tácito = evaluación presencial.')
+      .build()
+  );
+  hoja.getRange('F2:F200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Alta', 'Media', 'Baja'], true)
+      .build()
+  );
+  hoja.getRange('J2:J200').insertCheckboxes();
+
+  // Formato condicional: Criticidad
+  const reglas = [
+    { valor: 'Alta',  bg: '#fce8e6', fg: '#c5221f' },
+    { valor: 'Media', bg: '#fef7e0', fg: '#b06000' },
+    { valor: 'Baja',  bg: '#e6f4ea', fg: '#137333' },
+  ];
+  const colCrit = hoja.getRange('F2:F200');
+  hoja.setConditionalFormatRules(reglas.map(function(r) {
+    return SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo(r.valor)
+      .setBackground(r.bg).setFontColor(r.fg)
+      .setRanges([colCrit]).build();
+  }));
+
+  hoja.setFrozenRows(1);
+
+  // Fila de ejemplo solo si es nueva
+  if (esNueva) {
+    hoja.getRange('A2:J2').setValues([[
+      'COMP-001', 'Analista de Calidad', 'Gestión de No Conformidades',
+      'Normativo', 'Explícito', 'Alta',
+      '', 'POE-GC-001 Gestión de NC', 12, true
+    ]]);
+    hoja.getRange('A3:J3').setValues([[
+      'COMP-002', 'Analista de Calidad', 'Toma de muestras — criterios de aceptación',
+      'Técnico', 'Tácito', 'Alta',
+      '', 'INS-LAB-003 Toma de muestras', 6, true
+    ]]);
+  }
+
+  Logger.log('[Setup] ✅ Hoja Puestos_Competencias lista.');
+}
+
+// ============================================================
+// Hoja: Claves_Evaluacion
+// ============================================================
+function setupClavesEvaluacion(ss) {
+  let hoja = ss.getSheetByName('Claves_Evaluacion');
+  if (!hoja) {
+    hoja = ss.insertSheet('Claves_Evaluacion');
+    Logger.log('[Setup] Hoja Claves_Evaluacion creada.');
+  }
+
+  const encabezados = [
+    'FormID',          // A
+    'ID_Evaluacion',   // B — FK hacia Registro_Competencias
+    'N°_Pregunta',     // C
+    'Enunciado',       // D
+    'Resp_Correcta',   // E — texto literal de la opción correcta
+    'Justificación',   // F
+    'Doc_Fuente',      // G
+    'Fecha',           // H
+    'Modo',            // I
+  ];
+
+  const primeraFila = hoja.getLastRow() > 0
+    ? hoja.getRange(1, 1, 1, 1).getValue()
+    : '';
+
+  if (primeraFila !== 'FormID') {
+    if (hoja.getLastRow() > 0) hoja.insertRowBefore(1);
+    hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados]);
+  }
+
+  hoja.getRange(1, 1, 1, encabezados.length)
+    .setBackground('#1a73e8')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  [160, 160, 80, 340, 240, 280, 200, 120, 100].forEach(function(w, i) {
+    hoja.setColumnWidth(i + 1, w);
+  });
+
+  hoja.setFrozenRows(1);
+  Logger.log('[Setup] ✅ Hoja Claves_Evaluacion lista.');
+}
+
+// ============================================================
+// Hoja: Registro_Competencias
+// Evidencia auditable de cada evaluación. Columnas extendidas.
+// ============================================================
+function setupRegistroCompetencias(ss) {
+  let hoja = ss.getSheetByName('Registro_Competencias');
+  if (!hoja) {
+    hoja = ss.insertSheet('Registro_Competencias');
+    Logger.log('[Setup] Hoja Registro_Competencias creada.');
+  }
+
+  const encabezados = [
+    'ID_Evaluacion',    // A — identificador único (ej: EVAL-20260516-001)
+    'Fecha_Generacion', // B
+    'Fecha_Completado', // C — se llena cuando se corrige
+    'Evaluado',         // D — nombre completo
+    'ID_Persona',       // E — FK hacia Personas
+    'Área',             // F
+    'Puesto',           // G
+    'ID_Competencia',   // H — FK hacia Puestos_Competencias
+    'Dominio',          // I — nombre del dominio evaluado
+    'Categoría',        // J
+    'Criticidad',       // K
+    'Documento',        // L — nombre del doc fuente
+    'Drive_ID',         // M
+    'Modo',             // N — Autónomo / Presencial
+    'Nro_Preguntas',    // O
+    'Correctas',        // P
+    'Puntaje_Pct',      // Q — porcentaje 0-100
+    'Escala',           // R — Excelente/Bueno/Regular/Insuficiente
+    'Evaluador',        // S — email de quien generó
+    'Form_URL',         // T
+    'Form_Edit_URL',    // U
+    'Respuestas_URL',   // V
+    'Estado',           // W — Pendiente / En Curso / Completado
+    'Genera_Accion',    // X — TRUE si disparó plan de acción
+    'Observaciones',    // Y
+  ];
+
+  // Solo escribir encabezado si la hoja está vacía o tiene encabezado viejo
+  const primeraFila = hoja.getLastRow() > 0
+    ? hoja.getRange(1, 1, 1, 1).getValue()
+    : '';
+
+  if (primeraFila !== 'ID_Evaluacion') {
+    if (hoja.getLastRow() > 0) {
+      // Hay datos viejos — agregar encabezado nuevo como primera fila
+      hoja.insertRowBefore(1);
+    }
+    hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados]);
+  }
+
+  hoja.getRange(1, 1, 1, encabezados.length)
+    .setBackground('#0d47a1')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  // Anchos de columna
+  const anchos = [
+    160, // ID_Evaluacion
+    120, // Fecha_Generacion
+    120, // Fecha_Completado
+    160, // Evaluado
+    100, // ID_Persona
+    120, // Área
+    160, // Puesto
+    120, // ID_Competencia
+    200, // Dominio
+    140, // Categoría
+    90,  // Criticidad
+    220, // Documento
+    150, // Drive_ID
+    100, // Modo
+    110, // Nro_Preguntas
+    90,  // Correctas
+    100, // Puntaje_Pct
+    120, // Escala
+    200, // Evaluador
+    200, // Form_URL
+    200, // Form_Edit_URL
+    200, // Respuestas_URL
+    110, // Estado
+    110, // Genera_Accion
+    240, // Observaciones
+  ];
+  anchos.forEach(function(w, i) { hoja.setColumnWidth(i + 1, w); });
+
+  // Formato condicional: columna Escala (col R = 18)
+  const colEscala = hoja.getRange('R2:R2000');
+  const reglasEscala = [
+    { valor: 'Excelente',    bg: '#e6f4ea', fg: '#137333' },
+    { valor: 'Bueno',        bg: '#e8f0fe', fg: '#1a73e8' },
+    { valor: 'Regular',      bg: '#fef7e0', fg: '#b06000' },
+    { valor: 'Insuficiente', bg: '#fce8e6', fg: '#c5221f' },
+  ];
+  hoja.setConditionalFormatRules(reglasEscala.map(function(r) {
+    return SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo(r.valor)
+      .setBackground(r.bg).setFontColor(r.fg)
+      .setRanges([colEscala]).build();
+  }));
+
+  hoja.setFrozenRows(1);
+  Logger.log('[Setup] ✅ Hoja Registro_Competencias lista.');
+}
+
+// ============================================================
+// Hoja: Plan_Acciones
+// Plan de mejora cuando resultado es Regular o Insuficiente.
+// ============================================================
+function setupPlanAcciones(ss) {
+  let hoja = ss.getSheetByName('Plan_Acciones');
+  const esNueva = !hoja;
+  if (esNueva) {
+    hoja = ss.insertSheet('Plan_Acciones');
+    Logger.log('[Setup] Hoja Plan_Acciones creada.');
+  }
+
+  const encabezados = [
+    'ID_Accion',        // A — ej: ACC-001
+    'ID_Evaluacion',    // B — FK hacia Registro_Competencias
+    'Fecha_Generacion', // C — cuándo se creó el plan
+    'Evaluado',         // D
+    'Dominio',          // E — dominio de competencia que falló
+    'Puntaje_Pct',      // F — puntaje que disparó el plan
+    'Escala',           // G — Regular / Insuficiente
+    'Tipo_Accion',      // H — Capacitación / Re-evaluación / Mentoring / Observación / Otro
+    'Descripción',      // I — qué específicamente se hará
+    'Responsable',      // J — quién lo lleva adelante
+    'Fecha_Objetivo',   // K — cuándo debe estar resuelto
+    'Estado',           // L — Pendiente / En Curso / Cerrado
+    'Fecha_Cierre',     // M — cuándo se cerró efectivamente
+    'ID_Reevaluacion',  // N — FK hacia Registro_Competencias (re-evaluación posterior)
+    'Resultado_Final',  // O — escala de la re-evaluación vinculada
+    'Notas',            // P — libre
+  ];
+
+  hoja.getRange(1, 1, 1, encabezados.length).setValues([encabezados])
+    .setBackground('#e65100')
+    .setFontColor('#ffffff')
+    .setFontWeight('bold')
+    .setFontSize(11);
+
+  // Anchos
+  const anchos = [100, 160, 120, 160, 200, 100, 120, 160, 280, 160, 120, 110, 120, 160, 130, 240];
+  anchos.forEach(function(w, i) { hoja.setColumnWidth(i + 1, w); });
+
+  // Validación: Tipo_Accion
+  hoja.getRange('H2:H200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Capacitación', 'Re-evaluación', 'Mentoring', 'Observación en puesto', 'Otro'], true)
+      .build()
+  );
+
+  // Validación: Estado
+  hoja.getRange('L2:L200').setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Pendiente', 'En Curso', 'Cerrado'], true)
+      .build()
+  );
+
+  // Formato condicional: columna Estado (col L = 12)
+  const colEstado = hoja.getRange('L2:L200');
+  const reglasEstado = [
+    { valor: 'Pendiente', bg: '#fce8e6', fg: '#c5221f' },
+    { valor: 'En Curso',  bg: '#fef7e0', fg: '#b06000' },
+    { valor: 'Cerrado',   bg: '#e6f4ea', fg: '#137333' },
+  ];
+  hoja.setConditionalFormatRules(reglasEstado.map(function(r) {
+    return SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo(r.valor)
+      .setBackground(r.bg).setFontColor(r.fg)
+      .setRanges([colEstado]).build();
+  }));
+
+  hoja.setFrozenRows(1);
+  Logger.log('[Setup] ✅ Hoja Plan_Acciones lista.');
+}
+
+// ============================================================
+// Función auxiliar: registrar evaluación inicial
+// Llamada desde generarEvaluacion() en Codigo.gs
+// Devuelve el ID_Evaluacion generado.
+// ============================================================
+
+/**
+ * Inserta una fila en Registro_Competencias con estado "Pendiente".
+ * @param {Object} datos
+ *   - persona: { nombre, mail, area, puesto, idPersona }
+ *   - competencia: { idCompetencia, dominio, categoria, criticidad }
+ *   - evaluacion: { documento, driveId, modo, nroPreguntas, evaluador, formUrl, formEditUrl }
+ * @returns {string} ID_Evaluacion generado
+ */
+function registrarEvaluacionInicial(datos) {
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  const hoja = ss.getSheetByName('Registro_Competencias');
+  if (!hoja) throw new Error('No existe la hoja Registro_Competencias. Ejecutar setupCompleto() primero.');
+
+  const ahora = new Date();
+  const fecha = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+  // Usar el ID recibido si viene en los params (generarEvaluacion lo genera primero
+  // y lo propaga aquí para que Claves_Evaluacion y Registro_Competencias compartan el mismo ID).
+  const idEvaluacion = (datos.evaluacion && datos.evaluacion.idEvaluacion)
+    ? datos.evaluacion.idEvaluacion
+    : 'EVAL-' + fecha + '-' + datos.persona.nombre.split(' ')[0].toUpperCase();
+
+  const fila = [
+    idEvaluacion,                          // A — ID_Evaluacion
+    ahora,                                 // B — Fecha_Generacion
+    '',                                    // C — Fecha_Completado (vacío)
+    datos.persona.nombre,                  // D — Evaluado
+    datos.persona.idPersona || '',         // E — ID_Persona
+    datos.persona.area || '',              // F — Área
+    datos.persona.puesto || '',            // G — Puesto
+    datos.competencia.idCompetencia || '', // H — ID_Competencia
+    datos.competencia.dominio || '',       // I — Dominio
+    datos.competencia.categoria || '',     // J — Categoría
+    datos.competencia.criticidad || '',    // K — Criticidad
+    datos.evaluacion.documento || '',      // L — Documento
+    datos.evaluacion.driveId || '',        // M — Drive_ID
+    datos.evaluacion.modo || 'Autónomo',   // N — Modo
+    datos.evaluacion.nroPreguntas || 0,    // O — Nro_Preguntas
+    '',                                    // P — Correctas (vacío)
+    '',                                    // Q — Puntaje_Pct (vacío)
+    '',                                    // R — Escala (vacío)
+    datos.evaluacion.evaluador || '',      // S — Evaluador
+    datos.evaluacion.formUrl || '',        // T — Form_URL
+    datos.evaluacion.formEditUrl || '',    // U — Form_Edit_URL
+    '',                                    // V — Respuestas_URL (vacío)
+    'Pendiente',                           // W — Estado
+    false,                                 // X — Genera_Accion
+    '',                                    // Y — Observaciones
+  ];
+
+  hoja.appendRow(fila);
+  Logger.log('[Setup] Evaluación inicial registrada: ' + idEvaluacion);
+  return idEvaluacion;
+}
+
+// ============================================================
+// TEST — ejecutar manualmente para verificar el setup
+// ============================================================
+function TEST_setup() {
+  setupCompleto();
+}

@@ -1,0 +1,868 @@
+// ========================================
+// MÓDULO: CONVERSIONES (Cajas → Unidades)
+// ========================================
+
+/**
+ * Abre el formulario visual de gestión de conversiones.
+ * Reemplaza al anterior abrirConfigConversiones() que solo navegaba a la hoja.
+ */
+function mostrarFormularioConversiones() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioConversiones')
+    .setWidth(760).setHeight(600)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, '⚙️ Gestionar Conversiones');
+}
+
+/**
+ * Retorna todos los insumos activos con su estado de conversión actual.
+ * Usada por FormularioConversiones.html para poblar la tabla.
+ */
+function getInsumosConConversiones() {
+  const insumos      = getInsumosActivos();
+  const conversiones = _getTablaConversionesCompleta();
+
+  return insumos.map(function(ins) {
+    const cod  = String(ins.codigo_insumo).trim();
+    const conv = conversiones[cod];
+    return {
+      codigo:           cod,
+      descripcion:      ins.descripcion,
+      categoria:        ins.categoria    || '',
+      unidad_medida:    ins.unidad_medida || '',
+      tiene_conversion: !!conv && conv.activo,
+      factor:           conv ? conv.factor         : '',
+      unidad_destino:   conv ? conv.unidad_destino : '',
+      unidad_compra:    conv ? conv.unidad_compra  : '',
+      activo:           conv ? conv.activo         : false,
+      observaciones:    conv ? conv.observaciones  : ''
+    };
+  }).sort(function(a, b) {
+    // Primero los que tienen conversión activa
+    if (a.tiene_conversion && !b.tiene_conversion) return -1;
+    if (!a.tiene_conversion && b.tiene_conversion) return  1;
+    return a.descripcion.localeCompare(b.descripcion);
+  });
+}
+
+/**
+ * Lee Config_Conversiones completo (activos e inactivos).
+ * Devuelve mapa { codigo → { fila, factor, unidad_destino, unidad_compra, activo, observaciones } }.
+ * Función interna — no llamar desde HTML.
+ */
+function _getTablaConversionesCompleta() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Config_Conversiones');
+  if (!sheet || sheet.getLastRow() < 3) return {};
+
+  const data    = sheet.getDataRange().getValues();
+  const headers = data[1]; // fila 1 = banner, fila 2 = headers
+
+  const idxCod    = headers.indexOf('codigo_insumo');
+  const idxFactor = headers.indexOf('factor_conversion');
+  const idxUnidad = headers.indexOf('unidad_destino');
+  const idxActivo = headers.indexOf('activo');
+  const idxCompra = headers.indexOf('unidad_de_compra');
+  const idxObs    = headers.indexOf('observaciones');
+
+  const tabla = {};
+  for (let i = 2; i < data.length; i++) {
+    const cod = String(data[i][idxCod] || '').trim();
+    if (!cod) continue;
+    tabla[cod] = {
+      fila:           i + 1, // 1-indexed para getRange
+      factor:         Number(data[i][idxFactor]) || 0,
+      unidad_destino: String(data[i][idxUnidad] || '').trim(),
+      unidad_compra:  String(data[i][idxCompra] || '').trim(),
+      activo:         data[i][idxActivo] === true ||
+                      String(data[i][idxActivo]).toUpperCase() === 'TRUE',
+      observaciones:  String(data[i][idxObs] || '').trim()
+    };
+  }
+  return tabla;
+}
+
+/**
+ * Lee solo las conversiones ACTIVAS con factor > 1.
+ * Resultado: { codigo → { factor, unidad_destino } }
+ * Usada en registrarRecepcion() y actualizarStockPorProveedor().
+ */
+function getTablaConversiones() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Config_Conversiones');
+  if (!sheet) return {};
+
+  const data    = sheet.getDataRange().getValues();
+  if (data.length < 3) return {};
+
+  const headers  = data[1]; // fila 2 = headers
+  const idxCodigo = headers.indexOf('codigo_insumo');
+  const idxFactor = headers.indexOf('factor_conversion');
+  const idxUnidad = headers.indexOf('unidad_destino');
+  const idxActivo = headers.indexOf('activo');
+
+  const tabla = {};
+  for (let i = 2; i < data.length; i++) {
+    const cod    = String(data[i][idxCodigo] || '').trim();
+    const activo = data[i][idxActivo];
+    if (!cod) continue;
+    if (activo !== true && String(activo).toUpperCase() !== 'TRUE') continue;
+    const factor = Number(data[i][idxFactor]);
+    if (!factor || factor <= 1) continue; // factor 1 = sin conversión real
+
+    tabla[cod] = {
+      factor,
+      unidad_destino: String(data[i][idxUnidad] || 'Determinación').trim()
+    };
+  }
+  return tabla;
+}
+
+/**
+ * Aplica la conversión caja → unidad a una cantidad recibida.
+ * Si no hay conversión activa para el código, devuelve la cantidad sin cambios.
+ *
+ * @param {string} codigoInsumo
+ * @param {number} cantidadRecibida   — en unidades de compra (cajas)
+ * @param {Object} tablaConversiones  — resultado de getTablaConversiones()
+ * @returns {{ cantidad_stock, unidad_stock, tiene_conversion, factor }}
+ */
+function aplicarConversion(codigoInsumo, cantidadRecibida, tablaConversiones) {
+  const conv = tablaConversiones[codigoInsumo];
+  if (!conv) {
+    return {
+      cantidad_stock:  cantidadRecibida,
+      unidad_stock:    null,
+      tiene_conversion: false,
+      factor:          1
+    };
+  }
+  return {
+    cantidad_stock:  cantidadRecibida * conv.factor,
+    unidad_stock:    conv.unidad_destino,
+    tiene_conversion: true,
+    factor:          conv.factor
+  };
+}
+
+/**
+ * Guarda o actualiza la conversión de un insumo desde el formulario.
+ * Si ya existe fila en Config_Conversiones → la actualiza.
+ * Si no existe → agrega fila nueva al final.
+ *
+ * @param {Object} convData — { codigo, descripcion, factor, unidad_destino, unidad_compra, activo, observaciones }
+ */
+function guardarConversionInsumo(convData) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName('Config_Conversiones');
+
+    if (!sheet) {
+      crearHojaConversiones();
+      sheet = ss.getSheetByName('Config_Conversiones');
+    }
+
+    const tabla    = _getTablaConversionesCompleta();
+    const existing = tabla[String(convData.codigo).trim()];
+
+    const rowData = [
+      convData.codigo,
+      convData.descripcion,
+      convData.unidad_compra  || 'CAJA',
+      Number(convData.factor) || 1,
+      convData.unidad_destino || 'Unidad',
+      convData.activo === true || convData.activo === 'true',
+      convData.observaciones  || ''
+    ];
+
+    if (existing) {
+      sheet.getRange(existing.fila, 1, 1, 7).setValues([rowData]);
+    } else {
+      sheet.appendRow(rowData);
+    }
+
+    SpreadsheetApp.flush();
+    return { ok: true, mensaje: 'Conversión guardada para ' + convData.codigo + '.' };
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al guardar: ' + e.message };
+  }
+}
+
+/**
+ * Desactiva (sin borrar) la conversión de un insumo.
+ * Permite reactivarla luego cambiando activo → TRUE.
+ */
+function desactivarConversionInsumo(codigoInsumo) {
+  try {
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('Config_Conversiones');
+    if (!sheet) return { ok: false, mensaje: 'No existe la hoja Config_Conversiones.' };
+
+    const tabla    = _getTablaConversionesCompleta();
+    const existing = tabla[String(codigoInsumo).trim()];
+    if (!existing) return { ok: false, mensaje: 'No se encontró conversión para ' + codigoInsumo + '.' };
+
+    const headers  = sheet.getDataRange().getValues()[1];
+    const idxActivo = headers.indexOf('activo') + 1;
+    sheet.getRange(existing.fila, idxActivo).setValue(false);
+
+    SpreadsheetApp.flush();
+    return { ok: true, mensaje: 'Conversión desactivada para ' + codigoInsumo + '.' };
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al desactivar: ' + e.message };
+  }
+}
+
+/**
+ * Crea la hoja Config_Conversiones con los factores iniciales de Virología CURF.
+ * Solo ejecutar UNA VEZ en un spreadsheet nuevo.
+ */
+function crearHojaConversiones() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (ss.getSheetByName('Config_Conversiones')) {
+    SpreadsheetApp.getUi().alert(
+      'La hoja Config_Conversiones ya existe.\n' +
+      'Si querés reiniciarla, eliminala manualmente primero.'
+    );
+    return;
+  }
+
+  const sheet = ss.insertSheet('Config_Conversiones');
+
+  // Banner informativo
+  sheet.getRange('A1:G1').merge();
+  sheet.getRange('A1').setValue(
+    '⚙️ TABLA DE CONVERSIÓN CAJAS → UNIDADES  |  ' +
+    'Editá esta hoja para cambiar factores o agregar nuevos insumos  |  ' +
+    'activo = TRUE/FALSE para activar/desactivar sin borrar la fila'
+  ).setFontWeight('bold').setBackground('#1F4E79').setFontColor('#FFFFFF')
+   .setFontSize(10).setWrap(true);
+  sheet.setRowHeight(1, 36);
+
+  // Headers
+  const headers = [
+    'codigo_insumo', 'descripcion', 'unidad_de_compra',
+    'factor_conversion', 'unidad_destino', 'activo', 'observaciones'
+  ];
+  sheet.getRange(2, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold').setBackground('#2E75B6').setFontColor('#FFFFFF')
+    .setHorizontalAlignment('center');
+
+  // Factores de conversión — Virología CURF
+  // (Igual a los de la hoja original: reactivos de ELISA en tiras por caja)
+  const datos = [
+    ['REA001', 'ORG 903MX Anti - HSV - 1 IgM Abs',                   'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA002', 'ORG 903G Anti - HSV - 1 IgG',                        'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA003', 'ORG 904G Anti - HSV - 2 IgG',                        'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA004', 'ORG 904MX Anti - HSV - 2 IgM Abs',                   'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA005', 'D3U.8.DFA Resp Virus Screen&ID 1127-212',             'UNIDAD',          25, 'Tubo',          true, 'Panel respiratorio: 7 monoclonales + 25 tubos'],
+    ['REA006', 'ORG 912MX Anti-Parvovirus B19 IgM Abs.',              'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA007', 'ORG 912G Anti-Parvovirus B19 IgG',                    'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA008', 'ORG 906G Anti - Chlamydia Trachomatis IgG',           'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA009', 'ORG 906MX Anti-C. Trachomatis IgM Abs',               'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA010', 'Negative Control Alegria ORG 311',                    'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA011', 'Positive Control Alegria ORG 310',                    'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA012', 'MICO (IgM)',                                          'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA013', 'MICO (IgG)',                                          'CAJA X 24 DET.',  24, 'Determinación', true, '24 tiras por caja'],
+    ['REA014', 'VIDAS HBS AG ULTRA 60 T - 30315',                     'CAJA X 60 DET.',  60, 'Determinación', true, '60 tiras por caja'],
+    ['REA016', 'VIDAS ANTI-HBC TOTAL II 60 T - 30314',                'CAJA X 60 DET.',  60, 'Determinación', true, '60 tiras por caja'],
+    ['REA017', 'VIDAS HBC IGM II 30TESTS - 30439',                    'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA018', 'VIDAS HBE/ANTI-HBE 30 TESTS - 30305',                 'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA023', 'VIDAS ANTI-HCV 60 TESTS - 30308',                     'CAJA X 60 DET.',  60, 'Determinación', true, '60 tiras por caja'],
+    ['REA027', 'VIDAS RUB IGM 30 TESTS - 30214',                      'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA034', 'VIDAS HAV IGM 30 TESTS - 30307',                      'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA035', 'VIDAS ANTI-HAV TOTAL 30T - 30312',                    'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA038', 'VIDAS ANTI-HEV IGM (HEVM) - 418115',                  'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA039', 'VIDAS ANTI-HEV IGG (HEVG) 30T - 418116',              'CAJA X 30 DET.',  30, 'Determinación', true, '30 tiras por caja'],
+    ['REA079', 'DETERMINE HIV EARLY DETECT (7D2843)',                  'UNIDAD',         100, 'Determinación', true, '100 tiras por unidad']
+  ];
+
+  sheet.getRange(3, 1, datos.length, headers.length).setValues(datos);
+
+  // Formato de filas alternadas
+  for (let i = 0; i < datos.length; i++) {
+    sheet.getRange(3 + i, 1, 1, headers.length)
+      .setBackground(i % 2 === 0 ? '#FFFFFF' : '#EBF3FB').setFontSize(10);
+  }
+
+  // Factor: centrado y en negrita
+  sheet.getRange(3, 4, datos.length, 1)
+    .setHorizontalAlignment('center').setFontWeight('bold').setFontColor('#1F4E79');
+
+  // Activo: centrado
+  sheet.getRange(3, 6, datos.length, 1).setHorizontalAlignment('center');
+
+  // Anchos
+  sheet.setColumnWidth(1, 100);
+  sheet.setColumnWidth(2, 340);
+  sheet.setColumnWidth(3, 140);
+  sheet.setColumnWidth(4,  80);
+  sheet.setColumnWidth(5, 130);
+  sheet.setColumnWidth(6,  65);
+  sheet.setColumnWidth(7, 320);
+
+  sheet.setFrozenRows(2);
+
+  // Nota al pie
+  const filaFinal = datos.length + 4;
+  sheet.getRange(filaFinal, 1, 1, 7).merge();
+  sheet.getRange(filaFinal, 1).setValue(
+    '💡 Para agregar un nuevo insumo: nueva fila con codigo_insumo exacto (debe existir en Insumos), ' +
+    'factor numérico y activo = TRUE. Para desactivar sin borrar: cambiá activo a FALSE.'
+  ).setBackground('#FFF2CC').setFontColor('#7F6000').setFontSize(9).setWrap(true);
+  sheet.setRowHeight(filaFinal, 48);
+
+  SpreadsheetApp.getUi().alert(
+    '✅ Hoja "Config_Conversiones" creada con ' + datos.length + ' reactivos de Virología CURF.\n\n' +
+    'Podés editarla directamente para:\n' +
+    '• Cambiar un factor (columna D)\n' +
+    '• Agregar un insumo nuevo (nueva fila)\n' +
+    '• Desactivar una conversión (columna F → FALSE)\n\n' +
+    'Los cambios se aplican en la próxima recepción.'
+  );
+}
+
+/**
+ * Muestra un resumen de las conversiones activas.
+ * Útil para verificar la configuración sin abrir la hoja.
+ */
+function verResumenConversiones() {
+  const tabla   = getTablaConversiones();
+  const codigos = Object.keys(tabla);
+
+  if (codigos.length === 0) {
+    SpreadsheetApp.getUi().alert(
+      'No hay conversiones activas.\n' +
+      'Verificá que la hoja "Config_Conversiones" exista y tenga filas con activo = TRUE.'
+    );
+    return;
+  }
+
+  const catalogoInsumos = getInsumosActivos();
+  const lineas = ['Conversiones activas (' + codigos.length + '):\n'];
+
+  codigos.sort().forEach(function(cod) {
+    const ins  = catalogoInsumos.find(function(i) { return i.codigo_insumo === cod; });
+    const desc = ins ? ins.descripcion.substring(0, 40) : '(no encontrado en catálogo)';
+    lineas.push('• ' + cod + ': ×' + tabla[cod].factor + ' ' +
+                tabla[cod].unidad_destino + ' — ' + desc);
+  });
+
+  SpreadsheetApp.getUi().alert(lineas.join('\n'));
+}
+
+// ========================================
+// MÓDULO: AJUSTE MANUAL DE STOCK
+// ========================================
+
+function mostrarFormularioAjusteStock() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioAjusteStock')
+    .setWidth(680).setHeight(560)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, '🔧 Ajuste de Stock');
+}
+
+/**
+ * Devuelve todos los insumos activos con su stock total actual.
+ * Usada por el buscador del formulario de ajuste.
+ */
+function getInsumosConStockYSinStock() {
+  const insumos  = getInsumosActivos();
+  const stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+  const stockPorCodigo = {};
+  stockData.forEach(function(row) {
+    const cod = String(row.codigo_insumo).trim();
+    stockPorCodigo[cod] = (stockPorCodigo[cod] || 0) + (Number(row.stock_disponible) || 0);
+  });
+
+  return insumos.map(function(ins) {
+    const cod = String(ins.codigo_insumo).trim();
+    return {
+      codigo:      cod,
+      descripcion: ins.descripcion,
+      categoria:   ins.categoria || '',
+      stock_total: stockPorCodigo[cod] || 0
+    };
+  }).sort(function(a, b) { return a.descripcion.localeCompare(b.descripcion); });
+}
+
+/**
+ * Devuelve los lotes con stock disponible de un insumo.
+ * Si no tiene stock, devuelve un lote ficticio para permitir ajuste positivo desde cero.
+ */
+function getLotesParaAjuste(codigoInsumo) {
+  const stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+  const lotes = stockData
+    .filter(function(row) { return String(row.codigo_insumo).trim() === codigoInsumo; })
+    .map(function(row) {
+      return {
+        lote:         String(row.lote || 'SIN LOTE'),
+        stock_actual: Number(row.stock_disponible) || 0,
+        vencimiento:  row.vencimiento ? formatearFecha(row.vencimiento) : ''
+      };
+    });
+
+  if (lotes.length === 0) {
+    lotes.push({ lote: 'SIN LOTE', stock_actual: 0, vencimiento: '' });
+  }
+
+  return lotes;
+}
+
+/**
+ * Registra un ajuste de stock sobre un lote específico.
+ *
+ * @param {Object} ajusteData
+ *   codigo_insumo  {string}
+ *   descripcion    {string}
+ *   lote           {string}
+ *   vencimiento    {string}
+ *   stock_actual   {number}  — cantidad actual en el lote
+ *   stock_correcto {number}  — cantidad que DEBERÍA haber
+ *   motivo         {string}
+ */
+function registrarAjusteStock(ajusteData) {
+  try {
+    const delta = Number(ajusteData.stock_correcto) - Number(ajusteData.stock_actual);
+
+    if (delta === 0) {
+      return { ok: true, mensaje: 'Sin cambios: el stock ya es correcto.' };
+    }
+
+    const usuario        = getCurrentUser();
+    const ahora          = new Date();
+    const catalogoInsumos = getInsumosActivos();
+    const infoInsumo     = catalogoInsumos.find(function(ins) {
+      return ins.codigo_insumo === ajusteData.codigo_insumo;
+    });
+    const categoria = infoInsumo ? (infoInsumo.categoria || '') : '';
+
+    // Registrar en Movimientos_Inventario
+    // delta positivo = suma, delta negativo = resta (actualizarStockActual lo maneja igual)
+    getSheet(CONFIG.SHEETS.MOVIMIENTOS).appendRow([
+      'MOV-' + Date.now(),
+      ahora,
+      'Ajuste',
+      ajusteData.codigo_insumo,
+      ajusteData.descripcion,
+      delta,
+      'AJUSTE-MANUAL',
+      usuario,
+      'Corrección manual | ' + (ajusteData.motivo || 'Sin motivo') +
+        ' | Anterior: ' + ajusteData.stock_actual +
+        ' → Correcto: ' + ajusteData.stock_correcto,
+      ajusteData.lote,
+      ajusteData.vencimiento || '',
+      categoria
+    ]);
+
+    // Actualizar Stock_Actual sin reconstrucción total
+    _actualizarStockDesdeAjuste(ajusteData, delta, catalogoInsumos, ahora);
+
+    const signo = delta > 0 ? '+' : '';
+    return {
+      ok:     true,
+      mensaje: 'Ajuste aplicado (' + signo + delta + ' u.) en lote "' +
+               ajusteData.lote + '" de ' + ajusteData.descripcion + '.'
+    };
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al ajustar: ' + e.message };
+  }
+}
+
+/**
+ * Actualiza Stock_Actual de forma incremental tras un ajuste.
+ * No reconstruye toda la hoja, solo toca la fila del lote afectado.
+ */
+function _actualizarStockDesdeAjuste(ajusteData, delta, catalogoInsumos, ahora) {
+  const sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  const lastRow    = sheetStock.getLastRow();
+  const cod        = String(ajusteData.codigo_insumo).trim();
+  const lote       = String(ajusteData.lote).trim();
+
+  const dataStock = lastRow > 1
+    ? sheetStock.getRange(2, 1, lastRow - 1, 9).getValues()
+    : [];
+
+  // Totales actuales por código
+  const stockTotalPorCodigo = {};
+  dataStock.forEach(function(row) {
+    const c = String(row[0]).trim();
+    stockTotalPorCodigo[c] = (stockTotalPorCodigo[c] || 0) + (Number(row[2]) || 0);
+  });
+
+  // Buscar y actualizar la fila del lote
+  let filaEncontrada = -1;
+  for (let i = 0; i < dataStock.length; i++) {
+    if (String(dataStock[i][0]).trim() !== cod) continue;
+    if (String(dataStock[i][6]).trim() !== lote) continue;
+    const nuevoStock  = Math.max((Number(dataStock[i][2]) || 0) + delta, 0);
+    dataStock[i][2]   = nuevoStock;
+    dataStock[i][5]   = ahora;
+    stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + delta;
+    filaEncontrada = i;
+    break;
+  }
+
+  // Si el lote no existía y el ajuste es positivo → crear fila nueva
+  if (filaEncontrada === -1 && delta > 0) {
+    const ins     = catalogoInsumos.find(function(x) {
+      return String(x.codigo_insumo).trim() === cod;
+    });
+    const critico = ins ? Number(ins.stock_critico) || 0 : 0;
+    dataStock.push([
+      cod,
+      ins ? ins.descripcion : ajusteData.descripcion,
+      delta,
+      critico,
+      'OK',
+      ahora,
+      lote,
+      ajusteData.vencimiento || '',
+      ins ? (ins.clasificacion || '') : ''
+    ]);
+    stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + delta;
+  }
+
+  // Recalcular estado para todas las filas del código afectado
+  const ins2     = catalogoInsumos.find(function(x) {
+    return String(x.codigo_insumo).trim() === cod;
+  });
+  const critico2   = ins2 ? Number(ins2.stock_critico) || 0 : 0;
+  const totalFinal = stockTotalPorCodigo[cod] || 0;
+  const nuevoEst   = totalFinal <= 0 ? 'Agotado' : totalFinal <= critico2 ? 'Crítico' : 'OK';
+
+  for (let j = 0; j < dataStock.length; j++) {
+    if (String(dataStock[j][0]).trim() === cod) dataStock[j][4] = nuevoEst;
+  }
+
+  // Filtrar filas con stock > 0 y reescribir
+  const filasValidas = dataStock.filter(function(row) { return Number(row[2]) > 0; });
+
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+  }
+  if (filasValidas.length > 0) {
+    sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+    sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+  }
+}
+
+// ========================================
+// MÓDULO: IMPORTAR STOCK INICIAL
+// ========================================
+
+/**
+ * Abre el formulario de importación masiva de stock desde Excel.
+ * El HTML usa SheetJS para parsear el archivo en el cliente
+ * y envía el JSON resultante a importarStockInicial().
+ */
+function mostrarFormularioImportStock() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioImportarStock')
+    .setWidth(700).setHeight(500)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, '📥 Importar Stock Inicial');
+}
+
+/**
+ * Importa stock inicial desde el payload JSON enviado por el formulario.
+ *
+ * Cada ítem del payload:
+ *   { codigo, cantidad, lote, vencimiento, obs }
+ *
+ * Valida contra catálogo, aplica conversiones, escribe en batch en
+ * Movimientos_Inventario y Stock_Actual, y devuelve un resumen.
+ *
+ * @param {Object} payload — { filas: [...], importId: string }
+ * @returns {Object} — { importadas, saltadas, errores, tiempo_ms, detalle_errores }
+ */
+function importarStockInicial(payload) {
+  const inicio          = Date.now();
+  const filas           = payload.filas     || [];
+  const importId        = payload.importId  || ('IMPORT-' + Utilities.formatDate(
+    new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss'
+  ));
+
+  const catalogoInsumos   = getInsumosActivos();
+  const tablaConversiones = getTablaConversiones();
+
+  // Índice rápido del catálogo
+  const mapaCatalogo = {};
+  catalogoInsumos.forEach(function(ins) {
+    mapaCatalogo[String(ins.codigo_insumo).trim()] = ins;
+  });
+
+  const filasMovimientos = [];
+  const filasStock       = [];
+  const errores          = [];
+  let   importadas       = 0;
+  let   saltadas         = 0;
+
+  filas.forEach(function(fila, idx) {
+    const cod      = String(fila.codigo || '').trim();
+    const cantidad = Number(fila.cantidad) || 0;
+
+    // Validaciones básicas
+    if (!cod) {
+      errores.push('Fila ' + (idx + 2) + ': código vacío.');
+      saltadas++;
+      return;
+    }
+    if (!mapaCatalogo[cod]) {
+      errores.push('Fila ' + (idx + 2) + ': código "' + cod + '" no existe en el catálogo.');
+      saltadas++;
+      return;
+    }
+    if (cantidad <= 0) {
+      errores.push('Fila ' + (idx + 2) + ': cantidad inválida para "' + cod + '".');
+      saltadas++;
+      return;
+    }
+
+    const ins       = mapaCatalogo[cod];
+    const lote      = String(fila.lote || 'SIN LOTE').trim();
+    const venc      = fila.vencimiento || '';
+    const obs       = fila.obs || '';
+
+    // Aplicar conversión si corresponde
+    const conv = aplicarConversion(cod, cantidad, tablaConversiones);
+    const notaConversion = conv.tiene_conversion
+      ? '[CONV x' + conv.factor + '] ' + cantidad + ' caja(s) → ' +
+        conv.cantidad_stock + ' ' + conv.unidad_stock
+      : '';
+
+    // Fila Movimientos_Inventario
+    filasMovimientos.push([
+      importId + '-' + (idx + 1).toString().padStart(4, '0'),
+      new Date(),
+      'Ajuste inicial',
+      cod,
+      ins.descripcion,
+      conv.cantidad_stock,
+      importId,
+      getCurrentUser(),
+      'Importación inicial' + (obs ? ' | ' + obs : '') +
+        (notaConversion ? ' | ' + notaConversion : ''),
+      lote,
+      venc,
+      ins.categoria || ''
+    ]);
+
+    // Fila Stock_Actual
+    // (se ordenará por vencimiento al final)
+    filasStock.push([
+      cod,
+      ins.descripcion,
+      conv.cantidad_stock,
+      Number(ins.stock_critico) || 0,
+      'OK',              // estado — se recalcula al final
+      new Date(),
+      lote,
+      venc,
+      ins.clasificacion || ''
+    ]);
+
+    importadas++;
+  });
+
+  if (importadas === 0) {
+    return {
+      importadas: 0,
+      saltadas,
+      errores,
+      tiempo_ms: Date.now() - inicio,
+      detalle_errores: errores
+    };
+  }
+
+  // ── Escritura batch en Movimientos_Inventario ──────────────────
+  const sheetMov  = getSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  const lastMov   = sheetMov.getLastRow();
+  sheetMov.getRange(lastMov + 1, 1, filasMovimientos.length, filasMovimientos[0].length)
+    .setValues(filasMovimientos);
+
+  // ── Escritura en Stock_Actual (suma a lotes existentes) ────────
+  _integrarStockImportado(filasStock, catalogoInsumos);
+
+  return {
+    importadas,
+    saltadas,
+    errores,
+    tiempo_ms:       Date.now() - inicio,
+    detalle_errores: errores
+  };
+}
+
+/**
+ * Integra las filas importadas en Stock_Actual:
+ * - Si el lote ya existe → suma la cantidad
+ * - Si es lote nuevo → agrega fila
+ * - Recalcula estado (OK/Crítico/Agotado) para todos los códigos afectados
+ * - Ordena por vencimiento (FIFO)
+ */
+function _integrarStockImportado(filasNuevas, catalogoInsumos) {
+  const sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  const lastRow    = sheetStock.getLastRow();
+
+  const dataStock = lastRow > 1
+    ? sheetStock.getRange(2, 1, lastRow - 1, 9).getValues()
+    : [];
+
+  // Índice: "codigo|lote" → posición en dataStock
+  const mapaStock = {};
+  dataStock.forEach(function(row, idx) {
+    const key = String(row[0]).trim() + '|' + String(row[6]).trim();
+    mapaStock[key] = idx;
+  });
+
+  // Stock total por código (para recalcular estado al final)
+  const stockTotal = {};
+  dataStock.forEach(function(row) {
+    const cod = String(row[0]).trim();
+    stockTotal[cod] = (stockTotal[cod] || 0) + (Number(row[2]) || 0);
+  });
+
+  const codigosAfectados = {};
+
+  filasNuevas.forEach(function(fila) {
+    const cod   = String(fila[0]).trim();
+    const lote  = String(fila[6]).trim();
+    const cant  = Number(fila[2]) || 0;
+    const key   = cod + '|' + lote;
+
+    codigosAfectados[cod] = true;
+
+    if (mapaStock.hasOwnProperty(key)) {
+      // Lote existente: sumar
+      const idx = mapaStock[key];
+      dataStock[idx][2] = (Number(dataStock[idx][2]) || 0) + cant;
+      stockTotal[cod]   = (stockTotal[cod] || 0) + cant;
+    } else {
+      // Lote nuevo: agregar
+      dataStock.push(fila);
+      mapaStock[key]  = dataStock.length - 1;
+      stockTotal[cod] = (stockTotal[cod] || 0) + cant;
+    }
+  });
+
+  // Recalcular estado para todos los códigos afectados
+  dataStock.forEach(function(row) {
+    const cod = String(row[0]).trim();
+    if (!codigosAfectados[cod]) return;
+    const ins     = catalogoInsumos.find(function(i) {
+      return String(i.codigo_insumo).trim() === cod;
+    });
+    const critico = ins ? Number(ins.stock_critico) || 0 : Number(row[3]) || 0;
+    const total   = stockTotal[cod] || 0;
+    row[4] = total <= 0 ? 'Agotado' : total <= critico ? 'Crítico' : 'OK';
+  });
+
+  // Filtrar > 0, reescribir y ordenar FIFO
+  const filasValidas = dataStock.filter(function(row) { return Number(row[2]) > 0; });
+
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+  }
+  if (filasValidas.length > 0) {
+    sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+    sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+  }
+}
+
+// ========================================
+// MÓDULO: SETUP — Crear hojas auxiliares
+// ========================================
+
+/**
+ * Crea la hoja Historial_Precios con sus headers y formato condicional.
+ * Solo ejecutar UNA VEZ en un spreadsheet nuevo.
+ */
+function crearHojaHistorialPrecios() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (ss.getSheetByName('Historial_Precios')) {
+    SpreadsheetApp.getUi().alert('La hoja Historial_Precios ya existe.');
+    return;
+  }
+
+  const sheet = ss.insertSheet('Historial_Precios');
+
+  sheet.getRange('A1:I1').merge();
+  sheet.getRange('A1')
+    .setValue('📈 HISTORIAL DE VARIACIÓN DE PRECIOS  |  Se registra automáticamente al crear OC y al recepcionar  |  Solo lectura')
+    .setFontWeight('bold').setBackground('#1F4E79').setFontColor('#FFFFFF')
+    .setFontSize(10).setWrap(true);
+  sheet.setRowHeight(1, 32);
+
+  const headers = [
+    'fecha', 'codigo_insumo', 'descripcion', 'proveedor',
+    'precio_anterior', 'precio_nuevo', 'variacion_pct', 'numero_orden', 'usuario'
+  ];
+  sheet.getRange(2, 1, 1, headers.length)
+    .setValues([headers]).setFontWeight('bold')
+    .setBackground('#2E75B6').setFontColor('#FFFFFF').setHorizontalAlignment('center');
+
+  const anchos = [100, 110, 300, 200, 120, 120, 110, 130, 200];
+  anchos.forEach(function(w, i) { sheet.setColumnWidth(i + 1, w); });
+  sheet.setFrozenRows(2);
+
+  // Formato condicional: rojo si sube >5%, verde si baja >5%
+  const rangoVar = sheet.getRange('G3:G1000');
+  const rules    = sheet.getConditionalFormatRules();
+  rules.push(
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberGreaterThan(5)
+      .setBackground('#FCE8E6').setFontColor('#A61C00')
+      .setRanges([rangoVar]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenNumberLessThan(-5)
+      .setBackground('#E6F4EA').setFontColor('#137333')
+      .setRanges([rangoVar]).build()
+  );
+  sheet.setConditionalFormatRules(rules);
+
+  SpreadsheetApp.getUi().alert(
+    '✅ Hoja "Historial_Precios" creada.\n\n' +
+    'Se completará automáticamente al crear órdenes de compra y al recepcionar.'
+  );
+}
+
+/**
+ * Oculta las hojas internas para simplificar la vista operativa.
+ * Las hojas operativas (Insumos, Proveedores, Ordenes_Compra, Recepciones,
+ * Stock_Actual, Dashboard, Bajas_Consumo) quedan visibles.
+ * Menú → 🙈 Ocultar hojas internas
+ */
+function ocultarHojasInternas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const OCULTAR = [
+    'Detalle_Ordenes',
+    'Detalle_Recepciones',
+    'Movimientos_Inventario',
+    'Historial_Precios',
+    'Config_Conversiones',
+    'Stock_por_Proveedor'
+  ];
+
+  const resultados = [];
+  OCULTAR.forEach(function(nombre) {
+    const sh = ss.getSheetByName(nombre);
+    if (sh) {
+      sh.hideSheet();
+      resultados.push('✅ ' + nombre);
+    } else {
+      resultados.push('⚠️ No encontrada: ' + nombre);
+    }
+  });
+
+  ui.alert(
+    '🙈 Hojas ocultadas',
+    'Resultado:\n\n' + resultados.join('\n') +
+    '\n\nPodés mostrarlas desde Menú → Ver → Hojas ocultas si necesitás acceso directo.',
+    ui.ButtonSet.OK
+  );
+}

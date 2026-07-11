@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 16px; margin: 0; background: #f8f9fa; font-size: 14px; }
+    h2 { margin: 0 0 16px; color: #1F4E79; font-size: 18px; }
+
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; font-size: 13px; }
+    input, select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 14px; background: #fff;
+    }
+    textarea { resize: vertical; min-height: 54px; }
+    input:focus, select:focus { outline: none; border-color: #4285f4; box-shadow: 0 0 0 2px #e8f0fe; }
+
+    .items-section { margin-top: 18px; border-top: 2px solid #4285f4; padding-top: 14px; }
+    .items-section h3 { margin: 0 0 4px; color: #1F4E79; font-size: 15px; }
+    .items-hint { font-size: 12px; color: #888; margin-bottom: 12px; }
+
+    #estadoCarga {
+      padding: 12px; border-radius: 6px; text-align: center;
+      color: #5f6368; font-style: italic; background: #f1f3f4; margin-bottom: 10px;
+    }
+
+    .categoria-header {
+      background: #E8F0FE; color: #1F4E79; font-weight: bold;
+      padding: 6px 12px; border-radius: 4px; margin: 14px 0 6px;
+      font-size: 13px; letter-spacing: 0.3px;
+    }
+
+    .insumo-row {
+      display: grid;
+      grid-template-columns: 28px 1fr 90px 110px 100px;
+      gap: 8px; align-items: center;
+      padding: 8px 10px; background: #fff;
+      border: 1px solid #e8eaed; border-radius: 6px;
+      margin-bottom: 5px; transition: background 0.15s;
+    }
+    .insumo-row:hover { background: #f8f9fa; }
+    .insumo-row.seleccionado { background: #e8f5e9; border-color: #34a853; }
+    .insumo-row.critico { border-left: 4px solid #ea4335; }
+    .insumo-row.agotado { border-left: 4px solid #a61c00; opacity: 0.75; }
+    .insumo-row input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #34a853; }
+    .insumo-nombre { font-size: 13px; line-height: 1.3; }
+    .insumo-codigo { font-size: 11px; color: #888; }
+    .insumo-row input[type="number"] { padding: 5px 7px; font-size: 13px; text-align: center; }
+    .insumo-row input[disabled] { background: #f1f3f4; color: #aaa; }
+
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: bold; white-space: nowrap; }
+    .badge-ok      { background: #e6f4ea; color: #137333; }
+    .badge-critico { background: #fef7e0; color: #b06000; }
+    .badge-agotado { background: #fce8e6; color: #a61c00; }
+
+    #resumenSeleccion {
+      display: none; margin-top: 12px; padding: 10px 14px;
+      background: #e8f5e9; border: 1px solid #34a853; border-radius: 6px;
+      font-size: 13px; color: #137333;
+    }
+
+    .total { text-align: right; font-size: 18px; font-weight: bold; margin-top: 14px; color: #4285f4; }
+
+    .btn { padding: 9px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 6px; font-weight: bold; }
+    .btn-primary { background: #4285f4; color: white; }
+    .btn-primary:hover { background: #3367d6; }
+    .btn:hover { opacity: 0.9; }
+    .actions { margin-top: 18px; padding-top: 14px; border-top: 1px solid #ddd; }
+
+    .loading { display: none; text-align: center; padding: 30px; color: #4285f4; font-weight: bold; }
+    .message { padding: 10px 14px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+    .btn-toggle-manual {
+      margin-top: 12px; padding: 7px 14px; border: 1px dashed #4285f4;
+      border-radius: 4px; background: transparent; color: #4285f4;
+      cursor: pointer; font-size: 13px; width: 100%;
+    }
+    .btn-toggle-manual:hover { background: #e8f0fe; }
+
+    .col-headers {
+      display: grid; grid-template-columns: 28px 1fr 90px 110px 100px;
+      gap: 8px; padding: 4px 10px;
+      font-size: 11px; color: #888; font-weight: bold;
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    #seccionAlternativo {
+      display: none;
+      margin-top: 16px;
+      border: 1px dashed #fbbc04;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fffde7;
+    }
+    #seccionAlternativo h4 { margin: 0 0 12px; color: #b06000; font-size: 14px; }
+    .alt-buscador {
+      display: grid;
+      grid-template-columns: 1fr 80px 110px auto;
+      gap: 8px; align-items: flex-end; margin-bottom: 8px;
+    }
+    .alt-buscador label { font-size: 11px; color: #888; font-weight: bold; text-transform: uppercase; margin-bottom: 3px; }
+    .alt-buscador input, .alt-buscador select { font-size: 13px; }
+    .btn-agregar-alt {
+      padding: 8px 12px; background: #fbbc04; color: #333;
+      border: none; border-radius: 4px; cursor: pointer;
+      font-size: 13px; font-weight: bold; white-space: nowrap; align-self: flex-end;
+    }
+    .btn-agregar-alt:hover { background: #f9a800; }
+    .item-alt {
+      display: grid;
+      grid-template-columns: 1fr 80px 110px 90px 28px;
+      gap: 8px; align-items: center;
+      padding: 8px 10px; background: #fff9c4;
+      border: 1px solid #ffe082; border-radius: 6px;
+      margin-bottom: 5px; font-size: 13px;
+    }
+    .item-alt input { padding: 5px 7px; font-size: 13px; text-align: center; }
+    .item-alt-nombre { font-size: 13px; line-height: 1.3; }
+    .item-alt-codigo { font-size: 11px; color: #888; }
+    .btn-quitar-alt {
+      background: #ea4335; color: white; border: none;
+      border-radius: 4px; cursor: pointer; padding: 5px 8px; font-size: 13px;
+    }
+    .alt-headers {
+      display: grid;
+      grid-template-columns: 1fr 80px 110px 90px 28px;
+      gap: 8px; padding: 2px 10px;
+      font-size: 11px; color: #888; font-weight: bold;
+      text-transform: uppercase; letter-spacing: 0.4px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>🛒 Nueva Orden de Compra</h2>
+
+  <div id="message" class="message"></div>
+
+  <form id="ordenForm">
+    <div style="display:grid; grid-template-columns:2fr 1fr; gap:12px;">
+      <div class="form-group">
+        <label for="proveedor">Proveedor *</label>
+        <select id="proveedor" required onchange="cargarInsumos()">
+          <option value="">-- Seleccionar proveedor --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="solicitadoPor">Solicitado por *</label>
+        <select id="solicitadoPor" required>
+          <option value="">-- Seleccionar --</option>
+          <option>Male</option>
+          <option>Camila</option>
+          <option>Patricia</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px;">
+      <div class="form-group">
+        <label for="fechaEntrega">Fecha Entrega Estimada</label>
+        <input type="date" id="fechaEntrega">
+      </div>
+      <div class="form-group">
+        <label for="observaciones">Observaciones</label>
+        <textarea id="observaciones" placeholder="Notas adicionales para el pedido..."></textarea>
+      </div>
+    </div>
+
+    <div class="items-section">
+      <h3>Items a solicitar</h3>
+      <p class="items-hint">Seleccioná el proveedor para ver sus insumos. Tildá los que querés pedir y ajustá cantidades y precios.</p>
+
+      <div id="estadoCarga">← Seleccioná un proveedor para ver sus insumos</div>
+      <div id="insumosContainer"></div>
+      <div id="resumenSeleccion"></div>
+
+      <button type="button" class="btn-toggle-manual" onclick="toggleAlternativo()" id="btnToggleAlt" style="display:none;">
+        ➕ Agregar insumos de otro proveedor
+      </button>
+
+      <div id="seccionAlternativo">
+        <h4>🔄 Agregar insumo de otro proveedor</h4>
+        <div class="alt-buscador">
+          <div>
+            <label>Proveedor</label>
+            <select id="proveedorAlt">
+              <option value="">-- Seleccionar --</option>
+            </select>
+          </div>
+          <div>
+            <label>Cantidad</label>
+            <input type="number" id="altCantidad" min="1" value="1">
+          </div>
+          <div>
+            <label>Precio unit.</label>
+            <input type="number" id="altPrecio" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <button type="button" class="btn-agregar-alt" onclick="agregarItemAlt()">
+            ➕ Agregar
+          </button>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px; color:#888; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Insumo (escribí para buscar)</label>
+          <input type="text" id="altBuscarInsumo" list="datalistInsumos"
+                 placeholder="Ej: Kit ELISA, reactivo, tubos..." autocomplete="off"
+                 onchange="autocompletarPrecioAlt()">
+          <input type="hidden" id="altCodigoInsumo">
+          <datalist id="datalistInsumos"></datalist>
+        </div>
+        <div class="alt-headers" id="altHeaders">
+          <span>Insumo</span><span style="text-align:center">Cant.</span>
+          <span style="text-align:center">Precio unit.</span><span style="text-align:right">Subtotal</span><span></span>
+        </div>
+        <div id="itemsAltContainer"></div>
+      </div>
+    </div>
+
+    <div class="total" id="totalOrden">Total: $0.00</div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">💾 Guardar Orden</button>
+      <button type="button" class="btn" onclick="google.script.host.close()">Cancelar</button>
+    </div>
+  </form>
+
+  <div class="loading" id="loading">⏳ Guardando orden de compra y procesando datos...</div>
+
+  <script>
+    let insumosProveedor    = [];
+    let todosLosInsumos     = [];
+    let todosLosProveedores = [];
+    let itemsAlt            = [];
+    let contadorAlt         = 0;
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(function(data) {
+          todosLosProveedores = data;
+          const selectPpal = document.getElementById('proveedor');
+          const selectAlt  = document.getElementById('proveedorAlt');
+          data.forEach(prov => {
+            const makeOpt = () => {
+              const opt = document.createElement('option');
+              opt.value = prov.codigo_proveedor;
+              opt.textContent = prov.razon_social;
+              return opt;
+            };
+            selectPpal.appendChild(makeOpt());
+            selectAlt.appendChild(makeOpt());
+          });
+        })
+        .getProveedoresActivos();
+
+      google.script.run
+        .withSuccessHandler(function(data) {
+          todosLosInsumos = data;
+          const dl = document.getElementById('datalistInsumos');
+          data.forEach(ins => {
+            const opt = document.createElement('option');
+            opt.value = ins.descripcion;
+            opt.dataset.codigo = ins.codigo_insumo;
+            opt.dataset.precio = ins.precio_referencial || 0;
+            dl.appendChild(opt);
+          });
+        })
+        .getInsumosActivos();
+    };
+
+    function cargarInsumos() {
+      const codProv = document.getElementById('proveedor').value;
+      const container = document.getElementById('insumosContainer');
+      const estado = document.getElementById('estadoCarga');
+
+      container.innerHTML = '';
+      insumosProveedor = [];
+      document.getElementById('resumenSeleccion').style.display = 'none';
+      document.getElementById('totalOrden').textContent = 'Total: $0.00';
+      document.getElementById('btnToggleAlt').style.display = 'none';
+      document.getElementById('seccionAlternativo').style.display = 'none';
+      resetAlt();
+      actualizarSelectAlt(codProv);
+
+      if (!codProv) {
+        estado.style.display = 'block';
+        estado.textContent = '← Seleccioná un proveedor para ver sus insumos';
+        return;
+      }
+
+      estado.style.display = 'block';
+      estado.textContent = '⏳ Cargando insumos del proveedor...';
+
+      google.script.run
+        .withSuccessHandler(function(data) {
+          insumosProveedor = data;
+          estado.style.display = 'none';
+          if (!data || data.length === 0) {
+            estado.style.display = 'block';
+            estado.textContent = 'Este proveedor no tiene insumos asignados en el catálogo.';
+            return;
+          }
+          renderizarInsumos(data);
+          document.getElementById('btnToggleAlt').style.display = 'block';
+        })
+        .withFailureHandler(function(err) {
+          estado.style.display = 'block';
+          estado.textContent = '❌ Error al cargar insumos: ' + err.message;
+        })
+        .getInsumosPorProveedor(codProv);
+    }
+
+    function actualizarSelectAlt(codPrincipal) {
+      const selectAlt = document.getElementById('proveedorAlt');
+      selectAlt.innerHTML = '<option value="">-- Seleccionar --</option>';
+      todosLosProveedores.forEach(prov => {
+        if (prov.codigo_proveedor === codPrincipal) return;
+        const opt = document.createElement('option');
+        opt.value = prov.codigo_proveedor;
+        opt.textContent = prov.razon_social;
+        selectAlt.appendChild(opt);
+      });
+    }
+
+    function toggleAlternativo() {
+      const sec = document.getElementById('seccionAlternativo');
+      const btn = document.getElementById('btnToggleAlt');
+      if (sec.style.display === 'none') {
+        sec.style.display = 'block';
+        btn.textContent = '✕ Cancelar proveedor alternativo';
+        btn.style.borderColor = '#ea4335';
+        btn.style.color = '#ea4335';
+      } else {
+        sec.style.display = 'none';
+        btn.textContent = '➕ Agregar insumos de otro proveedor';
+        btn.style.borderColor = '#4285f4';
+        btn.style.color = '#4285f4';
+        resetAlt();
+        calcularTotal();
+      }
+    }
+
+    function resetAlt() {
+      itemsAlt = [];
+      contadorAlt = 0;
+      document.getElementById('itemsAltContainer').innerHTML = '';
+      document.getElementById('altHeaders').style.display = 'none';
+      document.getElementById('altBuscarInsumo').value = '';
+      document.getElementById('altCodigoInsumo').value = '';
+      document.getElementById('altCantidad').value = '1';
+      document.getElementById('altPrecio').value = '';
+      document.getElementById('proveedorAlt').value = '';
+    }
+
+    function autocompletarPrecioAlt() {
+      const nombre = document.getElementById('altBuscarInsumo').value;
+      const ins = todosLosInsumos.find(i => i.descripcion === nombre);
+      if (ins) {
+        document.getElementById('altCodigoInsumo').value = ins.codigo_insumo;
+        if (ins.precio_referencial > 0) {
+          document.getElementById('altPrecio').value = ins.precio_referencial.toFixed(2);
+        }
+      } else {
+        document.getElementById('altCodigoInsumo').value = '';
+      }
+    }
+
+    function agregarItemAlt() {
+      const provAlt  = document.getElementById('proveedorAlt').value;
+      const nombre   = document.getElementById('altBuscarInsumo').value.trim();
+      const codigo   = document.getElementById('altCodigoInsumo').value.trim();
+      const cant     = parseFloat(document.getElementById('altCantidad').value) || 0;
+      const precio   = parseFloat(document.getElementById('altPrecio').value)   || 0;
+
+      if (!provAlt)  return alert('Seleccioná el proveedor alternativo.');
+      if (!codigo)   return alert('Seleccioná un insumo del listado.');
+      if (cant <= 0) return alert('La cantidad debe ser mayor a 0.');
+
+      const yaExiste = itemsAlt.find(i => i.codigo_insumo === codigo && i.proveedor === provAlt);
+      if (yaExiste) return alert('Ese insumo ya fue agregado para este proveedor.');
+
+      const subtotal = cant * precio;
+      contadorAlt++;
+      const id = contadorAlt;
+      itemsAlt.push({ id, proveedor: provAlt, codigo_insumo: codigo, descripcion: nombre, cantidad: cant, precio_unitario: precio, subtotal });
+
+      document.getElementById('altHeaders').style.display = 'grid';
+
+      const row = document.createElement('div');
+      row.className = 'item-alt';
+      row.id = `itemAlt_${id}`;
+      row.innerHTML = `
+        <div>
+          <div class="item-alt-nombre">${nombre}</div>
+          <div class="item-alt-codigo">${codigo} · <em>${getNombreProveedor(provAlt)}</em></div>
+        </div>
+        <input type="number" min="1" value="${cant}" onchange="actualizarItemAlt(${id}, this)" style="text-align:center;">
+        <input type="number" min="0" step="0.01" value="${precio.toFixed(2)}" onchange="actualizarPrecioAlt(${id}, this)" style="text-align:right;">
+        <div style="text-align:right; font-weight:bold; color:#1F4E79;" id="subAlt_${id}">$${subtotal.toFixed(2)}</div>
+        <button type="button" class="btn-quitar-alt" onclick="quitarItemAlt(${id})">✕</button>
+      `;
+      document.getElementById('itemsAltContainer').appendChild(row);
+
+      document.getElementById('altBuscarInsumo').value = '';
+      document.getElementById('altCodigoInsumo').value = '';
+      document.getElementById('altCantidad').value = '1';
+      document.getElementById('altPrecio').value = '';
+      document.getElementById('altBuscarInsumo').focus();
+      calcularTotal();
+    }
+
+    function getNombreProveedor(cod) {
+      const p = todosLosProveedores.find(p => p.codigo_proveedor === cod);
+      return p ? p.razon_social : cod;
+    }
+
+    function actualizarItemAlt(id, input) {
+      const item = itemsAlt.find(i => i.id === id);
+      if (!item) return;
+      item.cantidad = parseFloat(input.value) || 0;
+      item.subtotal = item.cantidad * item.precio_unitario;
+      document.getElementById(`subAlt_${id}`).textContent = '$' + item.subtotal.toFixed(2);
+      calcularTotal();
+    }
+
+    function actualizarPrecioAlt(id, input) {
+      const item = itemsAlt.find(i => i.id === id);
+      if (!item) return;
+      item.precio_unitario = parseFloat(input.value) || 0;
+      item.subtotal = item.cantidad * item.precio_unitario;
+      document.getElementById(`subAlt_${id}`).textContent = '$' + item.subtotal.toFixed(2);
+      calcularTotal();
+    }
+
+    function quitarItemAlt(id) {
+      itemsAlt = itemsAlt.filter(i => i.id !== id);
+      document.getElementById(`itemAlt_${id}`).remove();
+      if (itemsAlt.length === 0) document.getElementById('altHeaders').style.display = 'none';
+      calcularTotal();
+    }
+
+    function renderizarInsumos(insumos) {
+      const container = document.getElementById('insumosContainer');
+      container.innerHTML = '';
+
+      const grupos = {};
+      insumos.forEach(ins => {
+        const cat = ins.categoria || 'Sin categoría';
+        if (!grupos[cat]) grupos[cat] = [];
+        grupos[cat].push(ins);
+      });
+
+      const hdrs = document.createElement('div');
+      hdrs.className = 'col-headers';
+      hdrs.innerHTML = `<span></span><span>Insumo</span><span style="text-align:center">Stock</span><span style="text-align:center">Cantidad</span><span style="text-align:right">Precio unit.</span>`;
+      container.appendChild(hdrs);
+
+      Object.keys(grupos).sort().forEach(cat => {
+        const catDiv = document.createElement('div');
+        catDiv.className = 'categoria-header';
+        catDiv.textContent = `📂 ${cat} (${grupos[cat].length})`;
+        container.appendChild(catDiv);
+
+        grupos[cat].forEach(ins => {
+          const row = document.createElement('div');
+          row.className = 'insumo-row' +
+            (ins.estado_stock === 'Crítico' ? ' critico' : '') +
+            (ins.estado_stock === 'Agotado' ? ' agotado' : '');
+          row.dataset.codigo = ins.codigo_insumo;
+
+          const badgeClass = ins.estado_stock === 'OK' ? 'badge-ok' :
+                             ins.estado_stock === 'Crítico' ? 'badge-critico' : 'badge-agotado';
+          const badgeText  = ins.estado_stock === 'OK' ? `✓ ${ins.stock_actual}` :
+                             ins.estado_stock === 'Crítico' ? `⚠ ${ins.stock_actual}` : `✗ 0`;
+          const precio = ins.precio_referencial > 0 ? ins.precio_referencial.toFixed(2) : '0.00';
+
+          row.innerHTML = `
+            <input type="checkbox" onchange="toggleInsumo(this)">
+            <div>
+              <div class="insumo-nombre">${ins.descripcion}</div>
+              <div class="insumo-codigo">${ins.codigo_insumo} · ${ins.unidad_medida}</div>
+            </div>
+            <div style="text-align:center"><span class="badge ${badgeClass}">${badgeText}</span></div>
+            <input type="number" class="item-cantidad" min="1" value="1" disabled onchange="calcularTotal()">
+            <input type="number" class="item-precio" min="0" step="0.01" value="${precio}" disabled onchange="calcularTotal()">
+          `;
+          container.appendChild(row);
+        });
+      });
+    }
+
+    function toggleInsumo(checkbox) {
+      const row = checkbox.closest('.insumo-row');
+      const cantInput   = row.querySelector('.item-cantidad');
+      const precioInput = row.querySelector('.item-precio');
+      if (checkbox.checked) {
+        row.classList.add('seleccionado');
+        cantInput.disabled = false;
+        precioInput.disabled = false;
+        cantInput.focus();
+      } else {
+        row.classList.remove('seleccionado');
+        cantInput.disabled = true;
+        precioInput.disabled = true;
+      }
+      actualizarResumen();
+      calcularTotal();
+    }
+
+    function actualizarResumen() {
+      const sel = document.querySelectorAll('#insumosContainer .insumo-row.seleccionado');
+      const div = document.getElementById('resumenSeleccion');
+      if (sel.length === 0) { div.style.display = 'none'; }
+      else {
+        div.style.display = 'block';
+        div.textContent = `✔ ${sel.length} insumo${sel.length > 1 ? 's' : ''} seleccionado${sel.length > 1 ? 's' : ''}`;
+      }
+    }
+
+    function calcularTotal() {
+      let total = 0;
+      document.querySelectorAll('#insumosContainer .insumo-row.seleccionado').forEach(row => {
+        const cant   = parseFloat(row.querySelector('.item-cantidad').value)  || 0;
+        const precio = parseFloat(row.querySelector('.item-precio').value) || 0;
+        total += cant * precio;
+      });
+      itemsAlt.forEach(i => { total += i.subtotal; });
+      document.getElementById('totalOrden').textContent = `Total: $${total.toFixed(2)}`;
+    }
+
+    document.getElementById('ordenForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      const proveedorPpal = document.getElementById('proveedor').value;
+      if (!proveedorPpal) return mostrarMensaje('Debe seleccionar un proveedor.', 'error');
+
+      const solicitadoPor = document.getElementById('solicitadoPor').value;
+      if (!solicitadoPor) return mostrarMensaje('Debe seleccionar quién solicita la orden.', 'error');
+
+      const fechaEntrega  = document.getElementById('fechaEntrega').value;
+      const observaciones = document.getElementById('observaciones').value;
+
+      const itemsPpal = [];
+      let idxPpal = 1;
+      document.querySelectorAll('#insumosContainer .insumo-row.seleccionado').forEach(row => {
+        const cod    = row.dataset.codigo;
+        const ins    = insumosProveedor.find(i => i.codigo_insumo === cod);
+        const cant   = parseFloat(row.querySelector('.item-cantidad').value) || 0;
+        const precio = parseFloat(row.querySelector('.item-precio').value)   || 0;
+        if (!ins || cant <= 0) return;
+        itemsPpal.push({ item: idxPpal++, codigo_insumo: cod, descripcion: ins.descripcion, cantidad: cant, precio_unitario: precio, subtotal: cant * precio });
+      });
+
+      const itemsAltPorProv = {};
+      itemsAlt.forEach(i => {
+        if (!itemsAltPorProv[i.proveedor]) itemsAltPorProv[i.proveedor] = [];
+        itemsAltPorProv[i.proveedor].push(i);
+      });
+
+      if (itemsPpal.length === 0 && itemsAlt.length === 0) {
+        return mostrarMensaje('Debe seleccionar al menos un insumo.', 'error');
+      }
+
+      const colaOrdenes = [];
+      if (itemsPpal.length > 0) {
+        colaOrdenes.push({ proveedor: proveedorPpal, items: itemsPpal });
+      }
+      Object.keys(itemsAltPorProv).forEach(codProv => {
+        const loteItems = itemsAltPorProv[codProv].map((i, idx) => ({
+          item: idx + 1,
+          codigo_insumo: i.codigo_insumo,
+          descripcion: i.descripcion,
+          cantidad: i.cantidad,
+          precio_unitario: i.precio_unitario,
+          subtotal: i.subtotal
+        }));
+        colaOrdenes.push({ proveedor: codProv, items: loteItems });
+      });
+
+      document.getElementById('ordenForm').style.display = 'none';
+      document.getElementById('loading').style.display   = 'block';
+
+      const ordenesCreadas = [];
+
+      function crearSiguiente(posicion) {
+        if (posicion >= colaOrdenes.length) {
+          document.getElementById('loading').style.display = 'none';
+          const msg = ordenesCreadas.length === 1
+            ? `✅ Orden ${ordenesCreadas[0]} creada exitosamente`
+            : `✅ ${ordenesCreadas.length} órdenes creadas: ${ordenesCreadas.join(', ')}`;
+          mostrarMensaje(msg, 'success');
+          setTimeout(() => google.script.host.close(), 2500);
+          return;
+        }
+
+        const lote = colaOrdenes[posicion];
+        const ordenData = {
+          proveedor:              lote.proveedor,
+          fecha_entrega_estimada: fechaEntrega,
+          observaciones:          observaciones,
+          solicitado_por:         solicitadoPor,
+          items:                  lote.items
+        };
+
+        google.script.run
+          .withSuccessHandler(function(numeroOrden) {
+            ordenesCreadas.push(numeroOrden);
+            crearSiguiente(posicion + 1);
+          })
+          .withFailureHandler(function(err) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('ordenForm').style.display = 'block';
+            const yaCreadas = ordenesCreadas.length > 0
+              ? ` (ya se crearon: ${ordenesCreadas.join(', ')})`
+              : '';
+            mostrarMensaje(`❌ Error al crear orden para proveedor ${lote.proveedor}: ${err.message}${yaCreadas}`, 'error');
+          })
+          .crearOrdenCompra(ordenData);
+      }
+
+      crearSiguiente(0);
+    });
+
+    function mostrarMensaje(texto, tipo) {
+      const msgDiv = document.getElementById('message');
+      msgDiv.textContent = texto;
+      msgDiv.className = `message ${tipo}`;
+      msgDiv.style.display = 'block';
+      msgDiv.scrollIntoView({ behavior: 'smooth' });
+    }
+  </script>
+</body>
+</html>

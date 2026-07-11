@@ -1,0 +1,325 @@
+// ============================================================
+// INSTRUCCIÓN: Reemplazar el archivo completo MailEvaluado.gs
+// por este contenido.
+//
+// CAMBIO PRINCIPAL: construirHtmlMail() ahora detecta
+//   d.modo === 'presencial' y muestra un layout diferente:
+//
+//   Flujo autónomo (modo = cualquier otro):
+//     → Muestra "X de Y respuestas correctas" (sin cambios)
+//     → Muestra tabla de preguntas con opciones múltiples
+//
+//   Flujo presencial (modo = 'presencial'):
+//     → Muestra "Nivel evaluado: Competente" (en lugar de X/Y)
+//     → Muestra bloque de observación del evaluador (sin tabla
+//       de opciones, que no aplica a rúbrica conductual)
+//
+// El parámetro d.nivel lo pasa CorreccionPresencial.gs
+// desde registrarEvaluacionRubrica() — ver PRESENCIAL_6.
+// ============================================================
+
+// ============================================================
+// GeCO Lab — MailEvaluado.gs
+// ============================================================
+
+function enviarMailEvaluado(datosEvaluacion) {
+  if (!datosEvaluacion.mail) {
+    Logger.log('Sin mail del evaluado, no se envía notificación.');
+    return;
+  }
+
+  const asunto = 'GeCO Lab — Resultado de tu evaluación: ' + datosEvaluacion.documento;
+  const htmlBody = construirHtmlMail(datosEvaluacion);
+
+  MailApp.sendEmail({
+    to:       datosEvaluacion.mail,
+    subject:  asunto,
+    htmlBody: htmlBody,
+    noReply:  false
+  });
+
+  Logger.log('Mail enviado a ' + datosEvaluacion.mail +
+             ' para evaluación de "' + datosEvaluacion.documento + '"');
+}
+
+// ------------------------------------------------------------
+// HTML del mail — bifurca según modo
+// ------------------------------------------------------------
+function construirHtmlMail(d) {
+  const coloresEscala = {
+    'Excelente':    { bg: '#e6f4ea', texto: '#137333', icono: '🏆' },
+    'Bueno':        { bg: '#e8f0fe', texto: '#1a73e8', icono: '✅' },
+    'Regular':      { bg: '#fef7e0', texto: '#b06000', icono: '⚠️' },
+    'Insuficiente': { bg: '#fce8e6', texto: '#c5221f', icono: '❌' }
+  };
+  const escalaInfo = coloresEscala[d.escala] || coloresEscala['Regular'];
+
+  const fechaStr = d.fecha
+    ? Utilities.formatDate(new Date(d.fecha), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')
+    : '—';
+
+  const esPresencial = (d.modo === 'presencial');
+
+  // ── Bloque de resultado (difiere según modo) ─────────────────
+  let bloqueResultado;
+  if (esPresencial) {
+    // Modo rúbrica: muestra nivel seleccionado
+    const nivelLabel = d.nivel || 'No especificado';
+    bloqueResultado = `
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background:${escalaInfo.bg};border-radius:10px;padding:20px;">
+        <tr>
+          <td>
+            <div style="font-size:32px;">${escalaInfo.icono}</div>
+            <div style="font-size:26px;font-weight:700;color:${escalaInfo.texto};margin-top:4px;">
+              ${d.escala}
+            </div>
+            <div style="font-size:14px;color:#5f6368;margin-top:4px;">
+              Nivel evaluado: <strong>${nivelLabel}</strong>
+            </div>
+          </td>
+          <td align="right" style="vertical-align:middle;">
+            <div style="font-size:48px;font-weight:800;color:${escalaInfo.texto};">
+              ${d.puntaje}%
+            </div>
+          </td>
+        </tr>
+      </table>`;
+  } else {
+    // Modo autónomo: muestra correctas/total
+    bloqueResultado = `
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background:${escalaInfo.bg};border-radius:10px;padding:20px;">
+        <tr>
+          <td>
+            <div style="font-size:32px;">${escalaInfo.icono}</div>
+            <div style="font-size:26px;font-weight:700;color:${escalaInfo.texto};margin-top:4px;">
+              ${d.escala}
+            </div>
+            <div style="font-size:14px;color:#5f6368;margin-top:4px;">
+              ${d.correctas} de ${d.total} respuestas correctas
+            </div>
+          </td>
+          <td align="right" style="vertical-align:middle;">
+            <div style="font-size:48px;font-weight:800;color:${escalaInfo.texto};">
+              ${d.puntaje}%
+            </div>
+          </td>
+        </tr>
+      </table>`;
+  }
+
+  // ── Bloque de detalle (difiere según modo) ───────────────────
+  let bloqueDetalle;
+  if (esPresencial) {
+    // Modo rúbrica: muestra observación del evaluador (si la hay)
+    const obs = d.preguntas && d.preguntas[0] && d.preguntas[0].justificacion
+      ? d.preguntas[0].justificacion
+      : '';
+
+    bloqueDetalle = obs
+      ? `
+        <tr>
+          <td style="padding:0 32px 24px 32px;">
+            <p style="font-size:14px;font-weight:600;color:#202124;margin-bottom:12px;">
+              Observación del evaluador:
+            </p>
+            <div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;
+                        padding:14px;font-size:13px;color:#3c4043;line-height:1.6;">
+              ${obs.replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+            </div>
+          </td>
+        </tr>`
+      : '';
+  } else {
+    // Modo autónomo: tabla de preguntas con opciones
+    const filasPreguntas = d.preguntas.map(p => {
+      const iconoCorrecta = p.esCorrecta ? '✅' : '❌';
+      const bgFila = p.esCorrecta ? '#f8fff8' : '#fff8f8';
+      const opcionesHtml = (p.opciones || []).map((op, idx) => {
+        const letra = String.fromCharCode(65 + idx);
+        const esElegida  = letra === p.elegida;
+        const esCorrecta = letra === p.correcta;
+        let estilo = 'color:#5f6368;';
+        if (esElegida && esCorrecta)   estilo = 'color:#137333;font-weight:600;';
+        else if (esElegida && !esCorrecta) estilo = 'color:#c5221f;font-weight:600;text-decoration:line-through;';
+        else if (!esElegida && esCorrecta) estilo = 'color:#137333;font-style:italic;';
+        return `<span style="${estilo}">${letra}) ${op}</span>`;
+      }).join('&nbsp;&nbsp;');
+
+      return `
+        <tr style="background:${bgFila};">
+          <td style="padding:10px 14px;vertical-align:top;font-size:13px;color:#202124;border-bottom:1px solid #f0f0f0;">
+            <strong>P${p.numero}.</strong> ${p.enunciado}
+            <div style="margin-top:6px;font-size:12px;line-height:1.8;">${opcionesHtml}</div>
+            ${!p.esCorrecta ? `<div style="font-size:11px;color:#b06000;margin-top:4px;">
+              Respuesta correcta: <strong>${p.correcta}</strong>
+            </div>` : ''}
+          </td>
+          <td style="padding:10px 14px;text-align:center;vertical-align:middle;font-size:16px;border-bottom:1px solid #f0f0f0;">
+            ${iconoCorrecta}
+          </td>
+        </tr>`;
+    }).join('');
+
+    bloqueDetalle = `
+      <tr>
+        <td style="padding:0 32px 24px 32px;">
+          <p style="font-size:14px;font-weight:600;color:#202124;margin-bottom:12px;">
+            Detalle por pregunta:
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0"
+                 style="border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;font-size:13px;">
+            <thead>
+              <tr style="background:#f1f3f4;">
+                <th style="padding:10px 14px;text-align:left;font-weight:600;color:#3c4043;font-size:12px;">
+                  Pregunta y opciones
+                </th>
+                <th style="padding:10px 14px;text-align:center;font-weight:600;color:#3c4043;font-size:12px;width:60px;">
+                  Resultado
+                </th>
+              </tr>
+            </thead>
+            <tbody>${filasPreguntas}</tbody>
+          </table>
+        </td>
+      </tr>`;
+  }
+
+  // ── Texto introductorio ──────────────────────────────────────
+  const textoIntro = esPresencial
+    ? `Tu evaluación de competencia <strong style="color:#202124;">${d.dominio || d.documento}</strong>
+       fue completada el ${fechaStr} por <strong>${d.evaluador || 'el equipo de calidad'}</strong>
+       mediante evaluación presencial con rúbrica conductual.`
+    : `Te compartimos el resultado de tu evaluación sobre
+       <strong style="color:#202124;">${d.documento}</strong>,
+       realizada el ${fechaStr} y evaluada por <strong>${d.evaluador || 'el equipo de calidad'}</strong>.`;
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family:'Google Sans',Roboto,Arial,sans-serif;background:#f8f9fa;margin:0;padding:0;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fa;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0"
+             style="background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#1a73e8;padding:24px 32px;">
+            <div style="font-size:22px;font-weight:700;color:white;">🧪 GeCO Lab</div>
+            <div style="font-size:13px;color:rgba(255,255,255,0.85);margin-top:4px;">
+              Resultado de evaluación de competencias
+            </div>
+          </td>
+        </tr>
+
+        <!-- Saludo -->
+        <tr>
+          <td style="padding:24px 32px 0 32px;">
+            <p style="font-size:15px;color:#202124;margin:0;">
+              Hola <strong>${d.nombre}</strong>,
+            </p>
+            <p style="font-size:14px;color:#5f6368;margin-top:8px;">
+              ${textoIntro}
+            </p>
+          </td>
+        </tr>
+
+        <!-- Resultado resumen -->
+        <tr>
+          <td style="padding:20px 32px;">
+            ${bloqueResultado}
+          </td>
+        </tr>
+
+        <!-- Detalle -->
+        ${bloqueDetalle}
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8f9fa;padding:16px 32px;border-top:1px solid #e0e0e0;">
+            <p style="font-size:11px;color:#9aa0a6;margin:0;text-align:center;">
+              Este mail fue generado automáticamente por GeCO Lab — Sistema de Gestión del Conocimiento.<br>
+              Si tenés preguntas sobre este resultado, contactá a tu responsable de calidad.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+// ------------------------------------------------------------
+// Función de prueba — modo autónomo
+// ------------------------------------------------------------
+function testMailEvaluado() {
+  const datosPrueba = {
+    nombre:      'Ana García',
+    mail:        Session.getEffectiveUser().getEmail(),
+    documento:   'SE.DAC.ERO.IN-010 Instructivo de Erogaciones',
+    dominio:     'Gestión de erogaciones',
+    fecha:       new Date(),
+    puntaje:     80,
+    escala:      'Bueno',
+    correctas:   4,
+    total:       5,
+    evaluador:   'Adri',
+    registroUrl: '',
+    preguntas: [
+      {
+        numero: 1,
+        enunciado: '¿Cuáles son las vías de ingreso válidas para solicitudes de pago?',
+        opciones: ['A. Solo expediente GDE', 'B. Solo correo', 'C. Correo, nota GDE o EE en GDE', 'D. Trello y correo'],
+        elegida: 'C', correcta: 'C', esCorrecta: true
+      },
+      {
+        numero: 2,
+        enunciado: '¿Quiénes deben ser destinatarios en una nota de COMPRAS/REINTEGROS SE?',
+        opciones: ['A. Ing. Bosch con copia a Suaid', 'B. Suaid, Gait, Acuña, Sastre, Franco Bonaudi', 'C. Únicamente el Secretario', 'D. El responsable con copia a DAC'],
+        elegida: 'A', correcta: 'B', esCorrecta: false
+      }
+    ]
+  };
+  enviarMailEvaluado(datosPrueba);
+  SpreadsheetApp.getUi().alert('Mail de prueba (autónomo) enviado a ' + datosPrueba.mail);
+}
+
+// ------------------------------------------------------------
+// Función de prueba — modo presencial
+// ------------------------------------------------------------
+function testMailPresencial() {
+  const datosPrueba = {
+    nombre:      'María López',
+    mail:        Session.getEffectiveUser().getEmail(),
+    documento:   'Evaluación presencial',
+    dominio:     'Comunicación efectiva',
+    fecha:       new Date(),
+    puntaje:     70,
+    escala:      'Bueno',
+    correctas:   1,
+    total:       1,
+    modo:        'presencial',
+    nivel:       'Competente',
+    evaluador:   Session.getActiveUser().getEmail(),
+    registroUrl: '',
+    preguntas: [
+      {
+        numero:        1,
+        enunciado:     'Evaluación por rúbrica conductual.',
+        opciones:      [],
+        elegida:       'Competente',
+        correcta:      'Competente',
+        esCorrecta:    true,
+        justificacion: 'Transmite información de manera clara y adapta el mensaje al interlocutor. Demuestra escucha activa en reuniones de equipo. Aún puede mejorar en situaciones de conflicto.'
+      }
+    ]
+  };
+  enviarMailEvaluado(datosPrueba);
+  SpreadsheetApp.getUi().alert('Mail de prueba (presencial) enviado a ' + datosPrueba.mail);
+}

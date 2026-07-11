@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 15px; margin: 0; background-color: #f8f9fa; }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+
+    .orden-info { background: #e8f0fe; padding: 15px; border-radius: 4px; margin-bottom: 12px; border-left: 5px solid #1967d2; }
+
+    .historial-banner {
+      background: #fff8e1;
+      border: 1px solid #f9a825;
+      border-left: 5px solid #f9a825;
+      border-radius: 4px;
+      padding: 12px 15px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .historial-banner .historial-titulo { font-weight: bold; color: #6d4c00; margin-bottom: 8px; font-size: 14px; }
+    .historial-item {
+      display: grid; grid-template-columns: 1fr 80px 80px;
+      gap: 8px; padding: 4px 0;
+      border-bottom: 1px dashed #f0c040; font-size: 12px; color: #555;
+    }
+    .historial-item:last-child { border-bottom: none; }
+    .historial-header {
+      display: grid; grid-template-columns: 1fr 80px 80px;
+      gap: 8px; font-weight: bold; color: #6d4c00;
+      font-size: 11px; text-transform: uppercase;
+      padding-bottom: 4px; margin-bottom: 4px;
+      border-bottom: 1px solid #f9a825;
+    }
+
+    .item-row { background: white; padding: 15px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ddd; }
+    .item-header { font-weight: bold; margin-bottom: 10px; color: #202124; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+
+    .progreso-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: normal; margin-left: 8px;
+    }
+    .progreso-nuevo   { background: #e8f5e9; color: #1b5e20; }
+    .progreso-parcial { background: #fff3cd; color: #856404; }
+
+    .item-grid {
+      display: grid;
+      grid-template-columns: 80px 80px 100px 120px 150px 140px 120px 1fr;
+      gap: 10px; align-items: end;
+    }
+
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+    .btn-primary { background: #4285f4; color: white; }
+    .btn-success { background: #34a853; color: white; width: 100%; font-weight: bold; margin-top: 10px; }
+    .message { padding: 10px; margin: 10px 0; border-radius: 4px; display: none; }
+    .message.success { background: #d4edda; color: #155724; }
+    .message.error   { background: #f8d7da; color: #721c24; }
+    .loading { display: none; text-align: center; padding: 20px; font-weight: bold; color: #1967d2; }
+
+    #resultadoPanel {
+      display: none; background: #f0f8f0; border: 2px solid #34a853;
+      border-radius: 8px; padding: 20px; text-align: center;
+    }
+    .resultado-titulo { font-size: 20px; font-weight: bold; color: #1e7e34; margin-bottom: 12px; }
+    .resultado-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px; margin: 15px 0; text-align: left;
+    }
+    .resultado-item { background: white; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
+    .resultado-item .ri-label { font-size: 11px; color: #666; text-transform: uppercase; }
+    .resultado-item .ri-valor { font-size: 16px; font-weight: bold; color: #333; }
+    .estado-completa { color: #1e7e34; }
+    .estado-parcial  { color: #856404; }
+    .btn-cerrar { background: #1967d2; color: white; padding: 10px 30px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>📦 Recepción de Pedido — CURF Microbiología</h2>
+
+  <div id="message" class="message"></div>
+
+  <div id="seleccionOrden">
+    <div class="form-group">
+      <label for="ordenSelect">Seleccionar Orden de Compra *</label>
+      <select id="ordenSelect" onchange="cargarDetalleOrden()">
+        <option value="">Cargando órdenes...</option>
+      </select>
+      <button type="button" class="btn btn-primary" onclick="cargarOrdenesManual()" style="margin-top: 10px;">🔄 Recargar Órdenes</button>
+    </div>
+  </div>
+
+  <div id="recepcionForm" style="display: none;">
+
+    <div class="orden-info">
+      <div id="ordenDetalle"></div>
+    </div>
+
+    <div id="historialBanner" class="historial-banner" style="display:none;">
+      <div class="historial-titulo">⚠️ Esta orden ya tuvo recepciones anteriores — revisá el acumulado antes de continuar</div>
+      <div class="historial-header">
+        <span>Insumo</span><span>Recibido</span><span>Pendiente</span>
+      </div>
+      <div id="historialItems"></div>
+    </div>
+
+    <div class="form-group">
+      <label for="recibidoPor">Recibido por *</label>
+      <select id="recibidoPor" required>
+        <option value="">-- Seleccionar --</option>
+        <option>Male</option>
+        <option>Camila</option>
+        <option>Patricia</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="observacionesRecepcion">Observaciones Generales de Recepción</label>
+      <textarea id="observacionesRecepcion" placeholder="Ej: Transporte refrigerado, caja dañada, temperatura de llegada, etc."></textarea>
+    </div>
+
+    <div id="itemsContainer"></div>
+
+    <div class="actions">
+      <button class="btn btn-success" onclick="guardarRecepcion()">✅ Confirmar Ingreso a Stock</button>
+      <button class="btn" onclick="google.script.host.close()">Cancelar</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Procesando ingreso a inventario y actualizando stock...</div>
+
+  <div id="resultadoPanel">
+    <div class="resultado-titulo">✅ Recepción registrada exitosamente</div>
+    <div class="resultado-grid">
+      <div class="resultado-item">
+        <div class="ri-label">Nro. Recepción</div>
+        <div class="ri-valor" id="res-id">—</div>
+      </div>
+      <div class="resultado-item">
+        <div class="ri-label">Orden</div>
+        <div class="ri-valor" id="res-orden">—</div>
+      </div>
+      <div class="resultado-item">
+        <div class="ri-label">Estado de la Orden</div>
+        <div class="ri-valor" id="res-estado">—</div>
+      </div>
+    </div>
+    <div id="res-mensaje" style="font-size: 13px; color: #555; margin-bottom: 10px;"></div>
+    <button class="btn-cerrar" onclick="google.script.host.close()">Cerrar</button>
+  </div>
+
+  <script>
+    let itemsOrden  = [];
+    let ordenActual = null;
+
+    window.onload = function() { cargarOrdenesManual(); };
+
+    function cargarOrdenesManual() {
+      google.script.run
+        .withSuccessHandler(function(ordenes) {
+          const select = document.getElementById('ordenSelect');
+          select.innerHTML = '<option value="">-- Seleccione una orden --</option>';
+          ordenes.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.numero_orden;
+            const esParcial = o.estado === 'Recepción Parcial';
+            opt.textContent = o.numero_orden + ' — ' + o.proveedor + (esParcial ? ' [PARCIAL]' : '');
+            if (esParcial) opt.style.color = '#856404';
+            select.appendChild(opt);
+          });
+        })
+        .getOrdenesPendientes();
+    }
+
+    function cargarDetalleOrden() {
+      const num = document.getElementById('ordenSelect').value;
+      if (!num) return;
+      google.script.run
+        .withSuccessHandler(mostrarDetalle)
+        .getDetalleOrden(num);
+    }
+
+    function mostrarDetalle(data) {
+      ordenActual = data.orden;
+      itemsOrden  = data.items;
+
+      const esParcial = ordenActual.estado === 'Recepción Parcial';
+
+      document.getElementById('ordenDetalle').innerHTML =
+        '<strong>Orden:</strong> ' + ordenActual.numero_orden +
+        ' | <strong>Proveedor:</strong> ' + ordenActual.proveedor +
+        ' | <strong>Estado:</strong> <span style="color:' + (esParcial ? '#856404' : '#1967d2') + ';font-weight:bold;">' + ordenActual.estado + '</span>';
+
+      const banner       = document.getElementById('historialBanner');
+      const historialEl  = document.getElementById('historialItems');
+
+      if (esParcial) {
+        let html = '';
+        itemsOrden.forEach(item => {
+          const solicitado = parseFloat(item.cantidad) || 0;
+          const yaRecibido = parseFloat(item.cantidad_recepcionada) || 0;
+          const pendiente  = solicitado - yaRecibido;
+          if (yaRecibido > 0) {
+            html += `<div class="historial-item">
+              <span>${item.descripcion}</span>
+              <span style="color:#1e7e34;font-weight:bold;">${yaRecibido} recib.</span>
+              <span style="color:#d93025;font-weight:bold;">${pendiente} pend.</span>
+            </div>`;
+          }
+        });
+        historialEl.innerHTML = html || '<em>Sin historial previo</em>';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      const container = document.getElementById('itemsContainer');
+      container.innerHTML = '<h3>Items a Recepcionar</h3>';
+
+      itemsOrden.forEach((item, i) => {
+        const solicitado = parseFloat(item.cantidad) || 0;
+        const yaRecibido = parseFloat(item.cantidad_recepcionada) || 0;
+        const pendiente  = solicitado - yaRecibido;
+
+        let badgeHtml = '';
+        if (yaRecibido > 0) {
+          badgeHtml = `<span class="progreso-badge progreso-parcial">⚠️ ${yaRecibido}/${solicitado} ya recibidos</span>`;
+        } else {
+          badgeHtml = `<span class="progreso-badge progreso-nuevo">✨ Sin recepciones previas</span>`;
+        }
+
+        const div = document.createElement('div');
+        div.className = 'item-row';
+        div.innerHTML = `
+  <div class="item-header">${item.descripcion} (${item.codigo_insumo}) ${badgeHtml}</div>
+  <div class="item-grid">
+    <div><label>Pedido</label><input type="number" value="${solicitado}" disabled></div>
+    <div><label>Pendiente</label><input type="number" value="${pendiente}" disabled style="font-weight:bold; color:#d93025;"></div>
+    <div><label>A recibir *</label><input type="number" class="cant-rec" value="${pendiente}" data-idx="${i}" onchange="validarCantidad(this, ${pendiente})"></div>
+    <div><label>Lote *</label><input type="text" class="lote-rec" placeholder="Lote/Partida" data-idx="${i}"></div>
+    <div><label>Vence</label><input type="date" class="vence-rec" data-idx="${i}"></div>
+    <div>
+      <label>Conformidad *</label>
+      <select class="conf-rec" data-idx="${i}">
+        <option value="Conforme">Conforme</option>
+        <option value="Conforme Parcial">Parcial</option>
+        <option value="No Conforme">No Conforme</option>
+      </select>
+    </div>
+    <div>
+      <label>Precio unit. <span style="font-weight:normal;color:#888;font-size:11px;">(si difiere)</span></label>
+      <input type="number" class="precio-rec" step="0.01" min="0"
+             placeholder="Opcional" data-idx="${i}"
+             style="border-color: #fbbc04;">
+    </div>
+    <div><label>Observaciones</label><input type="text" class="obs-rec" placeholder="Temperatura, condición..." data-idx="${i}"></div>
+  </div>`;
+        container.appendChild(div);
+      });
+
+      document.getElementById('recepcionForm').style.display = 'block';
+    }
+
+    function validarCantidad(input, max) {
+      if (parseFloat(input.value) > max) {
+        alert('La cantidad ingresada (' + input.value + ') es mayor a la pendiente (' + max + ').');
+        input.value = max;
+      }
+    }
+
+    function guardarRecepcion() {
+      const cants  = document.querySelectorAll('.cant-rec');
+      const lotes  = document.querySelectorAll('.lote-rec');
+      const vence  = document.querySelectorAll('.vence-rec');
+      const confs  = document.querySelectorAll('.conf-rec');
+      const obss   = document.querySelectorAll('.obs-rec');
+      const precios = document.querySelectorAll('.precio-rec');
+
+      const itemsEnviar = [];
+      let errorLote = false;
+
+      cants.forEach((input, i) => {
+        const cant = parseFloat(input.value) || 0;
+        if (cant > 0) {
+          const loteVal = lotes[i].value.trim();
+          if (!loteVal) errorLote = true;
+          itemsEnviar.push({
+            item:              i + 1,
+            codigo_insumo:     itemsOrden[i].codigo_insumo,
+            cantidad_recibida: cant,
+            cantidad_esperada: itemsOrden[i].cantidad - (itemsOrden[i].cantidad_recepcionada || 0),
+            estado_conformidad: confs[i].value,
+            lote:              loteVal,
+            vencimiento:       vence[i].value,
+            observaciones:     obss[i].value,
+            precio_recepcion:  parseFloat(precios[i].value) || 0
+          });
+        }
+      });
+
+      if (itemsEnviar.length === 0) return alert('Debe ingresar al menos una cantidad.');
+      if (errorLote) return alert('Por trazabilidad ISO 9001, debe ingresar el LOTE de cada insumo recibido.');
+
+      const recibidoPor = document.getElementById('recibidoPor').value;
+      if (!recibidoPor) return alert('Debe seleccionar quién recibe los insumos.');
+
+      document.getElementById('recepcionForm').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(function(resultado) {
+          document.getElementById('loading').style.display = 'none';
+
+          let recId, estadoOrden;
+          if (typeof resultado === 'object' && resultado !== null) {
+            recId      = resultado.id || resultado;
+            estadoOrden = resultado.estado_orden || 'Recepcionada';
+          } else {
+            recId = resultado;
+            const todoRecibido = itemsEnviar.every((it, i) => {
+              const pedido = itemsOrden[i] ? (itemsOrden[i].cantidad - (itemsOrden[i].cantidad_recepcionada || 0)) : 0;
+              return it.cantidad_recibida >= pedido;
+            });
+            estadoOrden = todoRecibido ? 'Recepcionada ✅' : 'Recepción Parcial ⚠️';
+          }
+
+          document.getElementById('res-id').textContent    = recId;
+          document.getElementById('res-orden').textContent = ordenActual.numero_orden;
+
+          const esCompleta = estadoOrden.includes('Recepcionada') && !estadoOrden.includes('Parcial');
+          const estadoEl   = document.getElementById('res-estado');
+          estadoEl.textContent = estadoOrden;
+          estadoEl.className   = 'ri-valor ' + (esCompleta ? 'estado-completa' : 'estado-parcial');
+
+          document.getElementById('res-mensaje').textContent = esCompleta
+            ? 'La orden quedó completamente recepcionada y se actualizó el stock.'
+            : 'Quedan ítems pendientes. La orden permanecerá activa para recepciones futuras.';
+
+          document.getElementById('resultadoPanel').style.display = 'block';
+        })
+        .withFailureHandler(function(err) {
+          alert('Error: ' + err.message);
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('recepcionForm').style.display = 'block';
+        })
+        .registrarRecepcion({
+          numero_orden:  ordenActual.numero_orden,
+          observaciones: document.getElementById('observacionesRecepcion').value,
+          recibido_por:  recibidoPor,
+          items:         itemsEnviar
+        });
+    }
+  </script>
+</body>
+</html>

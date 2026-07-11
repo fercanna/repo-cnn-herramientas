@@ -1,0 +1,676 @@
+/**
+ * SISTEMA DE AUDITORÍA INTERNA  |  Analytics NOA
+ * ISO 9001:2015 / ISO/IEC 17025:2017
+ * Basado en: scriptAuditoria_090526 v3.0
+ * Adaptación para laboratorio de ensayos (Analytics NOA) – Mayo 2026
+ */
+
+// ============================================
+// CONFIGURACIÓN GLOBAL
+// ============================================
+const CONFIG = {
+  SHEETS: {
+    CONFIG: 'Config',
+    AGENDA: 'Agenda',
+    REGISTRO: 'Registro_Hallazgos',
+    DASHBOARD: 'Dashboard',
+    CHECKLIST: 'Checklist_ISO9001',
+    HALLAZGOS_LEGACY: 'Hallazgos'
+  },
+  COLORES: {
+    NCMa: '#ea4335',
+    NCme: '#fbbc04',
+    OM:   '#34a853',
+    F:    '#4285f4',
+    C:    '#e8eaed'
+  },
+  // Ámbitos válidos para Analytics NOA
+  AMBITOS: [
+    'Común (Organizacional)',
+    'GAN – Análisis de Agua',
+    'GAN – Análisis de Efluentes',
+    'GAN – Análisis de Suelos',
+    'GAN – Agroquímicos/Fitosanitarios'
+  ]
+};
+
+// ============================================
+// MENÚ PRINCIPAL
+// ============================================
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🔍 Auditoría ISO')
+    .addItem('📋 Nuevo Hallazgo', 'nuevoHallazgo')
+    .addItem('📊 Generar Hallazgos desde Checklist', 'generarHallazgosDesdeChecklistSimplificado')
+    .addSeparator()
+    .addItem('📄 Generar Informe Completo', 'generarInformeCompleto')
+    .addSeparator()
+    .addItem('🔄 Migrar desde formato anterior', 'migrarHallazgosLegacy')
+    .addItem('🧹 Limpiar Registro de Hallazgos', 'limpiarRegistro')
+    .addItem('📋 Duplicar cláusulas operativas por área de ensayo', 'duplicarFilasOperacionPorProducto')
+    .addSeparator()
+    .addItem('ℹ️ Ayuda', 'mostrarAyuda')
+    .addToUi();
+}
+
+// ============================================
+// FUNCIÓN: NUEVO HALLAZGO (Formulario)
+// ============================================
+function nuevoHallazgo() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!registroSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'No se encontró la pestaña "Registro_Hallazgos"', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const ambitoOptions = CONFIG.AMBITOS.map(a => `<option value="${a}">${a}</option>`).join('\n');
+
+  const html = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; font-size: 13px; }
+          .form-group { margin-bottom: 14px; }
+          label { display: block; font-weight: bold; margin-bottom: 4px; color: #1F4E79; }
+          input, select, textarea { width: 100%; padding: 7px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+          textarea { min-height: 70px; resize: vertical; }
+          .norma-badge { font-size: 10px; color: #888; font-weight: normal; }
+          .btn { background: #2E75B6; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; font-size: 13px; }
+          .btn:hover { background: #1F4E79; }
+        </style>
+      </head>
+      <body>
+        <h3 style="color:#1F4E79;">📋 Registrar Nuevo Hallazgo — Analytics NOA</h3>
+        <p style="font-size:11px;color:#666;">ISO 9001:2015 / ISO/IEC 17025:2017</p>
+        <form id="hallazgoForm">
+
+          <div class="form-group">
+            <label>Ámbito:</label>
+            <select id="ambito" required>
+              <option value="">-- Seleccionar --</option>
+              ${ambitoOptions}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Proceso:</label>
+            <select id="proceso" required>
+              <option value="">-- Seleccionar --</option>
+              <option value="DIR – Dirección">DIR – Dirección</option>
+              <option value="GID – Gest. Info. Documentada">GID – Gestión de Información Documentada</option>
+              <option value="GRH – Recursos Humanos">GRH – Recursos Humanos</option>
+              <option value="GAC – Activos e Instalaciones">GAC – Activos e Instalaciones</option>
+              <option value="INS – Instrumentos">INS – Instrumentos</option>
+              <option value="CPR – Compras">CPR – Compras</option>
+              <option value="GPA – Gestión Pre-Analítica">GPA – Gestión Pre-Analítica</option>
+              <option value="GAN – Gestión Analítica">GAN – Gestión Analítica</option>
+              <option value="GPO – Gestión Pos-Analítica">GPO – Gestión Pos-Analítica</option>
+              <option value="GME – Gestión de Mejora">GME – Gestión de Mejora</option>
+              <option value="GAI – Auditorías Internas">GAI – Auditorías Internas</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Cláusula <span class="norma-badge">(ej: 7.7 (9001) o 6.3 (17025))</span>:</label>
+            <input type="text" id="clausula" placeholder="Ej: 7.7 (9001) / 6.3 (17025)" required>
+          </div>
+
+          <div class="form-group">
+            <label>Requisito (breve):</label>
+            <input type="text" id="requisito" placeholder="Ej: Aseguramiento de validez de resultados">
+          </div>
+
+          <div class="form-group">
+            <label>Tipo de Hallazgo:</label>
+            <select id="tipo" required>
+              <option value="">-- Seleccionar --</option>
+              <option value="F">F – Fortaleza</option>
+              <option value="OM">OM – Oportunidad de Mejora</option>
+              <option value="NCme">NCme – No Conformidad Menor</option>
+              <option value="NCMa">NCMa – No Conformidad Mayor</option>
+              <option value="C">C – Conforme</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Descripción del Hallazgo:</label>
+            <textarea id="descripcion" required placeholder="Describir el hallazgo con evidencia objetiva concreta..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Evidencia:</label>
+            <textarea id="evidencia" placeholder="Documentos, registros o hechos observados que sustentan el hallazgo..."></textarea>
+          </div>
+
+          <button type="submit" class="btn">💾 Guardar Hallazgo</button>
+        </form>
+
+        <script>
+          document.getElementById('hallazgoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const data = {
+              ambito:      document.getElementById('ambito').value,
+              proceso:     document.getElementById('proceso').value,
+              clausula:    document.getElementById('clausula').value,
+              requisito:   document.getElementById('requisito').value,
+              tipo:        document.getElementById('tipo').value,
+              descripcion: document.getElementById('descripcion').value,
+              evidencia:   document.getElementById('evidencia').value
+            };
+            google.script.run
+              .withSuccessHandler(function() {
+                alert('✅ Hallazgo guardado correctamente');
+                google.script.host.close();
+              })
+              .withFailureHandler(function(error) {
+                alert('❌ Error al guardar: ' + error);
+              })
+              .guardarHallazgo(data);
+          });
+        </script>
+      </body>
+    </html>
+  `).setWidth(520).setHeight(640);
+
+  SpreadsheetApp.getUi().showModalDialog(html, 'Nuevo Hallazgo – Analytics NOA');
+}
+
+// ============================================
+// FUNCIÓN: GUARDAR HALLAZGO
+// ============================================
+function guardarHallazgo(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  const numero = lastRow > 1 ? lastRow : 1;
+  const estado = data.tipo === 'F' || data.tipo === 'C' ? '-' : 'Abierto';
+
+  registroSheet.appendRow([
+    numero,
+    data.ambito,
+    data.proceso,
+    data.clausula,
+    data.requisito,
+    data.tipo,
+    data.descripcion,
+    data.evidencia,
+    estado,
+    '' // Trello / Acción
+  ]);
+
+  const newRow = registroSheet.getLastRow();
+  aplicarFormatoHallazgo(registroSheet, newRow, data.tipo);
+  renumerarHallazgos();
+}
+
+// ============================================
+// FUNCIÓN: APLICAR FORMATO A HALLAZGO
+// ============================================
+function aplicarFormatoHallazgo(sheet, row, tipo) {
+  const celdaTipo = sheet.getRange(row, 6);
+  let color, fontColor;
+
+  switch (tipo) {
+    case 'NCMa': color = CONFIG.COLORES.NCMa; fontColor = '#ffffff'; break;
+    case 'NCme': color = CONFIG.COLORES.NCme; fontColor = '#000000'; break;
+    case 'OM':   color = CONFIG.COLORES.OM;   fontColor = '#ffffff'; break;
+    case 'F':    color = CONFIG.COLORES.F;    fontColor = '#ffffff'; break;
+    case 'C':    color = CONFIG.COLORES.C;    fontColor = '#000000'; break;
+    default:     color = '#ffffff';           fontColor = '#000000';
+  }
+
+  celdaTipo.setBackground(color).setFontColor(fontColor).setFontWeight('bold');
+}
+
+// ============================================
+// FUNCIÓN: RENUMERAR HALLAZGOS
+// ============================================
+function renumerarHallazgos() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  if (lastRow <= 1) return;
+  for (let i = 2; i <= lastRow; i++) {
+    registroSheet.getRange(i, 1).setValue(i - 1);
+  }
+}
+
+// ============================================
+// FUNCIÓN: LIMPIAR REGISTRO
+// ============================================
+function limpiarRegistro() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert('⚠️ Confirmar', '¿Estás seguro de que querés eliminar TODOS los hallazgos registrados?', ui.ButtonSet.YES_NO);
+  if (response !== ui.Button.YES) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  if (lastRow > 1) registroSheet.deleteRows(2, lastRow - 1);
+  ui.alert('✅ Registro limpiado', 'Todos los hallazgos fueron eliminados.', ui.ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: MIGRAR HALLAZGOS LEGACY
+// ============================================
+function migrarHallazgosLegacy() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const legacySheet  = ss.getSheetByName(CONFIG.SHEETS.HALLAZGOS_LEGACY);
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!legacySheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Sin datos para migrar', 'No se encontró la pestaña "Hallazgos".', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const mapeoAmbitos = {
+    'Común (Organizacional)':       'Común (Organizacional)',
+    'Hormigón elaborado':           'GAN – Análisis de Agua',        // Mapeo orientativo – ajustar
+    'Producción / Entrega':         'GAN – Análisis de Agua',
+    'Análisis de Agua':             'GAN – Análisis de Agua',
+    'Análisis de Efluentes':        'GAN – Análisis de Efluentes',
+    'Análisis de Suelos':           'GAN – Análisis de Suelos',
+    'Análisis de Agroquímicos':     'GAN – Agroquímicos/Fitosanitarios',
+  };
+
+  const legacyData = legacySheet.getDataRange().getValues();
+  let migrados = 0;
+
+  for (let i = 1; i < legacyData.length; i++) {
+    if (!legacyData[i][0]) continue;
+    const ambito = mapeoAmbitos[legacyData[i][1]] || legacyData[i][1];
+    registroSheet.appendRow([
+      0, ambito, legacyData[i][2], legacyData[i][3], legacyData[i][4],
+      legacyData[i][5], legacyData[i][6], legacyData[i][7],
+      legacyData[i][8] || (legacyData[i][5] === 'F' ? '-' : 'Abierto'), ''
+    ]);
+    aplicarFormatoHallazgo(registroSheet, registroSheet.getLastRow(), legacyData[i][5]);
+    migrados++;
+  }
+
+  renumerarHallazgos();
+  SpreadsheetApp.getUi().alert('✅ Migración completada', `Se migraron ${migrados} hallazgos.\n\nRevisá el ámbito de cada uno: el mapeo automático es orientativo.`, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: GENERAR INFORME COMPLETO
+// ============================================
+function generarInformeCompleto() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet    = ss.getSheetByName(CONFIG.SHEETS.CONFIG);
+  const registroSheet  = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const agendaSheet    = ss.getSheetByName(CONFIG.SHEETS.AGENDA);
+  const dashboardSheet = ss.getSheetByName(CONFIG.SHEETS.DASHBOARD);
+
+  if (!configSheet || !registroSheet || !dashboardSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'Faltan pestañas: Config, Registro_Hallazgos o Dashboard.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  // ── Leer Config ────────────────────────────────────────────────────────
+  const cliente  = configSheet.getRange('B2').getValue();
+  const norma    = configSheet.getRange('B3').getValue();
+  const rubro    = configSheet.getRange('B4').getValue();
+  const codigo   = configSheet.getRange('B6').getValue();
+  const fechaCrono  = configSheet.getRange('B9').getValue();
+  const horaInicio  = configSheet.getRange('B10').getValue();
+  const horaFin     = configSheet.getRange('B11').getValue();
+
+  // Ámbitos activos (B14:C18)
+  const ambitos = [];
+  for (let r = 14; r <= 18; r++) {
+    if (configSheet.getRange(r, 3).getValue() === true) {
+      ambitos.push(configSheet.getRange(r, 2).getValue());
+    }
+  }
+
+  // Auditores
+  const auditores = [];
+  for (let r = 27; r <= 29; r++) {
+    const v = configSheet.getRange(r, 2).getValue();
+    if (v) auditores.push(v);
+  }
+
+  // ── Leer Hallazgos ─────────────────────────────────────────────────────
+  const hallazgosData  = registroSheet.getDataRange().getValues();
+  const resumenData    = dashboardSheet.getRange('A1:G8').getValues();
+
+  // ── Formatear fechas ───────────────────────────────────────────────────
+  const fmtDate = v => v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd/MM/yyyy') : String(v || '');
+  const fmtHour = v => v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm') : String(v || '');
+
+  // ── Crear documento ────────────────────────────────────────────────────
+  const doc  = DocumentApp.create(`Informe Auditoría Interna ${codigo} – Analytics NOA`);
+  const body = doc.getBody();
+  body.clear();
+
+  // Título
+  body.appendParagraph('INFORME DE AUDITORÍA INTERNA')
+    .setHeading(DocumentApp.ParagraphHeading.TITLE)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(codigo).setAlignment(DocumentApp.HorizontalAlignment.CENTER).setBold(true);
+  body.appendParagraph(fmtDate(new Date())).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(`Sistema de Gestión  |  ${norma}`)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER).setItalic(true);
+  body.appendParagraph('');
+
+  // 1. Datos de la auditoría
+  body.appendParagraph('1. DATOS DE LA AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const tDatos = body.appendTable();
+  const rowsDatos = [
+    ['Laboratorio:', String(cliente)],
+    ['Norma(s) de referencia:', String(norma)],
+    ['Rubro / Sector:', String(rubro)],
+    ['Código de informe:', String(codigo)],
+    ['Fecha de auditoría:', fmtDate(fechaCrono)],
+    ['Horario:', `${fmtHour(horaInicio)} – ${fmtHour(horaFin)}`],
+    ['Alcance (ámbitos auditados):', ambitos.map(a => '• ' + a).join('\n')],
+    ['Equipo auditor:', auditores.join('\n')],
+  ];
+  rowsDatos.forEach(([k, v]) => {
+    const row = tDatos.appendTableRow();
+    row.appendTableCell(k).getChild(0).asParagraph().setBold(true);
+    row.appendTableCell(v);
+  });
+  body.appendParagraph('');
+
+  // 1.1. Agenda
+  if (agendaSheet) {
+    body.appendParagraph('1.1. Agenda de Auditoría').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const agendaData = agendaSheet.getDataRange().getValues();
+    if (agendaData.length > 1) {
+      const tAg = body.appendTable();
+      const hAg = tAg.appendTableRow();
+      agendaData[0].forEach(h => hAg.appendTableCell(String(h)).getChild(0).asParagraph().setBold(true));
+      for (let i = 1; i < agendaData.length; i++) {
+        if (!agendaData[i][0]) continue;
+        const row = tAg.appendTableRow();
+        agendaData[i].forEach((v, c) => {
+          const text = c === 0 ? fmtHour(v) : String(v || '');
+          row.appendTableCell(text);
+        });
+      }
+    }
+    body.appendParagraph('');
+  }
+
+  // 2. Resumen ejecutivo
+  body.appendParagraph('2. RESUMEN EJECUTIVO DE HALLAZGOS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('2.1. Resumen cuantitativo').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  const tRes = body.appendTable();
+  resumenData.forEach((row, i) => {
+    const tr = tRes.appendTableRow();
+    row.forEach(v => {
+      const cell = tr.appendTableCell(String(v || ''));
+      if (i <= 1) cell.getChild(0).asParagraph().setBold(true);
+    });
+  });
+  body.appendParagraph('');
+
+  // 3. Hallazgos organizacionales (Común)
+  body.appendParagraph('3. HALLAZGOS ORGANIZACIONALES Y DEL SGC (REQUISITOS COMUNES)').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('Aplicable a: ISO 9001 cláusulas 4–7, 9–10 / ISO/IEC 17025 cláusulas 4, 5, 6, 8').setFontSize(10).setItalic(true);
+  body.appendParagraph('');
+
+  const hComunes = hallazgosData.slice(1).filter(h => h[1] && h[1].toString().includes('Común'));
+  if (hComunes.length > 0) {
+    const tC = body.appendTable();
+    const hC = tC.appendTableRow();
+    ['N°','Proceso','Cláusula','Tipo','Descripción','Evidencia'].forEach(h => hC.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+    hComunes.forEach(h => {
+      const row = tC.appendTableRow();
+      [h[0],h[2],h[3],h[5],h[6],h[7]].forEach(v => row.appendTableCell(String(v || '')));
+    });
+  } else {
+    body.appendParagraph('No se registraron hallazgos en los requisitos organizacionales.').setItalic(true);
+  }
+  body.appendParagraph('');
+
+  // 4. Hallazgos por área de ensayo (operativos)
+  body.appendParagraph('4. HALLAZGOS POR ÁREA DE ENSAYO (REQUISITOS OPERATIVOS)').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('Aplicable a: ISO 9001 cláusula 8 / ISO/IEC 17025 cláusulas 7.1 a 7.11').setFontSize(10).setItalic(true);
+  body.appendParagraph('');
+
+  const ambitosOp = ambitos.filter(a => !a.includes('Común'));
+  ambitosOp.forEach((amb, p) => {
+    body.appendParagraph(`4.${p + 1}. ${amb}`).setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const hProd = hallazgosData.slice(1).filter(h => h[1] && h[1].toString().includes(amb.split('–').pop().trim().split('/')[0].trim()));
+    if (hProd.length > 0) {
+      const tP = body.appendTable();
+      const hP = tP.appendTableRow();
+      ['N°','Proceso','Cláusula','Tipo','Descripción','Evidencia'].forEach(h => hP.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+      hProd.forEach(h => {
+        const row = tP.appendTableRow();
+        [h[0],h[2],h[3],h[5],h[6],h[7]].forEach(v => row.appendTableCell(String(v || '')));
+      });
+    } else {
+      body.appendParagraph('Sin hallazgos específicos para este ámbito.').setItalic(true);
+    }
+    body.appendParagraph('');
+  });
+
+  // 5. Tabla consolidada
+  body.appendParagraph('5. TABLA CONSOLIDADA DE HALLAZGOS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('Referencias: F=Fortaleza  |  OM=Oportunidad de Mejora  |  NCme=NC Menor  |  NCMa=NC Mayor  |  C=Conforme').setFontSize(9).setItalic(true);
+  body.appendParagraph('');
+  const tCons = body.appendTable();
+  const hCons = tCons.appendTableRow();
+  ['N°','Ámbito','Proceso','Cláusula','Tipo','Descripción','Evidencia'].forEach(h => hCons.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+  hallazgosData.slice(1).forEach(h => {
+    if (!h[0]) return;
+    const row = tCons.appendTableRow();
+    [h[0],h[1],h[2],h[3],h[5],h[6],h[7]].forEach(v => row.appendTableCell(String(v || '')));
+  });
+  body.appendParagraph('');
+
+  // 6. Conclusiones
+  body.appendParagraph('6. CONCLUSIONES Y RECOMENDACIONES').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+  let totalNCMa = 0, totalNCme = 0, totalOM = 0, totalF = 0;
+  hallazgosData.slice(1).forEach(h => {
+    if      (h[5] === 'NCMa') totalNCMa++;
+    else if (h[5] === 'NCme') totalNCme++;
+    else if (h[5] === 'OM')   totalOM++;
+    else if (h[5] === 'F')    totalF++;
+  });
+
+  body.appendParagraph('6.1. Conclusión general:').setBold(true);
+  const conclusionGeneral = `La auditoría interna a Laboratorio Analytics NOA, realizada con referencia a los requisitos de la norma ISO 9001:2015 e ISO/IEC 17025:2017, arrojó un total de ${totalNCMa + totalNCme + totalOM + totalF} hallazgos: ${totalNCMa} No Conformidad(es) Mayor(es), ${totalNCme} No Conformidad(es) Menor(es), ${totalOM} Oportunidad(es) de Mejora y ${totalF} Fortaleza(s). ${totalNCMa + totalNCme === 0 ? 'No se identificaron no conformidades que comprometan el sistema de gestión ni la competencia técnica del laboratorio.' : 'Se requiere la implementación de acciones correctivas para las no conformidades identificadas dentro de los plazos acordados.'}`;
+  body.appendParagraph(conclusionGeneral);
+  body.appendParagraph('');
+
+  body.appendParagraph('6.2. Recomendaciones:').setBold(true);
+  const reco = totalNCMa + totalNCme === 0
+    ? 'El SGC del laboratorio se encuentra en condiciones conformes con los requisitos normativos auditados. Se recomienda implementar las oportunidades de mejora identificadas para fortalecer el desempeño técnico y del sistema de gestión.'
+    : 'Se recomienda priorizar la implementación de acciones correctivas para las no conformidades identificadas, definiendo responsables y plazos de implementación y verificación de eficacia. Las oportunidades de mejora deben ser evaluadas en la próxima Revisión por la Dirección.';
+  body.appendParagraph(reco);
+  body.appendParagraph('');
+
+  // 7. Equipo Auditor y firmas
+  body.appendParagraph('7. EQUIPO AUDITOR').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  auditores.forEach((aud, i) => body.appendParagraph(`• ${i === 0 ? 'Auditor Líder' : 'Auditor'}: ${aud}`));
+  body.appendParagraph('');
+  body.appendParagraph('');
+
+  const tFirmas = body.appendTable();
+  const rFirmas = tFirmas.appendTableRow();
+  rFirmas.appendTableCell('_________________________________\nFirma Auditor Líder\n\nAclaración:');
+  rFirmas.appendTableCell('_________________________________\nFirma Director Técnico / Representante del Lab.\n\nAclaración:');
+
+  // ── Guardar y abrir ────────────────────────────────────────────────────
+  doc.saveAndClose();
+  const url = doc.getUrl();
+  const htmlOut = HtmlService.createHtmlOutput(
+    '<h3 style="color:#1F4E79;">✅ Informe generado correctamente</h3>' +
+    '<p><a href="' + url + '" target="_blank" style="font-size:16px;color:#2E75B6;font-weight:bold;">👉 Abrir informe en nueva pestaña</a></p>' +
+    '<p style="font-size:11px;color:#666;">Revisá las secciones de Conclusiones y completá los datos que lo requieran.</p>'
+  ).setWidth(460).setHeight(160);
+  SpreadsheetApp.getUi().showModalDialog(htmlOut, 'Informe generado – Analytics NOA');
+  Logger.log('Informe: ' + url);
+}
+
+// ============================================
+// FUNCIÓN: GENERAR HALLAZGOS DESDE CHECKLIST
+// ============================================
+function generarHallazgosDesdeChecklistSimplificado() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const checklistSheet = ss.getSheetByName(CONFIG.SHEETS.CHECKLIST);
+  const registroSheet  = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!checklistSheet || !registroSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'No se encontraron las pestañas Checklist_ISO9001 o Registro_Hallazgos.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.alert('🔄 Generar Hallazgos', '¿Limpiar el Registro_Hallazgos antes de generar?\n\n• SÍ: Borra existentes y genera desde cero\n• NO: Agrega al final', ui.ButtonSet.YES_NO);
+  if (resp === ui.Button.YES) {
+    const lastRow = registroSheet.getLastRow();
+    if (lastRow > 1) registroSheet.deleteRows(2, lastRow - 1);
+  }
+
+  const checklistData = checklistSheet.getDataRange().getValues();
+  const hallazgos = [];
+
+  for (let i = 1; i < checklistData.length; i++) {
+    const proceso  = checklistData[i][0];
+    const clausula = checklistData[i][1];
+    const requisito = checklistData[i][2];
+    const ambito   = checklistData[i][5];
+    const estado   = checklistData[i][6];
+    const notas    = checklistData[i][7];
+
+    if (estado && ['NCme','NCMa','OM','F'].includes(estado.toString().trim())) {
+      const partes = notas ? notas.toString().split('---') : ['',''];
+      const descripcion = partes[0].trim();
+      const evidencia   = partes.length > 1 ? partes[1].trim() : '';
+      hallazgos.push([
+        0, ambito || 'Común (Organizacional)', proceso || '', clausula || '',
+        requisito || '', estado, descripcion, evidencia,
+        estado === 'F' ? '-' : 'Abierto', ''
+      ]);
+    }
+  }
+
+  if (hallazgos.length === 0) {
+    ui.alert('ℹ️ Sin hallazgos', 'No se encontraron hallazgos en el Checklist.\nVerificá que la columna G (Estado) tenga valores: NCme, NCMa, OM o F.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const primeraFila = registroSheet.getLastRow() + 1;
+  registroSheet.getRange(primeraFila, 1, hallazgos.length, 10).setValues(hallazgos);
+  hallazgos.forEach((h, i) => aplicarFormatoHallazgo(registroSheet, primeraFila + i, h[5]));
+  renumerarHallazgos();
+
+  ui.alert('✅ Hallazgos generados', `Se generaron ${hallazgos.length} hallazgos desde el Checklist.\n\nRevisá la solapa Registro_Hallazgos.`, ui.ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: DUPLICAR CLÁUSULAS OPERATIVAS POR ÁREA DE ENSAYO
+// ============================================
+function duplicarFilasOperacionPorProducto() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const checklistSheet = ss.getSheetByName(CONFIG.SHEETS.CHECKLIST);
+  if (!checklistSheet) {
+    SpreadsheetApp.getUi().alert('No se encontró Checklist_ISO9001'); return;
+  }
+
+  // Áreas de ensayo (excluir "Común")
+  const areasEnsayo = CONFIG.AMBITOS.filter(a => !a.includes('Común'));
+
+  const data = checklistSheet.getDataRange().getValues();
+  const filasADuplicar = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const clausula = String(data[i][1]);
+    // Duplicar: cláusulas 8.x ISO 9001 (excepto 8.4) y 7.x ISO 17025
+    const esOp9001   = clausula.match(/^8\./) && !clausula.startsWith('8.4');
+    const esOp17025  = clausula.match(/^7\.\d+.*17025/);
+    if (esOp9001 || esOp17025) {
+      filasADuplicar.push({ filaOriginal: i + 1, proceso: data[i][0], clausula: data[i][1], requisito: data[i][2], desc: data[i][3], info: data[i][4] });
+    }
+  }
+
+  if (filasADuplicar.length === 0) {
+    SpreadsheetApp.getUi().alert('No se encontraron cláusulas operativas para duplicar.'); return;
+  }
+
+  // Ordenar de mayor a menor para no afectar índices al insertar
+  filasADuplicar.sort((a, b) => b.filaOriginal - a.filaOriginal);
+  let filasCreadas = 0;
+
+  for (const fila of filasADuplicar) {
+    for (let p = 0; p < areasEnsayo.length; p++) {
+      checklistSheet.insertRowAfter(fila.filaOriginal + p);
+      const nuevaFila = fila.filaOriginal + p + 1;
+      checklistSheet.getRange(nuevaFila, 1).setValue(fila.proceso);
+      checklistSheet.getRange(nuevaFila, 2).setValue(fila.clausula);
+      checklistSheet.getRange(nuevaFila, 3).setValue(fila.requisito);
+      checklistSheet.getRange(nuevaFila, 4).setValue(fila.desc);
+      checklistSheet.getRange(nuevaFila, 5).setValue(fila.info);
+      checklistSheet.getRange(nuevaFila, 6).setValue(areasEnsayo[p]);
+      checklistSheet.getRange(nuevaFila, 7).setValue('');
+      checklistSheet.getRange(nuevaFila, 8).setValue('');
+      filasCreadas++;
+    }
+  }
+
+  SpreadsheetApp.getUi().alert('✅ Duplicación completada',
+    `Se crearon ${filasCreadas} filas para:\n${areasEnsayo.map(a => '• ' + a).join('\n')}\n\nRevisá y ajustá las preguntas por área si corresponde.`,
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: AYUDA
+// ============================================
+function mostrarAyuda() {
+  const htmlOutput = HtmlService.createHtmlOutput(`
+    <div style="font-family:Arial,sans-serif;padding:20px;font-size:12px;">
+      <h3 style="color:#1F4E79;">🔍 Sistema de Auditoría Interna – Analytics NOA</h3>
+      <p style="color:#666;">ISO 9001:2015 / ISO/IEC 17025:2017</p>
+
+      <h4>📋 Estructura del sistema:</h4>
+      <ul>
+        <li><strong>Config:</strong> Datos del laboratorio, ámbitos a auditar, equipo auditor y cronograma</li>
+        <li><strong>Agenda:</strong> Planificación horaria de la auditoría por proceso</li>
+        <li><strong>Checklist_ISO9001:</strong> Lista de verificación combinada ISO 9001 + ISO/IEC 17025</li>
+        <li><strong>Registro_Hallazgos:</strong> Registro vertical de todos los hallazgos</li>
+        <li><strong>Dashboard:</strong> Resumen cuantitativo por ámbito y tipo de hallazgo</li>
+        <li><strong>Base_ISO9001:</strong> Base normativa de referencia para auditores</li>
+      </ul>
+
+      <h4>🔄 Flujo de trabajo recomendado:</h4>
+      <ol>
+        <li>Completar <strong>Config</strong> (datos del laboratorio, ámbitos activos, auditores, fechas)</li>
+        <li>Revisar/completar la <strong>Agenda</strong></li>
+        <li>Durante la auditoría: completar columnas G (Estado) y H (Notas/Evidencias) del <strong>Checklist</strong></li>
+        <li>Menú > <em>Generar Hallazgos desde Checklist</em> → pasa automáticamente los hallazgos al <strong>Registro</strong></li>
+        <li>Revisar el <strong>Dashboard</strong> para el resumen cuantitativo</li>
+        <li>Menú > <em>Generar Informe Completo</em> → genera un Google Doc con el informe</li>
+      </ol>
+
+      <h4>📊 Tipos de hallazgo:</h4>
+      <ul>
+        <li><strong style="color:#4285f4;">F:</strong> Fortaleza</li>
+        <li><strong style="color:#34a853;">OM:</strong> Oportunidad de Mejora</li>
+        <li><strong style="color:#fbbc04;">NCme:</strong> No Conformidad Menor</li>
+        <li><strong style="color:#ea4335;">NCMa:</strong> No Conformidad Mayor</li>
+        <li>C: Conforme (sin hallazgo)</li>
+      </ul>
+
+      <h4>🏷️ Ámbitos (Analytics NOA):</h4>
+      <ul>
+        <li><strong>Común (Organizacional):</strong> ISO 9001 cl. 4-7, 9-10 + ISO 17025 cl. 4, 5, 6, 8</li>
+        <li><strong>GAN – Agua / Efluentes / Suelos / Agroquímicos:</strong> ISO 9001 cl. 8 + ISO 17025 cl. 7</li>
+      </ul>
+
+      <p style="font-size:10px;color:#888;margin-top:20px;border-top:1px solid #ddd;padding-top:10px;">
+        Sistema desarrollado para Analytics NOA  |  Fernando Canna M.P. 4281  |  v00 – Mayo 2026
+      </p>
+    </div>
+  `).setWidth(600).setHeight(560);
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Ayuda – Sistema de Auditoría Analytics NOA');
+}

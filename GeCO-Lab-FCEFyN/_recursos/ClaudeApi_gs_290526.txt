@@ -1,0 +1,222 @@
+// ============================================================
+// ClaudeApi.gs — Comunicación directa con la API de Anthropic
+// Sin backend intermedio. Todo corre en Apps Script.
+//
+// NOTA: getClaudeApiKey(), getSpreadsheetId() y getDriveFolderId()
+// están definidas en Config.gs — NO duplicar aquí.
+// ============================================================
+
+const CLAUDE_MODEL      = 'claude-sonnet-4-20250514';
+const MAX_TOKENS        = 2000;
+const MAX_CONTEXT_CHARS = 80000; // ~20k tokens de contexto
+
+// ------------------------------------------------------------
+// Llamada base a Claude
+// ------------------------------------------------------------
+function llamarClaude(systemPrompt, userMessage) {
+  const url = 'https://api.anthropic.com/v1/messages';
+
+  const payload = {
+    model: CLAUDE_MODEL,
+    max_tokens: MAX_TOKENS,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }]
+  };
+
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-api-key': getClaudeApiKey(),
+      'anthropic-version': '2023-06-01'
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const code = response.getResponseCode();
+    const data = JSON.parse(response.getContentText());
+
+    if (code !== 200) {
+      Logger.log('Error API Claude [' + code + ']: ' + JSON.stringify(data));
+      throw new Error('Claude API error ' + code + ': ' + (data.error ? data.error.message : 'sin detalle'));
+    }
+
+    return data.content[0].text;
+
+  } catch (e) {
+    Logger.log('llamarClaude() falló: ' + e.message);
+    throw e;
+  }
+}
+
+// ------------------------------------------------------------
+// Consulta de documentación
+// ------------------------------------------------------------
+function consultarDocumento(textoDocumento, pregunta, contextoRubro) {
+  const contexto = textoDocumento.substring(0, MAX_CONTEXT_CHARS);
+  const rubroInfo = contextoRubro ? '\nContexto de la organización: ' + contextoRubro : '';
+
+  const system = 'Sos el asistente de gestión del conocimiento del sistema de calidad.' + rubroInfo + '\n' +
+    'Respondé únicamente basándote en los documentos provistos.\n' +
+    'Si la información no está en los documentos, indicá exactamente: ' +
+    '"Esta información no está disponible en la documentación cargada. ' +
+    'Consultá con el responsable del área."\n' +
+    'No inventes información. Respondé en español, tono profesional pero claro.\n' +
+    'Si encontrás la información, citá el nombre del documento fuente al final de tu respuesta.\n\n' +
+    'DOCUMENTOS:\n' + contexto;
+
+  return llamarClaude(system, pregunta);
+}
+
+// ------------------------------------------------------------
+// Generación de preguntas de evaluación
+// ------------------------------------------------------------
+function generarPreguntasDesdeTexto(textoDocumento, puesto, nombreDoc, cantidad) {
+  const contexto = textoDocumento.substring(0, MAX_CONTEXT_CHARS);
+
+  const system = 'Generás preguntas de evaluación de competencias para sistemas ISO 9001 / 15189 / 17025.\n' +
+    'Respondés SOLO con JSON válido. Sin texto antes ni después. Sin backticks markdown.';
+
+  const prompt = 'Generá exactamente ' + cantidad + ' preguntas de opción múltiple ' +
+    'sobre el documento "' + nombreDoc + '" para el puesto "' + puesto + '".\n' +
+    'Las preguntas deben evaluar comprensión real del procedimiento, no memorización.\n' +
+    'Formato JSON estricto — array, sin envolver en objeto:\n' +
+    '[{"enunciado":"...","opciones":["A. ...","B. ...","C. ...","D. ..."],' +
+    '"correcta":"A","justificacion":"...","documento":"' + nombreDoc + '"}]\n\n' +
+    'DOCUMENTO:\n' + contexto;
+
+  const raw = llamarClaude(system, prompt);
+
+  try {
+    const limpio = raw.replace(/```json|```/g, '').trim();
+    return JSON.parse(limpio);
+  } catch (e) {
+    Logger.log('JSON inválido de Claude: ' + raw);
+    throw new Error('Claude no devolvió JSON válido. Intentá de nuevo o reducí la cantidad de preguntas.');
+  }
+}
+
+// ============================================================
+// INSTRUCCIÓN: Agregar este bloque al FINAL de ClaudeApi.gs
+// Sin reemplazar nada — es código nuevo.
+// ============================================================
+
+// ------------------------------------------------------------
+// Generación de rúbrica conductual para evaluación presencial
+// ------------------------------------------------------------
+
+/**
+ * Genera una rúbrica conductual de 4 niveles para una competencia tácita.
+ * A diferencia de generarPreguntasDesdeTexto(), no requiere documento fuente:
+ * trabaja solo con el nombre de la competencia y el puesto del evaluado.
+ *
+ * @param {Object} params
+ *   - dominio         {string} — nombre de la competencia a evaluar
+ *   - puesto          {string} — cargo del evaluado
+ *   - normaAplicable  {string} — norma de referencia (contextualiza la rúbrica)
+ *
+ * @returns {Array} — 4 objetos [{nivel: string, descriptor: string}]
+ *   Niveles en orden: Inicial → Básico → Competente → Referente
+ *
+ * @throws {Error} si Claude no devuelve JSON válido con 4 niveles
+ */
+// ============================================================
+// INSTRUCCIÓN: Reemplazar en ClaudeApi.gs la función
+// generarRubricaPresencial() que agregaste con PRESENCIAL_1
+// por esta versión ampliada.
+//
+// La firma cambió: ahora acepta dos parámetros adicionales:
+//   - textoDescripcionPuesto  {string} — texto del doc Drive del puesto
+//   - contextoOrg             {string} — valor de CONTEXTO_ORGANIZACIONAL
+// Ambos son opcionales; si están vacíos el comportamiento es igual
+// al anterior.
+// ============================================================
+
+/**
+ * Genera una rúbrica conductual de 4 niveles para una competencia tácita.
+ * Usa contexto enriquecido: descripción de puesto desde Drive
+ * y contexto organizacional desde la hoja Config.
+ *
+ * @param {Object} params
+ *   - dominio                {string} — nombre de la competencia
+ *   - puesto                 {string} — cargo del evaluado
+ *   - normaAplicable         {string} — norma ISO de referencia
+ *   - textoDescripcionPuesto {string} — texto del doc Drive del puesto (opcional)
+ *   - contextoOrg            {string} — contexto de la organización (opcional)
+ *
+ * @returns {Array} — 4 objetos [{nivel: string, descriptor: string}]
+ *   Niveles en orden: Inicial → Básico → Competente → Referente
+ *
+ * @throws {Error} si Claude no devuelve JSON válido con 4 niveles
+ */
+function generarRubricaPresencial(params) {
+  const system =
+    'Sos experto en gestión de competencias laborales orientada a resultados. ' +
+    'Respondés SOLO con JSON válido. Sin texto antes ni después. Sin backticks markdown.';
+
+  // Secciones de contexto opcionales
+  const normaLine = params.normaAplicable
+    ? 'Marco normativo: ' + params.normaAplicable + '\n'
+    : '';
+
+  const contextoOrgLine = params.contextoOrg
+    ? 'Contexto organizacional: ' + params.contextoOrg + '\n'
+    : '';
+
+  // La descripción de puesto se trunca a 8000 chars para no saturar el contexto.
+  // 8000 chars ≈ 2000 tokens — suficiente para una descripción completa.
+  const descripcionPuestoSection = params.textoDescripcionPuesto
+    ? '\n--- DESCRIPCIÓN DE PUESTO ---\n' +
+      params.textoDescripcionPuesto.substring(0, 8000) +
+      '\n--- FIN DESCRIPCIÓN ---\n'
+    : '';
+
+  const prompt =
+    'Generá una rúbrica conductual de 4 niveles para evaluar la siguiente competencia.\n\n' +
+    'Competencia: ' + params.dominio + '\n' +
+    'Puesto: ' + params.puesto + '\n' +
+    normaLine +
+    contextoOrgLine +
+    descripcionPuestoSection +
+    '\nPara cada nivel, describí en 2 a 3 oraciones los COMPORTAMIENTOS OBSERVABLES ' +
+    'que caracterizan ese nivel de desempeño en este puesto específico. ' +
+    'Anclá los descriptores en las responsabilidades y tareas reales del puesto: ' +
+    'qué hace concretamente alguien en nivel Inicial vs. alguien en nivel Referente. ' +
+    'Evitá frases genéricas como "cumple con las expectativas" — describí qué significa ' +
+    'eso en el contexto de ' + params.puesto + '.\n\n' +
+    'Formato JSON — array de exactamente 4 objetos, en orden de menor a mayor nivel:\n' +
+    '[' +
+    '{"nivel":"Inicial","descriptor":"..."},' +
+    '{"nivel":"Básico","descriptor":"..."},' +
+    '{"nivel":"Competente","descriptor":"..."},' +
+    '{"nivel":"Referente","descriptor":"..."}' +
+    ']';
+
+  const raw = conReintentos(function() {
+    return llamarClaude(system, prompt);
+  }, 3, 1500);
+
+  try {
+    const limpio = raw.replace(/```json|```/g, '').trim();
+    const rubrica = JSON.parse(limpio);
+    if (!Array.isArray(rubrica) || rubrica.length !== 4) {
+      throw new Error('La rúbrica no tiene exactamente 4 niveles.');
+    }
+    rubrica.forEach(function(item, i) {
+      if (!item.nivel || !item.descriptor) {
+        throw new Error('Nivel ' + i + ' incompleto (falta nivel o descriptor).');
+      }
+    });
+    return rubrica;
+  } catch (e) {
+    Logger.log('[generarRubricaPresencial] JSON inválido de Claude: ' + raw);
+    throw new Error(
+      'Claude no devolvió una rúbrica válida. Intentá de nuevo. Detalle: ' + e.message
+    );
+  }
+}
+
+

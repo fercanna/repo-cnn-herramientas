@@ -1,0 +1,3701 @@
+/**
+ * BIONOA - Sistema de Gestión de Compras e Inventario
+ * Versión: 2.5 (Saneada y corregida)
+ */
+
+// ========================================
+// CONFIGURACIÓN GLOBAL
+// ========================================
+
+const CONFIG = {
+  SHEETS: {
+    INSUMOS: 'Insumos',
+    PROVEEDORES: 'Proveedores',
+    ORDENES: 'Ordenes_Compra',
+    DETALLE_ORDENES: 'Detalle_Ordenes',
+    RECEPCIONES: 'Recepciones',
+    DETALLE_RECEPCIONES: 'Detalle_Recepciones',
+    MOVIMIENTOS: 'Movimientos_Inventario',
+    STOCK: 'Stock_Actual',
+    DASHBOARD: 'Dashboard',
+    CONVERSIONES: 'Config_Conversiones',
+    HIST_PRECIOS: 'Historial_Precios',
+    STOCK_PROV: 'Stock_por_Proveedor'
+  },
+  ESTADOS: {
+    ORDEN: {
+      PENDIENTE: 'Pendiente',
+      PARCIAL: 'Recepción Parcial',
+      RECEPCIONADA: 'Recepcionada',
+      CANCELADA: 'Cancelada'
+    },
+    ITEM: {
+      PENDIENTE: 'Pendiente',
+      PARCIAL: 'Parcial',
+      COMPLETO: 'Completo'
+    }
+  }
+};
+
+// ========================================
+// FUNCIONES AUXILIARES Y MENÚ
+// ========================================
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('🛒 Gestión Compras')
+    .addItem('📝 Nueva Orden de Compra', 'mostrarFormularioOrden')
+    .addItem('🛒 Generar OC desde Stock', 'generarOrdenDesdeStock')
+    .addSeparator()
+    .addItem('📋 Ver Pendientes', 'mostrarListaPendientes')
+    .addItem('📦 Recepcionar Pedido', 'mostrarFormularioRecepcion')
+    .addSeparator()
+    .addItem('📊 Actualizar Dashboard', 'actualizarDashboard')
+    .addSeparator()
+    .addItem('⚙️ Gestionar Conversiones', 'abrirConfigConversiones')
+    .addItem('📈 Ver Historial Precios', 'mostrarHistorialPrecios')
+    .addSeparator()
+    .addItem('💲 Aplicar ajuste de precios', 'aplicarAjustePrecios')
+    .addItem('📋 Preparar columnas % en Proveedores', 'prepararColumnasPorcentaje')
+    .addItem('📦 Stock por Proveedor', 'actualizarStockPorProveedor')
+    .addSeparator()
+    .addItem('📥 Importar Stock Inicial',           'mostrarFormularioImportStock')
+    .addItem('🙈 Ocultar hojas internas',           'ocultarHojasInternas')      // ← también nuevo (ver más abajo)
+    .addSeparator()
+    .addItem('🔴 Reset para producción', 'resetearParaProduccion')
+    .addToUi();
+}
+
+function getSheet(sheetName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw new Error('No se encontró la hoja: ' + sheetName);
+  return sheet;
+}
+
+function getCurrentUser() {
+  return Session.getActiveUser().getEmail();
+}
+
+function formatearFecha(fecha) {
+  if (!fecha) return '';
+  return Utilities.formatDate(new Date(fecha), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+}
+
+function getDatosSheet(sheetName) {
+  var sheet = getSheet(sheetName);
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var headers = data[0];
+  return data.slice(1).map(function(row) {
+    var obj = {};
+    headers.forEach(function(header, index) { obj[header] = row[index]; });
+    return obj;
+  }).filter(function(row) {
+    return Object.values(row).some(function(val) { return val !== '' && val !== null; });
+  });
+}
+
+// ========================================
+// FUNCIONES DE CATÁLOGOS
+// ========================================
+
+function getInsumosActivos() {
+  var insumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+  return insumos.filter(function(ins) { 
+    return ins.activo === true || ins.activo === 'TRUE' || ins.activo === 'VERDADERO'; 
+  });
+}
+
+function getProveedoresActivos() {
+  var proveedores = getDatosSheet(CONFIG.SHEETS.PROVEEDORES);
+  return proveedores.filter(function(prov) { 
+    return prov.activo === true || prov.activo === 'TRUE' || prov.activo === 'VERDADERO'; 
+  });
+}
+
+function getInsumosPorProveedor(codigoProveedor) {
+  // 1. Insumos activos del proveedor
+  var insumos = getInsumosActivos().filter(function(ins) {
+    return String(ins.proveedor_preferido).trim() === String(codigoProveedor).trim();
+  });
+
+  if (insumos.length === 0) return [];
+
+  // 2. Stock consolidado por insumo (suma todos los lotes)
+  var stockSheet = getDatosSheet(CONFIG.SHEETS.STOCK);
+  var stockPorCodigo = {};
+  stockSheet.forEach(function(row) {
+    var cod = String(row.codigo_insumo).trim();
+    if (!stockPorCodigo[cod]) stockPorCodigo[cod] = 0;
+    stockPorCodigo[cod] += Number(row.stock_disponible) || 0;
+  });
+
+  // 3. Construir resultado con estado de stock
+  var resultado = insumos.map(function(ins) {
+    var cod       = String(ins.codigo_insumo).trim();
+    var stock     = stockPorCodigo[cod] || 0;
+    var critico   = Number(ins.stock_critico) || 0;
+    var estado    = stock <= 0 ? 'Agotado' : stock <= critico ? 'Crítico' : 'OK';
+
+    return {
+      codigo_insumo:      cod,
+      descripcion:        ins.descripcion,
+      categoria:          ins.categoria || 'Sin categoría',
+      unidad_medida:      ins.unidad_medida || '',
+      precio_referencial: Number(ins.precio_referencial) || 0,
+      stock_actual:       stock,
+      stock_critico:      critico,
+      estado_stock:       estado
+    };
+  });
+
+  // 4. Ordenar por categoría luego por descripción
+  resultado.sort(function(a, b) {
+    if (a.categoria < b.categoria) return -1;
+    if (a.categoria > b.categoria) return 1;
+    return a.descripcion.localeCompare(b.descripcion);
+  });
+
+  return resultado;
+}
+
+function getInsumo(codigoInsumo) {
+  var insumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+  return insumos.find(function(ins) { return ins.codigo_insumo === codigoInsumo; });
+}
+
+function getProveedor(codigoProveedor) {
+  var proveedores = getDatosSheet(CONFIG.SHEETS.PROVEEDORES);
+  return proveedores.find(function(prov) { return prov.codigo_proveedor === codigoProveedor; });
+}
+
+// ========================================
+// MÓDULO: ÓRDENES DE COMPRA
+// ========================================
+
+function mostrarFormularioOrden() {
+  var html = HtmlService.createHtmlOutputFromFile('FormularioOrden')
+    .setWidth(800)
+    .setHeight(600)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Nueva Orden de Compra');
+}
+
+function generarNumeroOrden() {
+  var sheet = getSheet(CONFIG.SHEETS.ORDENES);
+  var lastRow = sheet.getLastRow();
+  var anio = new Date().getFullYear();
+  if (lastRow <= 1) return 'OC-' + anio + '-001';
+  var ultima = sheet.getRange(lastRow, 1).getValue();
+  var numero = parseInt(ultima.split('-')[2]) + 1;
+  return 'OC-' + anio + '-' + numero.toString().padStart(3, '0');
+}
+
+function crearOrdenCompra(ordenData) {
+  try {
+    var fechaEmision  = new Date();
+    var usuario       = getCurrentUser();
+    var sheetOrdenes  = getSheet(CONFIG.SHEETS.ORDENES);
+    var sheetDetalle  = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+
+    // ── Leer proveedor_preferido de cada insumo desde el catálogo ──
+    var catalogoInsumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+    var mapaProveedor   = {};
+    catalogoInsumos.forEach(function(ins) {
+      mapaProveedor[String(ins.codigo_insumo).trim()] = String(ins.proveedor_preferido || '').trim();
+    });
+
+    // ── Agrupar items por proveedor ──────────────────────────────
+    // El proveedor de cada item: si es del proveedor principal → ordenData.proveedor
+    // Si es alternativo → su proveedor_preferido del catálogo
+    var itemsPorProveedor = {};
+
+    ordenData.items.forEach(function(item) {
+      var codIns   = String(item.codigo_insumo).trim();
+      var provItem = mapaProveedor[codIns] || ordenData.proveedor;
+
+      if (!itemsPorProveedor[provItem]) {
+        itemsPorProveedor[provItem] = [];
+      }
+      itemsPorProveedor[provItem].push(item);
+    });
+
+    // ── Crear una OC por cada proveedor ─────────────────────────
+    var primeraOrden = null;
+
+    Object.keys(itemsPorProveedor).forEach(function(codProv) {
+      var itemsDelProv = itemsPorProveedor[codProv];
+
+      // ✅ Total calculado SOLO con los items de este proveedor
+      var totalProv = itemsDelProv.reduce(function(sum, item) {
+        return sum + (Number(item.subtotal) || 0);
+      }, 0);
+
+      var numeroOrden    = generarNumeroOrden();
+      var proveedor      = getProveedor(codProv);
+      var nombreProveedor = proveedor ? proveedor.razon_social : codProv;
+
+      // Cabecera OC
+      sheetOrdenes.appendRow([
+        numeroOrden,
+        fechaEmision,
+        codProv,
+        nombreProveedor,
+        CONFIG.ESTADOS.ORDEN.PENDIENTE,
+        usuario,
+        ordenData.fecha_entrega_estimada || '',
+        totalProv,                              // ✅ total correcto por proveedor
+        ordenData.observaciones || '',
+        ordenData.solicitado_por || ''
+      ]);
+
+      // Items del detalle — renumerar item desde 1 por OC
+      itemsDelProv.forEach(function(item, idx) {
+        sheetDetalle.appendRow([
+          numeroOrden,
+          idx + 1,
+          item.codigo_insumo,
+          item.descripcion,
+          item.cantidad,
+          item.precio_unitario,
+          item.subtotal,
+          0,
+          CONFIG.ESTADOS.ITEM.PENDIENTE,
+          fechaEmision
+        ]);
+      });
+
+      // Historial de precios
+      registrarHistorialPrecios(
+        itemsDelProv,
+        numeroOrden,
+        usuario,
+        fechaEmision,
+        nombreProveedor
+      );
+
+      if (!primeraOrden) primeraOrden = numeroOrden;
+    });
+
+    return primeraOrden;
+
+  } catch (error) {
+    throw new Error('Error: ' + error.message);
+  }
+}
+
+// ========================================
+// MÓDULO: RECEPCIONES
+// ========================================
+
+function mostrarFormularioRecepcion() {
+  var html = HtmlService.createHtmlOutputFromFile('FormularioRecepcion')
+    .setWidth(900)
+    .setHeight(700)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Recepción de Pedido');
+}
+
+function getOrdenesPendientes() {
+  try {
+    SpreadsheetApp.flush();
+    var sheetOrdenes = getSheet(CONFIG.SHEETS.ORDENES);
+    var sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+    var catalogoProveedores = getProveedoresActivos();
+    
+    var lastRow = sheetOrdenes.getLastRow();
+    if (lastRow <= 1) return [];
+    
+    // 🔥 CAMBIO: Ahora leemos 9 columnas en lugar de 8
+    var dataOrdenes = sheetOrdenes.getRange(2, 1, lastRow - 1, 9).getValues();
+    var dataDetalle = sheetDetalle.getDataRange().getValues();
+    var headersDetalle = dataDetalle[0];
+    
+    var idxNumOrden = headersDetalle.indexOf('numero_orden');
+    var idxCodigo = headersDetalle.indexOf('codigo_insumo');
+    var idxDescripcion = headersDetalle.indexOf('descripcion');
+    var idxCantidad = headersDetalle.indexOf('cantidad');
+    var idxRecepcionada = headersDetalle.indexOf('cantidad_recepcionada');
+    
+    var ordenesPendientes = dataOrdenes.filter(function(row) {
+      var estado = String(row[4]).trim(); // 🔥 CAMBIO: Estado ahora está en columna E (índice 4)
+      return row[0] && (estado === 'Pendiente' || estado === 'Recepción Parcial'); 
+    }).map(function(row) {
+      var numeroOrden = row[0];
+      var codigoProveedor = row[2];
+      var nombreProveedor = row[3]; // 🔥 NUEVO: Leer el nombre de la columna D
+      
+      // Buscar items pendientes de esta orden
+      var itemsPendientes = [];
+      for (var i = 1; i < dataDetalle.length; i++) {
+        if (dataDetalle[i][idxNumOrden] === numeroOrden) {
+          var solicitado = Number(dataDetalle[i][idxCantidad]) || 0;
+          var recibido = Number(dataDetalle[i][idxRecepcionada]) || 0;
+          var pendiente = solicitado - recibido;
+          
+          if (pendiente > 0) {
+            itemsPendientes.push({
+              codigo: dataDetalle[i][idxCodigo],
+              descripcion: dataDetalle[i][idxDescripcion],
+              solicitado: solicitado,
+              recibido: recibido,
+              pendiente: pendiente
+            });
+          }
+        }
+      }
+      
+      return {
+        numero_orden: numeroOrden,
+        fecha_emision: formatearFecha(row[1]), 
+        codigo_proveedor: codigoProveedor,
+        proveedor: nombreProveedor, // 🔥 Ahora usa el nombre guardado
+        estado: String(row[4]).trim(),
+        usuario_solicita: row[5],
+        fecha_entrega_estimada: formatearFecha(row[6]),
+        total_orden: row[7],
+        observaciones: row[8],
+        items_pendientes: itemsPendientes
+      };
+    });
+    
+    return ordenesPendientes;
+  } catch(e) {
+    throw e;
+  }
+}
+
+function getDetalleOrden(numeroOrden) {
+  var ordenesData = getDatosSheet(CONFIG.SHEETS.ORDENES);
+  var ordenRaw = ordenesData.find(function(o) { return o.numero_orden === numeroOrden; });
+  if (!ordenRaw) throw new Error('Orden no encontrada');
+
+  var orden = Object.assign({}, ordenRaw);
+  orden.fecha_emision = formatearFecha(ordenRaw.fecha_emision);
+  orden.fecha_entrega_estimada = formatearFecha(ordenRaw.fecha_entrega_estimada);
+  
+  // 🔥 CORRECCIÓN: Leer directamente desde la hoja con índices numéricos
+  var sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  var data = sheetDetalle.getDataRange().getValues();
+  var headers = data[0]; // Primera fila (headers)
+  
+  // Encontrar índices de las columnas importantes
+  var idxNumeroOrden = headers.indexOf('numero_orden');
+  var idxCodigo = headers.indexOf('codigo_insumo');
+  var idxDescripcion = headers.indexOf('descripcion');
+  var idxCantidad = headers.indexOf('cantidad'); // Solicitada
+  var idxRecepcionada = headers.indexOf('cantidad_recepcionada'); // Ya recibida
+  var idxPrecio = headers.indexOf('precio_unitario');
+  var idxEstado = headers.indexOf('estado_item');
+  
+  var items = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (row[idxNumeroOrden] === numeroOrden) {
+      items.push({
+        codigo_insumo: row[idxCodigo],
+        descripcion: row[idxDescripcion],
+        cantidad: Number(row[idxCantidad]) || 0,  // Solicitada
+        cantidad_recepcionada: Number(row[idxRecepcionada]) || 0, // Ya recibida
+        precio_unitario: Number(row[idxPrecio]) || 0,
+        estado_item: row[idxEstado]
+      });
+    }
+  }
+  
+  return { orden: orden, items: items };
+}
+
+function generarNumeroRecepcion() {
+  var sheet = getSheet(CONFIG.SHEETS.RECEPCIONES);
+  var lastRow = sheet.getLastRow();
+  var anio = new Date().getFullYear();
+  if (lastRow <= 1) return 'REC-' + anio + '-001';
+  var ultima = sheet.getRange(lastRow, 1).getValue();
+  var numero = parseInt(ultima.split('-')[2]) + 1;
+  return 'REC-' + anio + '-' + numero.toString().padStart(3, '0');
+}
+
+// --- FUNCIÓN DE RECEPCIÓN CORREGIDA (Línea 221) ---
+function registrarRecepcion(recepcionData) {
+  try {
+    var numeroRecepcion  = generarNumeroRecepcion();
+    var fechaRecepcion   = new Date();
+    var usuario          = getCurrentUser();
+    var catalogoInsumos  = getInsumosActivos();
+    var tablaConversiones = getTablaConversiones();
+
+    var tieneDiscrepancias = recepcionData.items.some(function(item) {
+      return item.estado_conformidad !== 'Conforme';
+    });
+
+    // ── Cabecera recepción ──────────────────────────────────────────
+    getSheet(CONFIG.SHEETS.RECEPCIONES).appendRow([
+      numeroRecepcion,
+      fechaRecepcion,
+      recepcionData.numero_orden,
+      usuario,
+      recepcionData.observaciones || '',
+      tieneDiscrepancias,
+      recepcionData.recibido_por || ''
+    ]);
+
+    // ── [N1] Acumular filas en arrays — un solo setValues al final ──
+    var sheetDetalleRecep = getSheet(CONFIG.SHEETS.DETALLE_RECEPCIONES);
+    var sheetMovimientos  = getSheet(CONFIG.SHEETS.MOVIMIENTOS);
+
+    var filasDetalle  = [];
+    var filasMovs     = [];
+    var itemsConvInfo = []; // info de conversión por item para el stock incremental
+
+    recepcionData.items.forEach(function(item) {
+      var infoInsumo      = catalogoInsumos.find(function(ins) { return ins.codigo_insumo === item.codigo_insumo; });
+      var nombreInsumo    = infoInsumo ? infoInsumo.descripcion : 'No encontrado';
+      var categoriaInsumo = infoInsumo ? infoInsumo.categoria   : '';
+
+      var conv = aplicarConversion(item.codigo_insumo, Number(item.cantidad_recibida), tablaConversiones);
+
+      var notaConversion = conv.tiene_conversion
+        ? '[CONV x' + conv.factor + '] ' + item.cantidad_recibida + ' ' +
+          (infoInsumo ? infoInsumo.unidad_medida || 'caja(s)' : 'caja(s)') +
+          ' → ' + conv.cantidad_stock + ' ' + conv.unidad_stock
+        : '';
+
+      // Fila Detalle_Recepciones
+      filasDetalle.push([
+        numeroRecepcion,
+        item.item,
+        item.codigo_insumo,
+        nombreInsumo,
+        item.cantidad_recibida,
+        item.cantidad_esperada,
+        item.estado_conformidad,
+        item.observaciones || '',
+        item.lote || 'SIN LOTE',
+        item.vencimiento || '',
+        categoriaInsumo,
+        notaConversion
+      ]);
+
+      // Fila Movimientos_Inventario
+      filasMovs.push([
+        'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+        fechaRecepcion,
+        'Ingreso',
+        item.codigo_insumo,
+        nombreInsumo,
+        conv.cantidad_stock,
+        numeroRecepcion,
+        usuario,
+        'Rec. Orden ' + recepcionData.numero_orden + (notaConversion ? ' | ' + notaConversion : ''),
+        item.lote || 'SIN LOTE',
+        item.vencimiento || '',
+        categoriaInsumo
+      ]);
+
+      // Info para stock incremental
+      itemsConvInfo.push({
+        codigo_insumo:    item.codigo_insumo,
+        lote:             item.lote || 'SIN LOTE',
+        vencimiento:      item.vencimiento || '',
+        cantidad_stock:   conv.cantidad_stock,   // ya convertida
+        descripcion:      nombreInsumo,
+        infoInsumo:       infoInsumo
+      });
+
+      // Historial precios si viene precio de recepción
+      if (item.precio_recepcion && item.precio_recepcion > 0) {
+        registrarHistorialPrecios(
+          [{ codigo_insumo: item.codigo_insumo, descripcion: nombreInsumo, precio_unitario: item.precio_recepcion }],
+          numeroRecepcion,
+          usuario,
+          fechaRecepcion,
+          'Recepción ' + recepcionData.numero_orden
+        );
+      }
+    });
+
+    // ── [N1] Escritura batch ────────────────────────────────────────
+    var lastDetalle = sheetDetalleRecep.getLastRow();
+    sheetDetalleRecep.getRange(lastDetalle + 1, 1, filasDetalle.length, filasDetalle[0].length)
+      .setValues(filasDetalle);
+
+    var lastMovs = sheetMovimientos.getLastRow();
+    sheetMovimientos.getRange(lastMovs + 1, 1, filasMovs.length, filasMovs[0].length)
+      .setValues(filasMovs);
+
+    // ── Actualizar cantidades en la orden ──────────────────────────
+    actualizarCantidadesEnOrden(recepcionData);
+
+    // ── [N2] Stock incremental — NO reconstruye toda la hoja ───────
+    actualizarStockIncremental(itemsConvInfo, catalogoInsumos);
+
+    // NOTA: aplicarFormatoMovimientos() y aplicarFormatoDetalleRecepciones()
+    // ya NO se llaman aquí. El formato condicional es permanente en la hoja
+    // y no necesita re-aplicarse en cada recepción.
+
+    return numeroRecepcion;
+
+  } catch (error) {
+    throw new Error('No se pudo registrar la recepción: ' + error.message);
+  }
+}
+
+function actualizarCantidadesEnOrden(recepcionData) {
+  var sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  var data         = sheetDetalle.getDataRange().getValues();
+
+  recepcionData.items.forEach(function(itemRec) {
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][0] === recepcionData.numero_orden && data[i][2] === itemRec.codigo_insumo) {
+        var cantPrevia    = Number(data[i][7]) || 0;
+        var nuevaCant     = cantPrevia + Number(itemRec.cantidad_recibida);
+        var cantSolicitada = Number(data[i][4]);
+        var estado        = (nuevaCant >= cantSolicitada) ? CONFIG.ESTADOS.ITEM.COMPLETO : CONFIG.ESTADOS.ITEM.PARCIAL;
+        // [N1] Una sola escritura: columnas H e I juntas (índices 8 y 9, cols 8-9)
+        sheetDetalle.getRange(i + 1, 8, 1, 2).setValues([[nuevaCant, estado]]);
+        break;
+      }
+    }
+  });
+
+  actualizarEstadoOrden(recepcionData.numero_orden);
+}
+
+function actualizarEstadoOrden(numeroOrden) {
+  var sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  var data = sheetDetalle.getDataRange().getValues();
+  var items = data.slice(1).filter(function(r) { return r[0] === numeroOrden; });
+  if (items.length === 0) return;
+  
+  var estados = items.map(function(item) { return item[8]; });
+  var todosCompletos = estados.every(function(e) { return e === CONFIG.ESTADOS.ITEM.COMPLETO; });
+  var todosPendientes = estados.every(function(e) { return e === CONFIG.ESTADOS.ITEM.PENDIENTE; });
+  
+  var nuevoEstado = todosCompletos ? CONFIG.ESTADOS.ORDEN.RECEPCIONADA : 
+                    todosPendientes ? CONFIG.ESTADOS.ORDEN.PENDIENTE : 
+                    CONFIG.ESTADOS.ORDEN.PARCIAL;
+  
+  var sheetOrdenes = getSheet(CONFIG.SHEETS.ORDENES);
+  var dataOrdenes = sheetOrdenes.getDataRange().getValues();
+  
+  for (var i = 1; i < dataOrdenes.length; i++) {
+    if (dataOrdenes[i][0] === numeroOrden) {
+      // 🔥 CAMBIO: Estado ahora está en columna E (índice 4 → columna 5 en getRange)
+      if (dataOrdenes[i][4] !== nuevoEstado) {
+        sheetOrdenes.getRange(i + 1, 5).setValue(nuevoEstado);
+      }
+      break;
+    }
+  }
+}
+
+// ========================================
+// MÓDULO: STOCK E INVENTARIO
+// ========================================
+
+function actualizarStockActual() {
+  var sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  var movimientos = getDatosSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  var insumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+  
+  var stockDetallado = {};
+
+  // 1. CALCULAR STOCK POR LOTE
+  movimientos.forEach(function(mov) {
+    var loteId = mov.lote ? String(mov.lote).trim() : 'SIN LOTE';
+    var llave = String(mov.codigo_insumo).trim() + '|' + loteId;
+    
+    if (!stockDetallado[llave]) {
+      stockDetallado[llave] = { 
+        cantidad: 0, 
+        vencimiento: mov.vencimiento || '',
+        codigo: mov.codigo_insumo,
+        lote: loteId
+      };
+    }
+    
+    var cant = Number(mov.cantidad) || 0;
+    if (mov.tipo_movimiento === 'Ingreso' || mov.tipo_movimiento === 'Ajuste') {
+      stockDetallado[llave].cantidad += cant;
+    } else if (mov.tipo_movimiento === 'Egreso') {
+      stockDetallado[llave].cantidad -= cant;
+    }
+  });
+
+  // 2. CALCULAR STOCK TOTAL POR INSUMO (suma de todos los lotes)
+  var stockTotalPorInsumo = {};
+  Object.keys(stockDetallado).forEach(function(llave) {
+    var item = stockDetallado[llave];
+    var codigo = item.codigo;
+    
+    if (!stockTotalPorInsumo[codigo]) {
+      stockTotalPorInsumo[codigo] = 0;
+    }
+    stockTotalPorInsumo[codigo] += item.cantidad;
+  });
+
+  // 3. LIMPIAR HOJA
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, sheetStock.getLastColumn()).clearContent();
+  }
+
+  var filasStock = [];
+  var ahora = new Date();
+
+  // 4. CONSTRUIR FILAS CON ESTADO BASADO EN STOCK TOTAL
+  Object.keys(stockDetallado).forEach(function(llave) {
+    var item = stockDetallado[llave];
+    var ins = insumos.find(function(i) { return i.codigo_insumo === item.codigo; });
+    
+    // Solo agregar si hay stock físico disponible
+    if (!ins || item.cantidad <= 0) return;
+
+    var disponibleLote = item.cantidad;
+    var critico = Number(ins.stock_critico) || 0;
+    
+    // 🔥 CLAVE: Estado basado en stock TOTAL del insumo, no del lote
+    var stockTotal = stockTotalPorInsumo[item.codigo] || 0;
+    var estado = 'OK';
+    if (stockTotal <= 0) {
+      estado = 'Agotado';
+    } else if (stockTotal <= critico) {
+      estado = 'Crítico';
+    }
+    
+    filasStock.push([
+      item.codigo,            // A
+      ins.descripcion,        // B
+      disponibleLote,         // C - Stock de ESTE lote
+      critico,                // D
+      estado,                 // E - Estado basado en stock TOTAL
+      ahora,                  // F
+      item.lote,              // G
+      item.vencimiento,       // H
+      ins.clasificacion || '' // I
+    ]);
+  });
+
+  if (filasStock.length > 0) {
+    // Escribir datos
+    sheetStock.getRange(2, 1, filasStock.length, 9).setValues(filasStock);
+    
+    // Ordenar por vencimiento (FIFO)
+    sheetStock.getRange(2, 1, filasStock.length, 9).sort({column: 8, ascending: true});
+  }
+  aplicarFormatoStock();
+  actualizarStockPorProveedor();
+}
+
+function aplicarFormatoStock() {
+  var sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  var lastRow = sheetStock.getLastRow();
+  if (lastRow <= 1) return;
+  sheetStock.clearConditionalFormatRules();
+  var rules = [];
+  var rangeEstado = sheetStock.getRange(2, 5, lastRow - 1, 1);
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Agotado').setBackground('#f4c7c3').setFontColor('#a61c00').setRanges([rangeEstado]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Crítico').setBackground('#fce8b2').setFontColor('#7f6003').setRanges([rangeEstado]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('OK').setBackground('#b7e1cd').setFontColor('#0d652d').setRanges([rangeEstado]).build());
+  sheetStock.setConditionalFormatRules(rules);
+}
+
+// ========================================
+// MÓDULO: DASHBOARD Y REPORTES
+// ========================================
+
+/**
+ * Actualiza la vista del Dashboard consolidando stock por producto
+ */
+function actualizarDashboard() {
+  var sheet = getSheet(CONFIG.SHEETS.DASHBOARD);
+  sheet.clear();
+  sheet.getCharts().forEach(function(c) { sheet.removeChart(c); });
+
+  sheet.setTabColor('#4285f4');
+  sheet.getRange('B2').setValue('📊 Panel de Control - Gestión de Compras Microbiología')
+    .setFontSize(18).setFontWeight('bold').setFontColor('#202124');
+
+  // --- KPIs ---
+  var ordenes     = getDatosSheet(CONFIG.SHEETS.ORDENES);
+  var pendientes  = ordenes.filter(function(o) {
+    return o.estado === 'Pendiente' || o.estado === 'Recepción Parcial';
+  }).length;
+
+  var stockDetallado = getDatosSheet(CONFIG.SHEETS.STOCK);
+  var stockConsolidado = {};
+  stockDetallado.forEach(function(item) {
+    var cod = item.codigo_insumo;
+    if (!stockConsolidado[cod]) {
+      stockConsolidado[cod] = { descripcion: item.descripcion, stock_total: 0, nivel_critico: Number(item.stock_critico) || 0 };
+    }
+    stockConsolidado[cod].stock_total += Number(item.stock_disponible) || 0;
+  });
+
+  var itemsDashboard = Object.keys(stockConsolidado).map(function(cod) {
+    var item   = stockConsolidado[cod];
+    var estado = item.stock_total <= 0 ? 'Agotado' : item.stock_total <= item.nivel_critico ? 'Crítico' : 'OK';
+    return { codigo: cod, descripcion: item.descripcion, total: item.stock_total, critico: item.nivel_critico, estado: estado };
+  });
+
+  var criticos = itemsDashboard.filter(function(i) { return i.estado === 'Crítico'; }).length;
+  var agotados = itemsDashboard.filter(function(i) { return i.estado === 'Agotado'; }).length;
+
+  crearTarjetaKPI(sheet, 4, 2, 'Órdenes Pendientes', pendientes, '#fbbc04');
+  crearTarjetaKPI(sheet, 4, 5, 'Stock Crítico',      criticos,   '#ea4335');
+  crearTarjetaKPI(sheet, 4, 8, 'Insumos Agotados',   agotados,   '#a61c00');
+
+  // --- TABLA ALERTAS STOCK ---
+  sheet.getRange('B8').setValue('⚠️ Alertas de Reposición Prioritaria').setFontSize(14).setFontWeight('bold');
+  sheet.getRange('B10:F10').setValues([['Código', 'Descripción', 'Stock Total', 'Nivel Crítico', 'Estado']])
+    .setBackground('#4285f4').setFontColor('white').setFontWeight('bold');
+
+  var itemsAlerta = itemsDashboard.filter(function(i) {
+    return i.estado === 'Crítico' || i.estado === 'Agotado';
+  }).sort(function(a, b) { return a.total - b.total; });
+
+  var filaLibre = 12;
+  if (itemsAlerta.length > 0) {
+    var filasTabla = itemsAlerta.map(function(i) {
+      return [i.codigo, i.descripcion, i.total, i.critico, i.estado];
+    });
+    var rangoTabla = sheet.getRange(11, 2, filasTabla.length, 5);
+    rangoTabla.setValues(filasTabla);
+    rangoTabla.setBorder(true, true, true, true, true, true, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+    itemsAlerta.forEach(function(item, index) {
+      sheet.getRange(11 + index, 2, 1, 5)
+        .setBackground(item.estado === 'Agotado' ? '#fce8e6' : '#fef7e0');
+    });
+    filaLibre = 11 + filasTabla.length + 2;
+  } else {
+    sheet.getRange('B11').setValue('✅ Todo el inventario está en niveles óptimos')
+      .setFontStyle('italic').setFontColor('#137333');
+    filaLibre = 14;
+  }
+
+  // ✅ NUEVO: Sección de variación de precios
+  var filaPostPrecios = agregarSeccionPrecios(sheet, filaLibre + 1);
+  agregarSeccionGastos(sheet, filaPostPrecios + 1);
+
+  sheet.getRange('B1')
+    .setValue('Última actualización: ' + formatearFecha(new Date()) + ' ' + new Date().toLocaleTimeString());
+}
+
+
+/**
+ * Helper para dibujar tarjetas de KPI en el Dashboard
+ */
+function crearTarjetaKPI(sheet, row, col, titulo, valor, colorBarra) {
+  // 1. Dibujar el marco blanco con borde gris
+  sheet.getRange(row, col, 3, 2).setBackground('white')
+       .setBorder(true, true, true, true, null, null, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+       
+  // 2. Colorear la barra decorativa superior
+  sheet.getRange(row, col, 1, 2).setBackground(colorBarra);
+  
+  // 3. Ajustar la altura de la fila de la barra para que sea delgada
+  sheet.setRowHeight(row, 5);
+  
+  // 4. Escribir el número (Valor del KPI)
+  sheet.getRange(row + 1, col).setValue(valor)
+       .setFontSize(24).setFontWeight('bold').setHorizontalAlignment('center');
+       
+  // 5. Escribir el Título del KPI abajo
+  var rangeTitulo = sheet.getRange(row + 2, col, 1, 2);
+  rangeTitulo.merge().setValue(titulo)
+             .setHorizontalAlignment('center').setFontColor('#5f6368').setFontSize(10);
+}
+
+function procesarBajaDesdeHoja() {
+  var ui = SpreadsheetApp.getUi();
+  var sheetBajas = getSheet('Bajas_Consumo');
+  
+  var valorB2          = String(sheetBajas.getRange('B2').getValue()).trim();
+  var codigoEnC2       = String(sheetBajas.getRange('C2').getValue()).trim();
+  var loteSeleccionado = String(sheetBajas.getRange('B3').getValue()).trim();
+  var cantidadBaja     = Number(sheetBajas.getRange('B4').getValue());
+  var observacion      = String(sheetBajas.getRange('B5').getValue()).trim();
+
+  // ✅ FIX: si B2 es un término de búsqueda (no un código), usar C2 que siempre tiene el código
+  // C2 lo pone _cargarInsumoEnBajas con celdaInfo.setValue(codigoFinal)
+  var valorBusqueda = codigoEnC2 || valorB2;
+
+  if (!valorBusqueda || !loteSeleccionado || cantidadBaja <= 0) {
+    ui.alert('⚠️ Error: Complete Insumo, Lote y una Cantidad válida.');
+    return;
+  }
+
+  var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+  
+  var itemStock = stockData.find(function(s) {
+    var codS  = String(s.codigo_insumo || '').trim();
+    var descS = String(s.descripcion   || '').trim();
+    var loteS = String(s.lote          || '').trim();
+    return (codS === valorBusqueda || descS === valorBusqueda) && loteS === loteSeleccionado;
+  });
+
+  if (!itemStock || Number(itemStock.stock_disponible) < cantidadBaja) {
+    var disp = itemStock ? itemStock.stock_disponible : 0;
+    ui.alert('❌ Stock insuficiente en el lote: ' + loteSeleccionado + '\nDisponible: ' + disp);
+    return;
+  }
+
+  var confirmar = ui.alert(
+    '¿Confirmar consumo de ' + cantidadBaja + ' unidad(es) de ' + itemStock.descripcion + '?',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmar !== ui.Button.YES) return;
+
+  try {
+    var infoInsumo   = getInsumo(itemStock.codigo_insumo);
+    var fechaAhora   = new Date();
+    var usuario      = getCurrentUser();
+
+    // ── Registrar movimiento ──────────────────────────────────────
+    getSheet(CONFIG.SHEETS.MOVIMIENTOS).appendRow([
+      'MOV-' + Date.now(),
+      fechaAhora,
+      'Egreso',
+      itemStock.codigo_insumo,
+      itemStock.descripcion,
+      cantidadBaja,
+      'BAJA-HOJA',
+      usuario,
+      'Consumo: ' + observacion,
+      loteSeleccionado,
+      itemStock.vencimiento || '',
+      infoInsumo ? infoInsumo.categoria : ''
+    ]);
+
+    // ── [PERFORMANCE] Stock incremental — NO reconstrucción total ──
+    // Simulamos el formato que espera actualizarStockIncremental
+    // pero en modo EGRESO: restamos directamente en Stock_Actual
+    var sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+    var dataStock  = sheetStock.getDataRange().getValues();
+    var catalogoInsumos = getInsumosActivos();
+
+    // Calcular stock total por código antes del egreso
+    var stockTotalPorCodigo = {};
+    dataStock.slice(1).forEach(function(row) {
+      var cod = String(row[0]).trim();
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + (Number(row[2]) || 0);
+    });
+
+    // Aplicar egreso en la fila correcta
+    var codBaja  = String(itemStock.codigo_insumo).trim();
+    var loteBaja = String(loteSeleccionado).trim();
+
+    for (var i = 1; i < dataStock.length; i++) {
+      var rowCod  = String(dataStock[i][0]).trim();
+      var rowLote = String(dataStock[i][6]).trim();
+      if (rowCod === codBaja && rowLote === loteBaja) {
+        var nuevoStock = Math.max((Number(dataStock[i][2]) || 0) - cantidadBaja, 0);
+        dataStock[i][2] = nuevoStock;
+        dataStock[i][5] = fechaAhora;
+        stockTotalPorCodigo[codBaja] = (stockTotalPorCodigo[codBaja] || 0) - cantidadBaja;
+        break;
+      }
+    }
+
+    // Recalcular estado para el código afectado
+    var ins     = catalogoInsumos.find(function(i) { return String(i.codigo_insumo).trim() === codBaja; });
+    var critico = ins ? Number(ins.stock_critico) || 0 : 0;
+    var totalFinal = stockTotalPorCodigo[codBaja] || 0;
+    var nuevoEstado = totalFinal <= 0 ? 'Agotado' : totalFinal <= critico ? 'Crítico' : 'OK';
+
+    // Actualizar estado en todas las filas del mismo código
+    for (var j = 1; j < dataStock.length; j++) {
+      if (String(dataStock[j][0]).trim() === codBaja) {
+        dataStock[j][4] = nuevoEstado;
+      }
+    }
+
+    // Filtrar filas con stock > 0 y reescribir
+    var filasValidas = dataStock.slice(1).filter(function(row) { return Number(row[2]) > 0; });
+    if (sheetStock.getLastRow() > 1) {
+      sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+    }
+    if (filasValidas.length > 0) {
+      sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+      sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+    }
+
+    // ── Limpiar formulario ────────────────────────────────────────
+    sheetBajas.getRange('B2:B5').clearContent();
+    ui.alert('✅ Consumo registrado exitosamente.\n\nStock actualizado en ~1 segundo.');
+
+  } catch (e) {
+    ui.alert('❌ Error crítico: ' + e.message);
+  }
+}
+
+function onEdit(e) {
+  var range = e.range;
+  var sheet = range.getSheet();
+
+  if (sheet.getName() !== "Bajas_Consumo") return;
+
+  // ── CASO 1: Se editó B2 ─────────────────────────────────────────
+  if (range.getA1Notation() === "B2") {
+    var valorIngresado   = String(range.getValue()).trim();
+    var celdaLote        = sheet.getRange("B3");
+    var celdaInfo        = sheet.getRange("C2");
+    var celdaDescripcion = sheet.getRange("D2");
+
+    // Limpiar celdas dependientes
+    celdaLote.clearDataValidations();
+    celdaLote.clearContent();
+    sheet.getRange("C3").clearContent();
+    celdaInfo.clearContent();
+    celdaDescripcion.clearContent();
+
+    if (valorIngresado === "") return;
+
+    var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+    // ── ¿El usuario eligió de la lista "COD — Descripción"? ───────
+    // Si viene en ese formato, extraer el código y cargar directo
+    if (valorIngresado.indexOf(' — ') !== -1) {
+      var partes   = valorIngresado.split(' — ');
+      var codLimpio = partes[0].trim();
+      var descLimpia = partes.slice(1).join(' — ').trim();
+      // Limpiar la validación temporal y dejar solo el código en B2
+      range.clearDataValidations();
+      range.setValue(codLimpio);
+      _cargarInsumoEnBajas(sheet, stockData, codLimpio, descLimpia, celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // ── Intento 1: match exacto de codigo_insumo ──────────────────
+    var matchCod = stockData.find(function(s) {
+      return String(s.codigo_insumo).trim().toUpperCase() === valorIngresado.toUpperCase();
+    });
+    if (matchCod) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        String(matchCod.codigo_insumo).trim(),
+        String(matchCod.descripcion).trim(),
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // ── Intento 2: match exacto de descripción normalizado ────────
+    var valorNorm = valorIngresado.toUpperCase().replace(/\s+/g, ' ');
+    var matchDesc = stockData.find(function(s) {
+      return String(s.descripcion).trim().toUpperCase().replace(/\s+/g, ' ') === valorNorm;
+    });
+    if (matchDesc) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        String(matchDesc.codigo_insumo).trim(),
+        String(matchDesc.descripcion).trim(),
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // ── Intento 3: búsqueda parcial ───────────────────────────────
+    var codigosMatch = {};
+    stockData.forEach(function(s) {
+      var descNorm = String(s.descripcion).trim().toUpperCase().replace(/\s+/g, ' ');
+      var codNorm  = String(s.codigo_insumo).trim().toUpperCase();
+      if (descNorm.indexOf(valorNorm) !== -1 || codNorm.indexOf(valorNorm) !== -1) {
+        var cod = String(s.codigo_insumo).trim();
+        if (!codigosMatch[cod]) {
+          codigosMatch[cod] = String(s.descripcion).trim();
+        }
+      }
+    });
+
+    var keys = Object.keys(codigosMatch);
+
+    if (keys.length === 0) {
+      celdaInfo.setValue("❌ Sin resultados para: " + valorIngresado);
+      return;
+    }
+
+    if (keys.length === 1) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        keys[0], codigosMatch[keys[0]],
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // Múltiples coincidencias → dropdown "COD — Descripción" en B2
+    var opciones = keys.map(function(cod) {
+      return cod + ' — ' + codigosMatch[cod];
+    });
+    var ruleB2 = SpreadsheetApp.newDataValidation()
+      .requireValueInList(opciones, true)
+      .setAllowInvalid(true)
+      .build();
+    range.setDataValidation(ruleB2);
+    range.setValue('');  // limpiar para que el usuario elija del dropdown
+    celdaInfo.setValue("↓ " + keys.length + " coincidencias — elegí de la lista");
+  }
+
+  // ── CASO 2: Se editó B3 (selección de lote) ────────────────────
+  if (range.getA1Notation() === "B3") {
+    var codigoInsumo     = String(sheet.getRange("B2").getValue()).trim();
+    var loteSeleccionado = String(range.getValue()).trim();
+    if (!codigoInsumo || !loteSeleccionado) return;
+    var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+    mostrarInfoLote(sheet, codigoInsumo, loteSeleccionado, stockData);
+  }
+}
+
+function _cargarInsumoEnBajas(sheet, stockData, codigoFinal, descFinal, celdaLote, celdaInfo, celdaDescripcion) {
+  celdaInfo.setValue(codigoFinal);
+  celdaDescripcion.setValue(descFinal);
+
+  var lotesDisponibles = stockData.filter(function(s) {
+    return String(s.codigo_insumo).trim() === codigoFinal &&
+           Number(s.stock_disponible) > 0;
+  });
+
+  if (lotesDisponibles.length === 0) {
+    celdaInfo.setValue("⚠️ Sin stock: " + codigoFinal);
+    return;
+  }
+
+  lotesDisponibles.sort(function(a, b) {
+    var fA = a.vencimiento ? new Date(a.vencimiento) : new Date(2099, 11, 31);
+    var fB = b.vencimiento ? new Date(b.vencimiento) : new Date(2099, 11, 31);
+    return fA - fB;
+  });
+
+  var listLotes = lotesDisponibles.map(function(s) {
+    return String(s.lote || "SIN LOTE");
+  });
+
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(listLotes, true)
+    .setAllowInvalid(false)
+    .build();
+  celdaLote.setDataValidation(rule);
+  celdaLote.setValue(listLotes[0]);
+  mostrarInfoLote(sheet, codigoFinal, listLotes[0], lotesDisponibles);
+}
+
+// ── Helper: dado un código ya resuelto, carga lotes en B3 ──────────
+function _cargarInsumoEnBajas(sheet, stockData, codigoFinal, descFinal, celdaLote, celdaInfo, celdaDescripcion) {
+  
+  // ✅ FIX: poner el código limpio en B2 para que procesarBajaDesdeHoja lo lea bien
+  sheet.getRange('B2').setValue(codigoFinal);
+  
+  celdaInfo.setValue(codigoFinal);
+  celdaDescripcion.setValue(descFinal);
+
+  // Filtrar lotes con stock disponible para ese código
+  var lotesDisponibles = stockData.filter(function(s) {
+    return String(s.codigo_insumo).trim() === codigoFinal &&
+           Number(s.stock_disponible) > 0;
+  });
+
+  if (lotesDisponibles.length === 0) {
+    celdaInfo.setValue("⚠️ Sin stock: " + codigoFinal);
+    return;
+  }
+
+  // Ordenar FIFO
+  lotesDisponibles.sort(function(a, b) {
+    var fA = a.vencimiento ? new Date(a.vencimiento) : new Date(2099, 11, 31);
+    var fB = b.vencimiento ? new Date(b.vencimiento) : new Date(2099, 11, 31);
+    return fA - fB;
+  });
+
+  var listLotes = lotesDisponibles.map(function(s) {
+    return String(s.lote || "SIN LOTE");
+  });
+
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(listLotes, true)
+    .setAllowInvalid(false)
+    .build();
+  celdaLote.setDataValidation(rule);
+  celdaLote.setValue(listLotes[0]);
+  mostrarInfoLote(sheet, codigoFinal, listLotes[0], lotesDisponibles);
+}
+
+/**
+ * Muestra la lista de órdenes pendientes en un diálogo modal
+ */
+function mostrarListaPendientes() {
+  try {
+    var html = HtmlService.createHtmlOutputFromFile('ListaPendientes')
+      .setWidth(600)
+      .setHeight(450)
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    SpreadsheetApp.getUi().showModalDialog(html, '📋 Órdenes Pendientes de Recepción');
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('Error al abrir la lista: ' + e.message);
+  }
+}
+
+
+function aplicarFormatoMovimientos() {
+  var sheet = getSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+  
+  sheet.clearConditionalFormatRules();
+  var range = sheet.getRange(2, 3, lastRow - 1, 1); // Columna C: Tipo Movimiento
+  
+  var ruleIngreso = SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('Ingreso')
+    .setBackground('#D9EAD3') // Verde claro
+    .setRanges([range])
+    .build();
+    
+  var ruleEgreso = SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('Egreso')
+    .setBackground('#F4CCCC') // Rojo claro
+    .setRanges([range])
+    .build();
+    
+  var rules = sheet.getConditionalFormatRules();
+  rules.push(ruleIngreso, ruleEgreso);
+  sheet.setConditionalFormatRules(rules);
+}
+
+function aplicarFormatoDetalleRecepciones() {
+  var sheet = getSheet(CONFIG.SHEETS.DETALLE_RECEPCIONES);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+  
+  sheet.clearConditionalFormatRules();
+  
+  // Buscar la columna de estado_conformidad
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var colEstado = headers.indexOf('estado_conformidad') + 1;
+  
+  if (colEstado === 0) return;
+  
+  var range = sheet.getRange(2, colEstado, lastRow - 1, 1);
+  
+  var rules = [];
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('Conforme')
+    .setBackground('#D9EAD3')
+    .setFontColor('#0D652D')
+    .setRanges([range])
+    .build());
+    
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('Conforme Parcial')
+    .setBackground('#FFF2CC')
+    .setFontColor('#7F6003')
+    .setRanges([range])
+    .build());
+    
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('No Conforme')
+    .setBackground('#F4CCCC')
+    .setFontColor('#A61C00')
+    .setRanges([range])
+    .build());
+  
+  sheet.setConditionalFormatRules(rules);
+}
+
+function crearHojaConversiones() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // No recrear si ya existe
+  if (ss.getSheetByName('Config_Conversiones')) {
+    SpreadsheetApp.getUi().alert(
+      'La hoja Config_Conversiones ya existe.\n' +
+      'Si querés reiniciarla, eliminala manualmente primero.'
+    );
+    return;
+  }
+  
+  var sheet = ss.insertSheet('Config_Conversiones');
+  
+  // --- ENCABEZADO INFORMATIVO ---
+  sheet.getRange('A1:G1').merge();
+  sheet.getRange('A1').setValue(
+    '⚙️ TABLA DE CONVERSIÓN CAJAS → UNIDADES  |  ' +
+    'Editá esta hoja para cambiar factores o agregar nuevos insumos  |  ' +
+    'activo = TRUE/FALSE para activar/desactivar sin borrar la fila'
+  );
+  sheet.getRange('A1').setFontWeight('bold')
+       .setBackground('#1F4E79').setFontColor('#FFFFFF')
+       .setFontSize(10).setWrap(true);
+  sheet.setRowHeight(1, 36);
+
+  // --- HEADERS ---
+  var headers = [
+    'codigo_insumo',
+    'descripcion',
+    'unidad_de_compra',
+    'factor_conversion',
+    'unidad_destino',
+    'activo',
+    'observaciones'
+  ];
+  sheet.getRange(2, 1, 1, headers.length).setValues([headers])
+       .setFontWeight('bold')
+       .setBackground('#2E75B6').setFontColor('#FFFFFF')
+       .setHorizontalAlignment('center');
+
+  // --- DATOS INICIALES (de Male, Virología BIONOA) ---
+  var datos = [
+    // codigo        descripcion                                         unidad_compra     factor  unidad_destino  activo  observaciones
+    ['REA001', 'ORG 903MX Anti - HSV - 1 IgM Abs',                    'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA002', 'ORG 903G Anti - HSV - 1 IgG',                         'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA003', 'ORG 904G Anti - HSV - 2 IgG',                         'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA004', 'ORG 904MX Anti - HSV - 2 IgM Abs',                    'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA005', 'D3U.8.DFA Resp Virus Screen&ID 1127-212',              'UNIDAD',          25,     'Tubo',          true,  'Panel respiratorio: 7 monoclonales + 25 tubos eppendorff'],
+    ['REA006', 'ORG 912MX Anti-Parvovirus B19 IgM Abs.',               'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA007', 'ORG 912G Anti-Parvovirus B19 IgG',                     'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA008', 'ORG 906G Anti - Chlamydia Trachomatis IgG',            'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA009', 'ORG 906MX Anti-C. Trachomatis IgM Abs',                'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA010', 'Negative Control Alegria ORG 311',                     'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA011', 'Positive Control Alegria ORG 310',                     'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA012', 'MICO (IgM)',                                           'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA013', 'MICO (IgG)',                                           'CAJA X 24 DET.',  24,     'Determinación', true,  '24 tiras por caja'],
+    ['REA014', 'VIDAS HBS AG ULTRA 60 T - 30315',                      'CAJA X 60 DET.',  60,     'Determinación', true,  '60 tiras por caja'],
+    ['REA016', 'VIDAS ANTI-HBC TOTAL II 60 T - 30314',                 'CAJA X 60 DET.',  60,     'Determinación', true,  '60 tiras por caja'],
+    ['REA017', 'VIDAS HBC IGM II 30TESTS - 30439',                     'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA018', 'VIDAS HBE/ANTI-HBE 30 TESTS - 30305',                  'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA023', 'VIDAS ANTI-HCV 60 TESTS - 30308',                      'CAJA X 60 DET.',  60,     'Determinación', true,  '60 tiras por caja'],
+    ['REA027', 'VIDAS RUB IGM 30 TESTS - 30214',                       'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA034', 'VIDAS HAV IGM 30 TESTS - 30307',                       'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA035', 'VIDAS ANTI-HAV TOTAL 30T - 30312',                     'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA038', 'VIDAS ANTI-HEV IGM (HEVM) - 418115',                   'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA039', 'VIDAS ANTI-HEV IGG (HEVG) 30T - 418116',               'CAJA X 30 DET.',  30,     'Determinación', true,  '30 tiras por caja'],
+    ['REA079', 'DETERMINE HIV EARLY DETECT (7D2843)',                   'UNIDAD',          100,    'Determinación', true,  '100 tiras por unidad'],
+  ];
+
+  sheet.getRange(3, 1, datos.length, headers.length).setValues(datos);
+
+  // Formato de datos: alternar colores de filas
+  for (var i = 0; i < datos.length; i++) {
+    var bg = (i % 2 === 0) ? '#FFFFFF' : '#EBF3FB';
+    sheet.getRange(3 + i, 1, 1, headers.length).setBackground(bg).setFontSize(10);
+  }
+
+  // Formato columna factor (numérico, centrado, destacado)
+  sheet.getRange(3, 4, datos.length, 1)
+       .setHorizontalAlignment('center')
+       .setFontWeight('bold')
+       .setFontColor('#1F4E79');
+
+  // Formato columna activo
+  sheet.getRange(3, 6, datos.length, 1)
+       .setHorizontalAlignment('center');
+
+  // Anchos de columna
+  sheet.setColumnWidth(1, 100);  // codigo
+  sheet.setColumnWidth(2, 340);  // descripcion
+  sheet.setColumnWidth(3, 140);  // unidad_compra
+  sheet.setColumnWidth(4, 80);   // factor
+  sheet.setColumnWidth(5, 130);  // unidad_destino
+  sheet.setColumnWidth(6, 65);   // activo
+  sheet.setColumnWidth(7, 320);  // observaciones
+
+  // Congelar filas de encabezado
+  sheet.setFrozenRows(2);
+
+  // Nota al pie
+  var filaFinal = datos.length + 4;
+  sheet.getRange(filaFinal, 1, 1, 7).merge();
+  sheet.getRange(filaFinal, 1).setValue(
+    '💡 Para agregar un nuevo insumo con conversión: agregá una fila con el codigo_insumo exacto (debe existir en la hoja Insumos), el factor numérico y activo = TRUE. ' +
+    'Para desactivar temporalmente una conversión sin borrarla: cambiá activo a FALSE.'
+  ).setBackground('#FFF2CC').setFontColor('#7F6000').setFontSize(9).setWrap(true);
+  sheet.setRowHeight(filaFinal, 48);
+
+  SpreadsheetApp.getUi().alert(
+    '✅ Hoja "Config_Conversiones" creada con ' + datos.length + ' insumos de Virología.\n\n' +
+    'Podés editarla directamente para:\n' +
+    '• Cambiar un factor (columna D)\n' +
+    '• Agregar un insumo nuevo (nueva fila)\n' +
+    '• Desactivar una conversión (columna F → FALSE)'
+  );
+}
+
+function getTablaConversiones() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Config_Conversiones');
+  
+  // Si no existe la hoja, retornar vacío (no rompe el flujo)
+  if (!sheet) return {};
+  
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 3) return {};
+  
+  // Fila 1 = banner, Fila 2 = headers, datos desde fila 3
+  var headers = data[1]; // ['codigo_insumo', 'descripcion', ...]
+  var idxCodigo  = headers.indexOf('codigo_insumo');
+  var idxFactor  = headers.indexOf('factor_conversion');
+  var idxUnidad  = headers.indexOf('unidad_destino');
+  var idxActivo  = headers.indexOf('activo');
+  
+  var tabla = {};
+  for (var i = 2; i < data.length; i++) {
+    var row = data[i];
+    var cod = String(row[idxCodigo] || '').trim();
+    var activo = row[idxActivo];
+    
+    if (!cod) continue;
+    if (activo !== true && String(activo).toUpperCase() !== 'TRUE') continue;
+    
+    var factor = Number(row[idxFactor]);
+    if (!factor || factor <= 1) continue; // factor 1 = sin conversión, no procesar
+    
+    tabla[cod] = {
+      factor: factor,
+      unidad_destino: String(row[idxUnidad] || 'Determinación').trim()
+    };
+  }
+  
+  return tabla;
+}
+
+function aplicarConversion(codigoInsumo, cantidadRecibida, tablaConversiones) {
+  var conv = tablaConversiones[codigoInsumo];
+  
+  if (!conv) {
+    // Sin conversión: el stock se registra tal cual
+    return {
+      cantidad_stock: cantidadRecibida,
+      unidad_stock: null,
+      tiene_conversion: false,
+      factor: 1
+    };
+  }
+  
+  return {
+    cantidad_stock: cantidadRecibida * conv.factor,
+    unidad_stock: conv.unidad_destino,
+    tiene_conversion: true,
+    factor: conv.factor
+  };
+}
+
+function abrirConfigConversiones() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Config_Conversiones');
+  
+  if (!sheet) {
+    var resp = SpreadsheetApp.getUi().alert(
+      'La hoja de conversiones no existe todavía.',
+      '¿Querés crearla ahora con los factores de Virología cargados?',
+      SpreadsheetApp.getUi().ButtonSet.YES_NO
+    );
+    if (resp === SpreadsheetApp.getUi().Button.YES) {
+      crearHojaConversiones();
+    }
+    return;
+  }
+  
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert(
+    '⚙️ Config_Conversiones\n\n' +
+    'Acá podés:\n' +
+    '• Cambiar un factor → editá la columna "factor_conversion"\n' +
+    '• Agregar un insumo → nueva fila con codigo_insumo, factor y activo=TRUE\n' +
+    '• Desactivar → cambiá "activo" a FALSE (se conserva el historial)\n\n' +
+    'Los cambios se aplican inmediatamente en la próxima recepción.'
+  );
+}
+
+function verResumenConversiones() {
+  var tabla = getTablaConversiones();
+  var codigos = Object.keys(tabla);
+  
+  if (codigos.length === 0) {
+    SpreadsheetApp.getUi().alert(
+      'No hay conversiones activas.\n' +
+      'Verificá que la hoja "Config_Conversiones" exista y tenga filas con activo = TRUE.'
+    );
+    return;
+  }
+  
+  var catalogoInsumos = getInsumosActivos();
+  var lineas = ['Conversiones activas (' + codigos.length + '):\n'];
+  
+  codigos.sort().forEach(function(cod) {
+    var ins = catalogoInsumos.find(function(i) { return i.codigo_insumo === cod; });
+    var desc = ins ? ins.descripcion.substring(0, 40) : '(no encontrado en catálogo)';
+    lineas.push('• ' + cod + ': x' + tabla[cod].factor + ' ' + tabla[cod].unidad_destino + ' — ' + desc);
+  });
+  
+  SpreadsheetApp.getUi().alert(lineas.join('\n'));
+}
+
+// ============================================================
+// SETUP: Crear hoja Historial_Precios
+// Ejecutar UNA SOLA VEZ
+// ============================================================
+
+function crearHojaHistorialPrecios() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  if (ss.getSheetByName('Historial_Precios')) {
+    SpreadsheetApp.getUi().alert('La hoja Historial_Precios ya existe.');
+    return;
+  }
+
+  var sheet = ss.insertSheet('Historial_Precios');
+
+  // Banner
+  sheet.getRange('A1:I1').merge();
+  sheet.getRange('A1')
+    .setValue('📈 HISTORIAL DE VARIACIÓN DE PRECIOS  |  Se registra automáticamente al crear cada Orden de Compra  |  Solo lectura')
+    .setFontWeight('bold').setBackground('#1F4E79').setFontColor('#FFFFFF')
+    .setFontSize(10).setWrap(true);
+  sheet.setRowHeight(1, 32);
+
+  // Headers
+  var headers = [
+    'fecha',
+    'codigo_insumo',
+    'descripcion',
+    'proveedor',
+    'precio_anterior',
+    'precio_nuevo',
+    'variacion_pct',
+    'numero_orden',
+    'usuario'
+  ];
+  sheet.getRange(2, 1, 1, headers.length)
+    .setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#2E75B6').setFontColor('#FFFFFF')
+    .setHorizontalAlignment('center');
+
+  // Anchos
+  var anchos = [100, 110, 300, 200, 120, 120, 110, 130, 200];
+  anchos.forEach(function(w, i) {
+    sheet.setColumnWidth(i + 1, w);
+  });
+
+  sheet.setFrozenRows(2);
+
+  // Formato condicional para variación: rojo si sube, verde si baja
+  var rangoVar = sheet.getRange('G3:G1000');
+  var rules = sheet.getConditionalFormatRules();
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberGreaterThan(5)
+    .setBackground('#FCE8E6').setFontColor('#A61C00')
+    .setRanges([rangoVar]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberLessThan(-5)
+    .setBackground('#E6F4EA').setFontColor('#137333')
+    .setRanges([rangoVar]).build());
+  sheet.setConditionalFormatRules(rules);
+
+  SpreadsheetApp.getUi().alert('✅ Hoja "Historial_Precios" creada.\n\nSe completará automáticamente al crear órdenes de compra.');
+}
+
+// ============================================================
+// FUNCIÓN PRINCIPAL: Registrar cambio de precio al crear OC
+//
+// Llamar desde crearOrdenCompra() así:
+//   registrarHistorialPrecios(ordenData.items, numeroOrden, usuario, fechaEmision, nombreProveedor);
+// ============================================================
+
+function registrarHistorialPrecios(items, numeroOrden, usuario, fecha, nombreProveedor) {
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetHist = ss.getSheetByName('Historial_Precios');
+  var sheetIns  = getSheet(CONFIG.SHEETS.INSUMOS);
+
+  // Si no existe la hoja todavía, no romper el flujo
+  if (!sheetHist) return;
+
+  // Leer catálogo de insumos completo UNA sola vez
+  var dataIns   = sheetIns.getDataRange().getValues();
+  var headersIns = dataIns[0];
+  var idxCodIns  = headersIns.indexOf('codigo_insumo');
+  var idxPrecio  = headersIns.indexOf('precio_referencial');
+  var idxDesc    = headersIns.indexOf('descripcion');
+
+  items.forEach(function(item) {
+    var precioNuevo = Number(item.precio_unitario) || 0;
+    if (precioNuevo <= 0) return; // Sin precio cargado, no registrar
+
+    // Buscar fila del insumo en el catálogo
+    var filaInsumo = -1;
+    var precioAnterior = 0;
+    var descripcion = item.descripcion || '';
+
+    for (var r = 1; r < dataIns.length; r++) {
+      if (String(dataIns[r][idxCodIns]).trim() === String(item.codigo_insumo).trim()) {
+        filaInsumo    = r + 1; // 1-indexed para getRange
+        precioAnterior = Number(dataIns[r][idxPrecio]) || 0;
+        descripcion   = String(dataIns[r][idxDesc]) || descripcion;
+        break;
+      }
+    }
+
+    // Calcular variación
+    var variacionPct = 0;
+    if (precioAnterior > 0) {
+      variacionPct = ((precioNuevo - precioAnterior) / precioAnterior) * 100;
+      variacionPct = Math.round(variacionPct * 100) / 100; // 2 decimales
+    }
+
+    // ✅ Registrar en historial SIEMPRE que haya precio (primera vez o cambio)
+    var esNuevo    = precioAnterior === 0;
+    var hayCambio  = precioAnterior !== precioNuevo;
+
+    if (esNuevo || hayCambio) {
+      sheetHist.appendRow([
+        fecha,
+        item.codigo_insumo,
+        descripcion,
+        nombreProveedor,
+        esNuevo ? '-' : precioAnterior,
+        precioNuevo,
+        esNuevo ? '-' : variacionPct,
+        numeroOrden,
+        usuario
+      ]);
+    }
+
+    // ✅ Actualizar precio_referencial en catálogo
+    if (filaInsumo > 0 && hayCambio) {
+      sheetIns.getRange(filaInsumo, idxPrecio + 1).setValue(precioNuevo);
+    } else if (filaInsumo > 0 && esNuevo) {
+      sheetIns.getRange(filaInsumo, idxPrecio + 1).setValue(precioNuevo);
+    }
+  });
+}
+
+// ============================================================
+// DASHBOARD: Sección de variación de precios
+//
+// Llamar desde actualizarDashboard() así:
+//   var filaPrecios = agregarSeccionPrecios(sheet, filaLibre);
+// Donde filaLibre es la primera fila disponible después de la
+// tabla de alertas de stock existente (aprox. fila 20+)
+// ============================================================
+
+function agregarSeccionPrecios(sheet, filaInicio) {
+    var ss        = SpreadsheetApp.getActiveSpreadsheet();
+    var sheetHist = ss.getSheetByName('Historial_Precios');
+
+    sheet.getRange(filaInicio, 2)
+      .setValue('📈 Variación de Precios — vs. compra anterior')
+      .setFontSize(14).setFontWeight('bold').setFontColor('#202124');
+
+    if (!sheetHist || sheetHist.getLastRow() < 3) {
+      sheet.getRange(filaInicio + 1, 2)
+        .setValue('Sin registros aún. Se completará al crear órdenes de compra.')
+        .setFontStyle('italic').setFontColor('#5f6368');
+      return filaInicio + 3;
+    }
+
+    var data    = sheetHist.getDataRange().getValues();
+    var headers = data[1];
+    var idxFecha  = headers.indexOf('fecha');
+    var idxCod    = headers.indexOf('codigo_insumo');
+    var idxDesc   = headers.indexOf('descripcion');
+    var idxPAnt   = headers.indexOf('precio_anterior');
+    var idxPNuevo = headers.indexOf('precio_nuevo');
+    var idxVar    = headers.indexOf('variacion_pct');
+
+    // ── KPI: insumos con cambio de precio este mes (sin cambios) ──
+    var mesActual  = new Date().getMonth();
+    var anioActual = new Date().getFullYear();
+    var codigosEsteMes = {};
+    for (var r2 = 2; r2 < data.length; r2++) {
+      var fila = data[r2];
+      if (!fila[idxFecha]) continue;
+      var f2 = new Date(fila[idxFecha]);
+      if (isNaN(f2.getTime())) continue;
+      if (f2.getMonth() === mesActual && f2.getFullYear() === anioActual && fila[idxVar] !== '-') {
+        codigosEsteMes[String(fila[idxCod]).trim()] = true;
+      }
+    }
+    crearTarjetaKPI(sheet, filaInicio + 1, 2,
+      'Insumos con cambio\nde precio (este mes)',
+      Object.keys(codigosEsteMes).length, '#7248b9');
+
+    // ── Tabla: último evento de precio por insumo (sin filtro de fecha) ──
+    var porInsumo = {};
+    for (var r = 2; r < data.length; r++) {
+      var row   = data[r];
+      if (!row[idxFecha]) continue;
+      var fecha = new Date(row[idxFecha]);
+      if (isNaN(fecha.getTime())) continue;
+
+      var cod    = String(row[idxCod]).trim();
+      var pNuevo = Number(row[idxPNuevo]);
+      var pAnt   = row[idxPAnt] !== '-' ? Number(row[idxPAnt]) : null;
+
+      if (!porInsumo[cod]) {
+        porInsumo[cod] = { descripcion: String(row[idxDesc]), pAnt: pAnt, pNuevo: pNuevo, fecha: fecha };
+      } else if (fecha > porInsumo[cod].fecha) {
+        porInsumo[cod].pAnt   = pAnt;
+        porInsumo[cod].pNuevo = pNuevo;
+        porInsumo[cod].fecha  = fecha;
+      }
+    }
+
+    // Solo insumos con precio anterior conocido y con variación real
+    var filasConsolidadas = [];
+    Object.keys(porInsumo).forEach(function(cod) {
+      var ins = porInsumo[cod];
+      if (ins.pAnt === null || ins.pAnt === ins.pNuevo) return;
+      var varPct = ins.pAnt > 0 ? Math.round(((ins.pNuevo - ins.pAnt) / ins.pAnt) * 10000) / 100 : 0;
+      filasConsolidadas.push({
+        cod: cod, desc: ins.descripcion,
+        pAnt: ins.pAnt, pNuevo: ins.pNuevo,
+        varPct: varPct, absVar: Math.abs(varPct),
+        fecha: ins.fecha
+      });
+    });
+
+    filasConsolidadas.sort(function(a, b) { return b.absVar - a.absVar; });
+
+    // ── Dibujar tabla ────────────────────────────────────────
+    var filaTitulo = filaInicio + 5;
+
+    sheet.getRange(filaTitulo, 2, 1, 6)
+      .setValues([['Código', 'Descripción', 'Precio anterior', 'Precio actual', 'Var. %', 'Última compra']])
+      .setBackground('#7248b9').setFontColor('white').setFontWeight('bold');
+
+    if (filasConsolidadas.length === 0) {
+      sheet.getRange(filaTitulo + 1, 2)
+        .setValue('Sin variaciones de precio registradas.')
+        .setFontStyle('italic').setFontColor('#5f6368');
+      return filaTitulo + 3;
+    }
+
+    var limite = Math.min(filasConsolidadas.length, 15);
+    var filas  = [];
+    for (var i = 0; i < limite; i++) {
+      var f    = filasConsolidadas[i];
+      var vStr = f.varPct > 0 ? '+' + f.varPct.toFixed(1) + '%' : f.varPct.toFixed(1) + '%';
+      filas.push([f.cod, f.desc.substring(0, 40), '$' + f.pAnt.toFixed(2), '$' + f.pNuevo.toFixed(2), vStr, formatearFecha(f.fecha)]);
+    }
+
+    var rangoTabla = sheet.getRange(filaTitulo + 1, 2, limite, 6);
+    rangoTabla.setValues(filas);
+    rangoTabla.setBorder(true, true, true, true, true, true, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+
+    for (var j = 0; j < limite; j++) {
+      var v     = filasConsolidadas[j].varPct;
+      var color = v > 5 ? '#fce8e6' : v < -5 ? '#e6f4ea' : '#f8f9fa';
+      sheet.getRange(filaTitulo + 1 + j, 2, 1, 6).setBackground(color);
+    }
+
+    return filaTitulo + limite + 2;
+  }
+
+// ============================================================
+// UTILIDAD: Ver historial de un insumo específico
+// Menú → Ver Historial Precios
+// ============================================================
+
+function mostrarHistorialPrecios() {
+  var ui = SpreadsheetApp.getUi();
+  var resp = ui.prompt(
+    '📈 Historial de Precios',
+    'Ingresá el código del insumo (ej: REA001):',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var codigo = resp.getResponseText().trim().toUpperCase();
+  if (!codigo) return;
+
+  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetHist = ss.getSheetByName('Historial_Precios');
+  if (!sheetHist || sheetHist.getLastRow() < 3) {
+    ui.alert('No hay historial de precios registrado todavía.');
+    return;
+  }
+
+  var data    = sheetHist.getDataRange().getValues();
+  var headers = data[1];
+  var idxCod  = headers.indexOf('codigo_insumo');
+  var idxFecha = headers.indexOf('fecha');
+  var idxPAnt  = headers.indexOf('precio_anterior');
+  var idxPNuevo= headers.indexOf('precio_nuevo');
+  var idxVar   = headers.indexOf('variacion_pct');
+  var idxOrden = headers.indexOf('numero_orden');
+
+  var registros = data.slice(2).filter(function(r) {
+    return String(r[idxCod]).trim().toUpperCase() === codigo;
+  });
+
+  if (registros.length === 0) {
+    ui.alert('No se encontraron registros para el código "' + codigo + '".\n\nVerificá que el código sea correcto y que ya se haya creado al menos una OC con ese insumo.');
+    return;
+  }
+
+  var lineas = ['Historial para ' + codigo + ' (' + registros.length + ' registros):\n'];
+  registros.slice(-10).reverse().forEach(function(r) { // últimos 10, más reciente primero
+    var fecha  = r[idxFecha] ? formatearFecha(r[idxFecha]) : '-';
+    var pAnt   = r[idxPAnt] !== '-' ? '$' + Number(r[idxPAnt]).toFixed(2) : 'sin precio previo';
+    var pNuevo = '$' + Number(r[idxPNuevo]).toFixed(2);
+    var varStr = r[idxVar] !== '-' ? ' (' + (Number(r[idxVar]) > 0 ? '+' : '') + Number(r[idxVar]).toFixed(1) + '%)' : '';
+    lineas.push(fecha + ' | ' + pAnt + ' → ' + pNuevo + varStr + ' | ' + r[idxOrden]);
+  });
+
+  ui.alert(lineas.join('\n'));
+}
+
+// ============================================================
+// MÓDULO: STOCK POR PROVEEDOR  (v2.2)
+// Archivo: modulo_stock_por_proveedor_v2.2.gs
+//
+// CÓMO FUNCIONA:
+//   Genera/actualiza la hoja "Stock_por_Proveedor" con una sección
+//   por cada proveedor activo. Muestra todos sus insumos ordenados
+//   por frecuencia de consumo (egresos últimos 90 días), con stock
+//   actual por lote, estado, último precio y vencimientos.
+//
+//   Se llama automáticamente al final de actualizarStockActual()
+//   y también desde el menú.
+//
+// INTEGRACIÓN:
+//   1. Agregar al CONFIG.SHEETS: STOCK_PROV: 'Stock_por_Proveedor'
+//   2. Al final de actualizarStockActual() agregar:
+//        actualizarStockPorProveedor();
+//   3. Agregar al menú en onOpen():
+//        .addItem('📦 Stock por Proveedor', 'actualizarStockPorProveedor')
+// ============================================================
+
+// ============================================================
+//  FIX v2.5 — actualizarStockPorProveedor()
+//
+//  INSTRUCCIÓN: en el archivo .gs principal, buscar la función
+//  completa "actualizarStockPorProveedor()" (desde la línea
+//  "function actualizarStockPorProveedor() {" hasta su llave
+//  de cierre final "}" inclusive) y reemplazarla íntegramente
+//  por esta versión.
+//
+//  QUÉ SE CORRIGIÓ:
+//  - Bug precio/stock 100x: la cantidad sugerida (col J "Cant. a pedir")
+//    se calculaba en unidades de STOCK (determinaciones) en lugar de
+//    unidades de COMPRA (cajas). Para insumos con conversión activa
+//    se divide por el factor, devolviendo siempre cajas.
+//  - Se agrega la columna de unidad de compra en la etiqueta de la
+//    cantidad sugerida y en el header de la sección, para mayor claridad.
+// ============================================================
+
+function actualizarStockPorProveedor() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var sheet = ss.getSheetByName('Stock_por_Proveedor');
+  if (!sheet) {
+    sheet = ss.insertSheet('Stock_por_Proveedor');
+  } else {
+    sheet.clear();
+    sheet.clearNotes();
+    sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
+    var buttons = sheet.getImages();
+    buttons.forEach(function(b) { b.remove(); });
+  }
+
+  sheet.setTabColor('#0f9d58');
+
+  // ── Leer datos fuente ─────────────────────────────────────────────
+  var insumos          = getInsumosActivos();
+  var proveedores      = getProveedoresActivos();
+  var stockData        = getDatosSheet(CONFIG.SHEETS.STOCK);
+  var movimientos      = getDatosSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  var tablaConversiones = getTablaConversiones(); // ← FIX: cargar factores de conversión
+
+  // Historial de precios
+  var ultimoPrecio = {};
+  var sheetHist = ss.getSheetByName('Historial_Precios');
+  if (sheetHist && sheetHist.getLastRow() > 2) {
+    var rawHist = sheetHist.getDataRange().getValues();
+    var hHdr    = rawHist[1];
+    var hCod    = hHdr.indexOf('codigo_insumo');
+    var hPNuevo = hHdr.indexOf('precio_nuevo');
+    var hFecha  = hHdr.indexOf('fecha');
+    var histList = [];
+    for (var h = 2; h < rawHist.length; h++) {
+      if (rawHist[h][hCod]) {
+        histList.push({
+          codigo: String(rawHist[h][hCod]).trim(),
+          precio: Number(rawHist[h][hPNuevo]) || 0,
+          fecha:  new Date(rawHist[h][hFecha])
+        });
+      }
+    }
+    histList.sort(function(a, b) { return a.fecha - b.fecha; });
+    histList.forEach(function(r) {
+      if (r.precio > 0) ultimoPrecio[r.codigo] = r.precio;
+    });
+  }
+  insumos.forEach(function(ins) {
+    var cod = String(ins.codigo_insumo).trim();
+    if (!ultimoPrecio[cod] && Number(ins.precio_referencial) > 0) {
+      ultimoPrecio[cod] = Number(ins.precio_referencial);
+    }
+  });
+
+  // Stock por insumo+lote (en unidades de stock = ya convertidas)
+  var stockPorInsumo = {};
+  stockData.forEach(function(row) {
+    var cod  = String(row.codigo_insumo).trim();
+    var cant = Number(row.stock_disponible) || 0;
+    if (cant <= 0) return;
+    if (!stockPorInsumo[cod]) stockPorInsumo[cod] = { total: 0, lotes: [] };
+    stockPorInsumo[cod].total += cant;
+    stockPorInsumo[cod].lotes.push({
+      lote:        String(row.lote || 'SIN LOTE'),
+      cantidad:    cant,
+      vencimiento: row.vencimiento ? formatearFecha(row.vencimiento) : '-'
+    });
+  });
+
+  // Consumo 90 días (en unidades de stock)
+  var hace90 = new Date();
+  hace90.setDate(hace90.getDate() - 90);
+  var consumo90 = {};
+  movimientos.forEach(function(mov) {
+    if (String(mov.tipo_movimiento).trim() !== 'Egreso') return;
+    var f = new Date(mov.fecha);
+    if (isNaN(f.getTime()) || f < hace90) return;
+    var cod = String(mov.codigo_insumo).trim();
+    consumo90[cod] = (consumo90[cod] || 0) + (Number(mov.cantidad) || 0);
+  });
+
+  // ── Escribir hoja ─────────────────────────────────────────────────
+  var fila = 1;
+
+  // Título principal
+  sheet.getRange(fila, 1, 1, 10).merge();
+  sheet.getRange(fila, 1)
+    .setValue('📦 STOCK POR PROVEEDOR  |  Tildá los insumos a pedir, ajustá cantidades y presioná "Generar OC"')
+    .setBackground('#1F4E79').setFontColor('#FFFFFF')
+    .setFontWeight('bold').setFontSize(10).setWrap(true);
+  sheet.setRowHeight(fila, 28);
+  fila++;
+
+  // Banner de última actualización
+  var fechaActStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+  sheet.getRange(fila, 1, 1, 10).merge();
+  sheet.getRange(fila, 1)
+    .setValue('⚠️  Vista actualizada el ' + fechaActStr +
+              '  —  Si hubo recepciones después de este horario, ejecutá  Menú → 📦 Stock por Proveedor  antes de generar una OC.')
+    .setBackground('#FFF8E1').setFontColor('#B06000')
+    .setFontWeight('normal').setFontSize(10)
+    .setHorizontalAlignment('left').setWrap(true);
+  sheet.setRowHeight(fila, 32);
+  fila += 2;
+
+  var mapaProveedores = {};
+
+  proveedores.forEach(function(prov) {
+    var codProv    = String(prov.codigo_proveedor).trim();
+    var nombreProv = prov.razon_social || codProv;
+
+    var insumosDelProv = insumos.filter(function(ins) {
+      return String(ins.proveedor_preferido).trim() === codProv;
+    });
+    if (insumosDelProv.length === 0) return;
+
+    insumosDelProv.sort(function(a, b) {
+      var cA = consumo90[String(a.codigo_insumo).trim()] || 0;
+      var cB = consumo90[String(b.codigo_insumo).trim()] || 0;
+      if (cB !== cA) return cB - cA;
+      return a.descripcion.localeCompare(b.descripcion);
+    });
+
+    // Header proveedor
+    sheet.getRange(fila, 1, 1, 10).merge();
+    sheet.getRange(fila, 1)
+      .setValue('🏢  ' + nombreProv.toUpperCase() +
+                '   ·   ' + insumosDelProv.length + ' insumos' +
+                (prov.mail ? '   ·   ' + prov.mail : '') +
+                '          👉 Tildá los que querés pedir y presioná el botón ▶')
+      .setBackground('#2E75B6').setFontColor('#FFFFFF')
+      .setFontWeight('bold').setFontSize(11);
+    sheet.setRowHeight(fila, 28);
+    fila++;
+
+    // Headers de columna
+    // Col: A=Pedir, B=Código, C=Descripción, D=Categoría,
+    //      E=Stock (u.), F=Estado, G=Últ.Precio, H=Consumo90d,
+    //      I=Lote(s), J=Cant. a pedir (cajas/unid. compra)
+    var colH = ['✔ Pedir', 'Código', 'Descripción', 'Categoría',
+                'Stock (u.)', 'Estado', 'Últ. Precio', 'Consumo 90d',
+                'Lote(s) / Vencimiento(s)', 'Cant. a pedir\n(unid. compra)'];
+    sheet.getRange(fila, 1, 1, 10)
+      .setValues([colH])
+      .setBackground('#D6E4F0').setFontColor('#1F4E79')
+      .setFontWeight('bold').setFontSize(10)
+      .setHorizontalAlignment('center').setWrap(true);
+    sheet.setRowHeight(fila, 30);
+    fila++;
+
+    var filaInicioInsumos = fila;
+
+    // Filas de insumos
+    insumosDelProv.forEach(function(ins, idx) {
+      var cod      = String(ins.codigo_insumo).trim();
+      var stockIns = stockPorInsumo[cod];
+      var total    = stockIns ? stockIns.total : 0;   // en unidades de stock
+      var critico  = Number(ins.stock_critico) || 0;  // en unidades de stock
+      var estado   = total <= 0 ? '⚠ Agotado' : total <= critico ? '⚡ Crítico' : '✓ OK';
+      var precio   = ultimoPrecio[cod] || 0;
+      var precioStr = precio > 0 ? '$' + precio.toFixed(2) : '-';
+      var consumo  = consumo90[cod] || 0;
+
+      // Lotes + vencimientos
+      var lotesStr = '-';
+      if (stockIns && stockIns.lotes.length > 0) {
+        var lotesOrd = stockIns.lotes.slice().sort(function(a, b) {
+          if (a.vencimiento === '-') return 1;
+          if (b.vencimiento === '-') return -1;
+          return new Date(a.vencimiento) - new Date(b.vencimiento);
+        });
+        lotesStr = lotesOrd.map(function(l) {
+          return l.lote + ' (' + l.cantidad + ')' + (l.vencimiento !== '-' ? ' vence ' + l.vencimiento : '');
+        }).join(' | ');
+      }
+
+      // ── FIX: calcular cantSugerida en unidades de COMPRA (cajas) ──────
+      // stock_critico y total están en unidades de stock (post-conversión).
+      // Si existe conversión activa, dividir por el factor para obtener cajas.
+      var conv   = tablaConversiones[cod];
+      var factor = (conv && conv.factor > 1) ? conv.factor : 1;
+
+      // Cantidad de unidades de stock que faltan para llegar al doble del crítico
+      var unidadesStockFaltantes = critico * 2 - total;
+
+      // Convertir a unidades de compra (redondear hacia arriba; mínimo 1)
+      var cantSugerida = Math.max(Math.ceil(unidadesStockFaltantes / factor), 1);
+      // ── Fin FIX ──────────────────────────────────────────────────────
+
+      // Col A: checkbox
+      sheet.getRange(fila, 1).insertCheckboxes();
+
+      // Cols B-J: datos
+      var rowData = [cod, ins.descripcion, ins.categoria || '',
+                     total, estado, precioStr, consumo,
+                     lotesStr, cantSugerida];
+      sheet.getRange(fila, 2, 1, 9).setValues([rowData]);
+
+      // Color fondo
+      var bgBase   = idx % 2 === 0 ? '#FFFFFF' : '#F8F9FA';
+      var bgEstado = estado.indexOf('Agotado') > -1 ? '#FCE8E6'
+                   : estado.indexOf('Crítico') > -1 ? '#FEF7E0'
+                   : bgBase;
+      sheet.getRange(fila, 1, 1, 10).setBackground(bgEstado).setFontSize(10);
+
+      // Alineaciones
+      sheet.getRange(fila, 2).setHorizontalAlignment('center');  // codigo
+      sheet.getRange(fila, 5).setHorizontalAlignment('center');  // stock
+      sheet.getRange(fila, 6).setHorizontalAlignment('center');  // estado
+      sheet.getRange(fila, 7).setHorizontalAlignment('right');   // precio
+      sheet.getRange(fila, 8).setHorizontalAlignment('center');  // consumo
+      sheet.getRange(fila, 10).setHorizontalAlignment('center').setFontWeight('bold'); // cant pedir
+
+      // Negrita top 3 por consumo
+      if (idx < 3 && consumo > 0) sheet.getRange(fila, 3).setFontWeight('bold');
+
+      fila++;
+    });
+
+    mapaProveedores[codProv] = {
+      filaInicio: filaInicioInsumos,
+      filaFin:    fila - 1,
+      nombre:     nombreProv,
+      mail:       prov.mail || ''
+    };
+
+    // Fila instructiva (reemplaza al botón nativo)
+    sheet.getRange(fila, 1, 1, 10).merge();
+    sheet.getRange(fila, 1)
+      .setValue('▶  Menú → Gestión Compras → 🛒 Generar OC desde Stock  (con filas tildadas arriba)')
+      .setBackground('#E8F5E9').setFontColor('#137333')
+      .setFontStyle('italic').setFontSize(10)
+      .setHorizontalAlignment('center');
+    sheet.setRowHeight(fila, 24);
+    fila++;
+
+    // Separador
+    fila += 1;
+  });
+
+  // Guardar mapa en ScriptProperties
+  PropertiesService.getScriptProperties()
+    .setProperty('MAPA_PROV_STOCK', JSON.stringify(mapaProveedores));
+
+  // Anchos de columna
+  sheet.setColumnWidth(1, 65);   // checkbox
+  sheet.setColumnWidth(2, 90);   // codigo
+  sheet.setColumnWidth(3, 260);  // descripcion
+  sheet.setColumnWidth(4, 120);  // categoria
+  sheet.setColumnWidth(5, 75);   // stock (u.)
+  sheet.setColumnWidth(6, 85);   // estado
+  sheet.setColumnWidth(7, 90);   // precio
+  sheet.setColumnWidth(8, 85);   // consumo
+  sheet.setColumnWidth(9, 230);  // lotes+venc
+  sheet.setColumnWidth(10, 90);  // cant pedir
+}
+
+function generarOrdenDesdeStock() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Stock_por_Proveedor');
+  var ui    = SpreadsheetApp.getUi();
+
+  if (!sheet) {
+    ui.alert('Primero actualizá la hoja Stock_por_Proveedor desde el menú.');
+    return;
+  }
+
+  // Leer mapa de proveedores guardado
+  var mapaProp = PropertiesService.getScriptProperties().getProperty('MAPA_PROV_STOCK');
+  if (!mapaProp) {
+    ui.alert('No se encontró el mapa de proveedores. Actualizá la hoja Stock_por_Proveedor primero.');
+    return;
+  }
+  var mapa = JSON.parse(mapaProp);
+
+  // Leer toda la hoja de una vez (eficiencia)
+  var allData = sheet.getDataRange().getValues();
+
+  // Buscar filas tildadas (col A = true) y agrupar por proveedor
+  var itemsPorProv = {}; // { codProv: [ {codigo, descripcion, cantidad, precio} ] }
+
+  Object.keys(mapa).forEach(function(codProv) {
+    var rango = mapa[codProv];
+    for (var r = rango.filaInicio - 1; r <= rango.filaFin - 1; r++) {
+      var row = allData[r];
+      if (row[0] !== true) continue; // col A = checkbox
+
+      var cod      = String(row[1]).trim();  // col B
+      var desc     = String(row[2]).trim();  // col C
+      var precioRaw = String(row[6]).replace('$', '').trim(); // col G
+      var precio   = parseFloat(precioRaw) || 0;
+      var cant     = Number(row[9]) || 1;   // col J
+
+      if (!cod) continue;
+      if (!itemsPorProv[codProv]) itemsPorProv[codProv] = [];
+      itemsPorProv[codProv].push({
+        codigo_insumo:  cod,
+        descripcion:    desc,
+        cantidad:       cant,
+        precio_unitario: precio,
+        subtotal:       cant * precio
+      });
+    }
+  });
+
+  var proveedoresConItems = Object.keys(itemsPorProv);
+
+  if (proveedoresConItems.length === 0) {
+    ui.alert('No hay insumos seleccionados.\n\nTildá los insumos que querés pedir en la columna "✔ Pedir" y volvé a ejecutar.');
+    return;
+  }
+
+  // Si hay items de más de un proveedor, confirmar que se crearán varias OC
+  if (proveedoresConItems.length > 1) {
+    var nombres = proveedoresConItems.map(function(c) {
+      return '• ' + mapa[c].nombre + ' (' + itemsPorProv[c].length + ' items)';
+    }).join('\n');
+    var resp = ui.alert(
+      'Se crearán ' + proveedoresConItems.length + ' órdenes de compra separadas:',
+      nombres + '\n\n¿Confirmás?',
+      ui.ButtonSet.YES_NO
+    );
+    if (resp !== ui.Button.YES) return;
+  }
+
+  // Abrir diálogo para fecha entrega + observaciones
+  // Pasamos los datos via ScriptProperties para que el HTML los reciba
+  PropertiesService.getScriptProperties()
+    .setProperty('OC_DESDE_STOCK', JSON.stringify({
+      proveedores: proveedoresConItems,
+      items:       itemsPorProv,
+      mapa:        mapa
+    }));
+
+  // DESPUÉS
+  var datosJSON = JSON.stringify({
+    proveedores: proveedoresConItems,
+    items:       itemsPorProv,
+    mapa:        mapa
+  });
+
+  var template = HtmlService.createTemplateFromFile('DialogOrdenStock');
+  template.datosOC = datosJSON;  // inyección directa — sin round-trip
+
+  var html = template.evaluate()
+    .setWidth(420).setHeight(320)   // +40px para el nuevo campo
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  ui.showModalDialog(html, '🛒 Confirmar Orden de Compra');
+}
+
+// ============================================================
+// FUNCIÓN: Ejecutar creación de OC (llamada desde el diálogo HTML)
+// ============================================================
+
+// ============================================================
+// FIX Bug Items 1 + 6: precio_referencial desde hoja Insumos
+// Reemplaza la función confirmarOrdenDesdeStock() completa
+// ============================================================
+
+function confirmarOrdenDesdeStock(fechaEntrega, observaciones, solicitadoPor) {
+  var datos  = JSON.parse(
+    PropertiesService.getScriptProperties().getProperty('OC_DESDE_STOCK')
+  );
+  var usuario = getCurrentUser();
+  var ordenesCreadas = [];
+
+  // ✅ FIX: Leer catálogo de Insumos UNA sola vez para rescatar precio_referencial
+  // cuando el precio de la hoja Stock_por_Proveedor venga vacío o en "-"
+  var catalogoInsumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+  var mapaPrecioRef = {};
+  catalogoInsumos.forEach(function(ins) {
+    var cod = String(ins.codigo_insumo).trim();
+    mapaPrecioRef[cod] = Number(ins.precio_referencial) || 0;
+  });
+
+  datos.proveedores.forEach(function(codProv) {
+    var items = datos.items[codProv];
+    if (!items || items.length === 0) return;
+
+    var itemsConIdx = items.map(function(it, i) {
+      // ✅ FIX: Si el precio de Stock es 0, usar precio_referencial del catálogo
+      var precio = Number(it.precio_unitario) || 0;
+      if (precio === 0) {
+        precio = mapaPrecioRef[String(it.codigo_insumo).trim()] || 0;
+      }
+      var subtotal = it.cantidad * precio;
+
+      return {
+        item:            i + 1,
+        codigo_insumo:   it.codigo_insumo,
+        descripcion:     it.descripcion,
+        cantidad:        it.cantidad,
+        precio_unitario: precio,   // ✅ Siempre con valor real
+        subtotal:        subtotal  // ✅ Subtotal correcto para gastos y totales
+      };
+    });
+
+    var ordenData = {
+      proveedor:              codProv,
+      fecha_entrega_estimada: fechaEntrega || '',
+      observaciones:          observaciones || '',
+      solicitado_por:         solicitadoPor || '',
+      items:                  itemsConIdx
+    };
+
+    var numeroOrden = crearOrdenCompra(ordenData);
+    ordenesCreadas.push(numeroOrden + ' → ' + datos.mapa[codProv].nombre);
+  });
+
+  // Limpiar checkboxes en la hoja
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Stock_por_Proveedor');
+  if (sheet) {
+    var allData = sheet.getDataRange().getValues();
+    for (var r = 0; r < allData.length; r++) {
+      if (allData[r][0] === true) {
+        sheet.getRange(r + 1, 1).setValue(false);
+      }
+    }
+  }
+
+  // Limpiar prop temporal
+  PropertiesService.getScriptProperties().deleteProperty('OC_DESDE_STOCK');
+
+  return ordenesCreadas;
+}
+
+// ============================================================
+  // DASHBOARD: Sección de historial de gastos mensuales
+  // ============================================================
+
+  function agregarSeccionGastos(sheet, filaInicio) {
+    var tz = Session.getScriptTimeZone();
+
+    // ── 1. Cargar datos ──────────────────────────────────────
+    var ordenes = getDatosSheet(CONFIG.SHEETS.ORDENES);
+    var detalle = getDatosSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+    var insumos = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+
+    // ── 2. Mapas de lookup ───────────────────────────────────
+    var mapOrdenes = {};
+    ordenes.forEach(function(o) {
+      if (String(o.estado || '').trim() !== 'Cancelada') {
+        mapOrdenes[String(o.numero_orden).trim()] =
+          String(o.nombre_proveedor || o.codigo_proveedor || 'Sin proveedor').trim();
+      }
+    });
+
+    var mapInsumos = {};
+    insumos.forEach(function(ins) {
+      mapInsumos[String(ins.codigo_insumo).trim()] =
+        String(ins.categoria || 'Sin categoría').trim();
+    });
+
+    // ── 3. Acumular por mes ──────────────────────────────────
+    var porMes = {};
+    detalle.forEach(function(item) {
+      var numOrden = String(item.numero_orden || '').trim();
+      if (!mapOrdenes[numOrden]) return;
+
+      var fecha = new Date(item['fecha de pedido']);
+      if (isNaN(fecha.getTime())) return;
+
+      var mesKey   = Utilities.formatDate(fecha, tz, 'yyyy-MM');
+      var mesLabel = Utilities.formatDate(fecha, tz, 'MM/yyyy');
+      var subtotal = Number(item.subtotal) || (Number(item.cantidad) * Number(item.precio_unitario)) || 0;
+      var prov     = mapOrdenes[numOrden];
+      var cat      = mapInsumos[String(item.codigo_insumo || '').trim()] || 'Sin categoría';
+
+      if (!porMes[mesKey]) {
+        porMes[mesKey] = { label: mesLabel, total: 0, provs: {}, cats: {} };
+      }
+      porMes[mesKey].total          += subtotal;
+      porMes[mesKey].provs[prov]     = (porMes[mesKey].provs[prov] || 0) + subtotal;
+      porMes[mesKey].cats[cat]       = (porMes[mesKey].cats[cat]   || 0) + subtotal;
+    });
+
+    // ── 4. Título ────────────────────────────────────────────
+    sheet.getRange(filaInicio, 2)
+      .setValue('💰 Historial de Gastos Mensuales')
+      .setFontSize(14).setFontWeight('bold').setFontColor('#202124');
+
+    if (Object.keys(porMes).length === 0) {
+      sheet.getRange(filaInicio + 1, 2)
+        .setValue('Sin órdenes de compra registradas aún.')
+        .setFontStyle('italic').setFontColor('#5f6368');
+      return filaInicio + 4;
+    }
+
+    // ── 5. KPI: gasto mes actual ─────────────────────────────
+    var ahora        = new Date();
+    var mesActualKey = Utilities.formatDate(ahora, tz, 'yyyy-MM');
+    var datosMes     = porMes[mesActualKey];
+    var gastoMes     = datosMes ? datosMes.total : 0;
+
+    crearTarjetaKPI(sheet, filaInicio + 1, 2,
+      'Gasto ' + Utilities.formatDate(ahora, tz, 'MM/yyyy'),
+      '$' + gastoMes.toFixed(2),
+      '#0b8043');
+
+    // ── 6. Tabla: historial 6 meses ──────────────────────────
+    var meses  = Object.keys(porMes).sort().reverse().slice(0, 6);
+    var filaTH = filaInicio + 5;
+
+    sheet.getRange(filaTH, 2, 1, 4)
+      .setValues([['Mes', 'Gasto Total', 'Var. vs anterior', 'Principal Proveedor']])
+      .setBackground('#0b8043').setFontColor('white').setFontWeight('bold');
+
+    var filasDatos = meses.map(function(mk, i) {
+      var d      = porMes[mk];
+      var varStr = '-';
+      if (i < meses.length - 1) {
+        var ant = porMes[meses[i + 1]].total;
+        if (ant > 0) {
+          var pct = ((d.total - ant) / ant) * 100;
+          varStr  = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+        }
+      }
+      var provKeys = Object.keys(d.provs);
+      var prinProv = provKeys.length
+        ? provKeys.sort(function(a, b) { return d.provs[b] - d.provs[a]; })[0]
+        : '-';
+      return [d.label, d.total, varStr, prinProv];
+    });
+
+    var rangoMeses = sheet.getRange(filaTH + 1, 2, filasDatos.length, 4);
+    rangoMeses.setValues(filasDatos);
+    sheet.getRange(filaTH + 1, 3, filasDatos.length, 1).setNumberFormat('$#,##0.00');
+    rangoMeses.setBorder(true, true, true, true, true, true, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+
+    for (var i = 0; i < meses.length; i++) {
+      var bgMes = meses[i] === mesActualKey ? '#e6f4ea' : (i % 2 === 0 ? '#f8f9fa' : 'white');
+      sheet.getRange(filaTH + 1 + i, 2, 1, 4).setBackground(bgMes);
+    }
+
+    var filaPost = filaTH + 1 + meses.length;
+
+    if (!datosMes) { return filaPost + 2; }
+
+    // ── 7. Sub-tablas: Proveedor y Categoría (mes actual) ────
+    var filaSubH = filaPost + 2;
+
+    // — Proveedores (cols B–C) —
+    sheet.getRange(filaSubH, 2)
+      .setValue('Gasto por proveedor — ' + Utilities.formatDate(ahora, tz, 'MM/yyyy'))
+      .setFontWeight('bold').setFontColor('#0b8043');
+    sheet.getRange(filaSubH + 1, 2, 1, 2)
+      .setValues([['Proveedor', 'Gasto']])
+      .setBackground('#0b8043').setFontColor('white').setFontWeight('bold');
+
+    var provsSorted = Object.keys(datosMes.provs)
+      .sort(function(a, b) { return datosMes.provs[b] - datosMes.provs[a]; });
+    var filasProv = provsSorted.map(function(p) { return [p, datosMes.provs[p]]; });
+
+    if (filasProv.length) {
+      var rangoProv = sheet.getRange(filaSubH + 2, 2, filasProv.length, 2);
+      rangoProv.setValues(filasProv);
+      sheet.getRange(filaSubH + 2, 3, filasProv.length, 1).setNumberFormat('$#,##0.00');
+      rangoProv.setBorder(true, true, true, true, true, true, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+      for (var j = 0; j < filasProv.length; j++) {
+        sheet.getRange(filaSubH + 2 + j, 2, 1, 2).setBackground(j % 2 === 0 ? '#f8f9fa' : 'white');
+      }
+    }
+
+    // — Categorías (cols E–G) —
+    sheet.getRange(filaSubH, 5)
+      .setValue('Gasto por categoría — ' + Utilities.formatDate(ahora, tz, 'MM/yyyy'))
+      .setFontWeight('bold').setFontColor('#0b8043');
+    sheet.getRange(filaSubH + 1, 5, 1, 3)
+      .setValues([['Categoría', 'Gasto', '% del total']])
+      .setBackground('#0b8043').setFontColor('white').setFontWeight('bold');
+
+    var catsSorted = Object.keys(datosMes.cats)
+      .sort(function(a, b) { return datosMes.cats[b] - datosMes.cats[a]; });
+    var filasCat = catsSorted.map(function(c) {
+      var pct = gastoMes > 0 ? ((datosMes.cats[c] / gastoMes) * 100).toFixed(1) + '%' : '-';
+      return [c, datosMes.cats[c], pct];
+    });
+
+    if (filasCat.length) {
+      var rangoCat = sheet.getRange(filaSubH + 2, 5, filasCat.length, 3);
+      rangoCat.setValues(filasCat);
+      sheet.getRange(filaSubH + 2, 6, filasCat.length, 1).setNumberFormat('$#,##0.00');
+      rangoCat.setBorder(true, true, true, true, true, true, '#dadce0', SpreadsheetApp.BorderStyle.SOLID);
+      for (var k = 0; k < filasCat.length; k++) {
+        sheet.getRange(filaSubH + 2 + k, 5, 1, 3).setBackground(k % 2 === 0 ? '#f8f9fa' : 'white');
+      }
+    }
+
+    var alturaSubTablas = Math.max(filasProv.length, filasCat.length);
+    var filaPostTablas  = filaSubH + 2 + alturaSubTablas + 2;
+
+    // ── 8. Gráficos — apilados debajo de las tablas ──────────
+    var filaGraficos = filaPostTablas + 1;
+
+    // Gráfico 1: barras — gastos por mes (ancho completo)
+    var rMeses = sheet.getRange(filaTH, 2, filasDatos.length + 1, 2);
+    sheet.insertChart(sheet.newChart()
+      .setChartType(Charts.ChartType.COLUMN)
+      .addRange(rMeses)
+      .setPosition(filaGraficos, 2, 0, 0)
+      .setOption('title', 'Gastos por mes')
+      .setOption('width', 520).setOption('height', 250)
+      .setOption('colors', ['#0b8043'])
+      .setOption('legend', {position: 'none'})
+      .build());
+
+    var filaGraf2 = filaGraficos + 16; // ~250px / 15px por fila ≈ 16 filas
+
+    // Gráfico 2: torta — por proveedor
+    if (filasProv.length > 0) {
+      var rProv = sheet.getRange(filaSubH + 1, 2, filasProv.length + 1, 2);
+      sheet.insertChart(sheet.newChart()
+        .setChartType(Charts.ChartType.PIE)
+        .addRange(rProv)
+        .setPosition(filaGraf2, 2, 0, 0)
+        .setOption('title', 'Por proveedor — ' + Utilities.formatDate(ahora, tz, 'MM/yyyy'))
+        .setOption('width', 420).setOption('height', 270)
+        .setOption('pieSliceText', 'percentage')
+        .build());
+    }
+
+    // Gráfico 3: torta — por categoría (al lado del 2, misma fila)
+    if (filasCat.length > 0) {
+      var rCat = sheet.getRange(filaSubH + 1, 5, filasCat.length + 1, 2);
+      sheet.insertChart(sheet.newChart()
+        .setChartType(Charts.ChartType.PIE)
+        .addRange(rCat)
+        .setPosition(filaGraf2, 5, 0, 0)
+        .setOption('title', 'Por categoría — ' + Utilities.formatDate(ahora, tz, 'MM/yyyy'))
+        .setOption('width', 420).setOption('height', 270)
+        .setOption('pieSliceText', 'percentage')
+        .build());
+    }
+
+    return filaGraficos;
+  }
+
+  function diagnosticoGastos() {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var msg = '';
+
+    var shOrdenes = ss.getSheetByName('Ordenes_Compra');
+    var shDetalle = ss.getSheetByName('Detalle_Ordenes');
+
+    msg += 'Ordenes_Compra: ' + (shOrdenes ? shOrdenes.getLastRow() + ' filas' : 'NO EXISTE') + '\n';
+    msg += 'Detalle_Ordenes: ' + (shDetalle ? shDetalle.getLastRow() + ' filas' : 'NO EXISTE') + '\n';
+
+    if (shDetalle && shDetalle.getLastRow() >= 2) {
+      var headers = shDetalle.getRange(1, 1, 1, shDetalle.getLastColumn()).getValues()[0];
+      msg += '\nColumnas Detalle_Ordenes:\n' + headers.join(' | ');
+      var fila2 = shDetalle.getRange(2, 1, 1, shDetalle.getLastColumn()).getValues()[0];
+      msg += '\n\nFila 2:\n' + fila2.join(' | ');
+    }
+
+    if (shOrdenes && shOrdenes.getLastRow() >= 2) {
+      var hOrd = shOrdenes.getRange(1, 1, 1, shOrdenes.getLastColumn()).getValues()[0];
+      msg += '\n\nColumnas Ordenes_Compra:\n' + hOrd.join(' | ');
+      var fOrd2 = shOrdenes.getRange(2, 1, 1, shOrdenes.getLastColumn()).getValues()[0];
+      msg += '\n\nFila 2:\n' + fOrd2.join(' | ');
+    }
+
+    SpreadsheetApp.getUi().alert(msg);
+  }
+
+  // ============================================================
+// FUNCIÓN 1: Preparar columnas de % en hoja Proveedores
+// Llamar desde el menú antes de ingresar los porcentajes.
+// Detecta todas las categorías existentes en Insumos y crea
+// una columna por categoría en la hoja Proveedores.
+// ============================================================
+
+function prepararColumnasPorcentaje() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var sheetProv    = getSheet(CONFIG.SHEETS.PROVEEDORES);
+  var sheetInsumos = getSheet(CONFIG.SHEETS.INSUMOS);
+
+  // Leer todas las categorías únicas de Insumos
+  var dataIns   = sheetInsumos.getDataRange().getValues();
+  var headersIns = dataIns[0];
+  var idxCat    = headersIns.indexOf('categoria');
+  var idxActivo = headersIns.indexOf('activo');
+
+  if (idxCat === -1) {
+    ui.alert('No se encontró la columna "categoria" en la hoja Insumos.');
+    return;
+  }
+
+  var categorias = [];
+  for (var r = 1; r < dataIns.length; r++) {
+    var activo = dataIns[r][idxActivo];
+    if (activo !== true && activo !== 'TRUE' && activo !== 'VERDADERO') continue;
+    var cat = String(dataIns[r][idxCat]).trim();
+    if (cat && categorias.indexOf(cat) === -1) categorias.push(cat);
+  }
+  categorias.sort();
+
+  if (categorias.length === 0) {
+    ui.alert('No se encontraron categorías en la hoja Insumos.');
+    return;
+  }
+
+  // Leer headers actuales de Proveedores
+  var headersProv = sheetProv.getRange(1, 1, 1, sheetProv.getLastColumn()).getValues()[0];
+
+  // Agregar columnas faltantes para cada categoría
+  var prefix   = 'ajuste_%_';
+  var colAgregadas = 0;
+
+  categorias.forEach(function(cat) {
+    var colName = prefix + cat;
+    if (headersProv.indexOf(colName) === -1) {
+      var nuevaCol = sheetProv.getLastColumn() + 1;
+      sheetProv.getRange(1, nuevaCol).setValue(colName)
+        .setBackground('#FFF8E1').setFontWeight('bold')
+        .setFontColor('#B06000').setFontSize(10);
+      sheetProv.setColumnWidth(nuevaCol, 130);
+      headersProv.push(colName); // actualizar para detectar duplicados en el loop
+      colAgregadas++;
+    }
+  });
+
+  // Nota instructiva en la fila 1 si es la primera vez
+  var instrCol = sheetProv.getLastColumn() + 1;
+  sheetProv.getRange(1, instrCol)
+    .setValue('← Ingresá el % de aumento en cada columna "ajuste_%_CATEGORIA" (ej: 10 = +10%, -5 = -5%). Luego ejecutá Menú → 💲 Aplicar ajuste de precios.')
+    .setFontStyle('italic').setFontColor('#888888').setFontSize(10);
+  sheetProv.setColumnWidth(instrCol, 400);
+
+  // Formato para celdas de datos (fila 2 en adelante)
+  var lastRow = sheetProv.getLastRow();
+  if (lastRow >= 2 && colAgregadas > 0) {
+    var firstAjusteCol = headersProv.indexOf(prefix + categorias[0]) + 1;
+    var ajusteCols     = categorias.length;
+    sheetProv.getRange(2, firstAjusteCol, lastRow - 1, ajusteCols)
+      .setBackground('#FFFDE7')
+      .setHorizontalAlignment('center')
+      .setNumberFormat('0.##"%"');
+  }
+
+  SpreadsheetApp.flush();
+
+  if (colAgregadas > 0) {
+    ui.alert('✅ Se agregaron ' + colAgregadas + ' columna(s) de ajuste para: ' + categorias.join(', ') + '.\n\nIngresá los porcentajes en la hoja Proveedores y luego ejecutá "💲 Aplicar ajuste de precios".');
+  } else {
+    ui.alert('Las columnas de ajuste ya estaban creadas para todas las categorías: ' + categorias.join(', ') + '.\n\nIngresá los porcentajes y luego ejecutá "💲 Aplicar ajuste de precios".');
+  }
+}
+
+
+// ============================================================
+// FUNCIÓN 2: Aplicar ajuste de precios
+// Lee los % ingresados en la hoja Proveedores,
+// actualiza precio_referencial en Insumos,
+// registra en Historial_Precios.
+// ============================================================
+
+function aplicarAjustePrecios() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var sheetProv    = ss.getSheetByName(CONFIG.SHEETS.PROVEEDORES);
+  var sheetInsumos = ss.getSheetByName(CONFIG.SHEETS.INSUMOS);
+  var sheetHist    = ss.getSheetByName(CONFIG.SHEETS.HIST_PRECIOS);
+
+  if (!sheetProv || !sheetInsumos) {
+    ui.alert('No se encontraron las hojas necesarias.');
+    return;
+  }
+
+  // Leer hoja Proveedores completa
+  var dataProv    = sheetProv.getDataRange().getValues();
+  var headersProv = dataProv[0];
+
+  var idxCodProv  = headersProv.indexOf('codigo_proveedor');
+  var idxNombre   = headersProv.indexOf('razon_social');
+  var idxActProv  = headersProv.indexOf('activo');
+
+  // Detectar columnas de ajuste (prefijo 'ajuste_%_')
+  var prefix = 'ajuste_%_';
+  var colsAjuste = []; // [{col: N, categoria: 'REACTIVOS'}]
+  headersProv.forEach(function(h, i) {
+    if (String(h).indexOf(prefix) === 0) {
+      colsAjuste.push({ col: i, categoria: String(h).replace(prefix, '').trim() });
+    }
+  });
+
+  if (colsAjuste.length === 0) {
+    ui.alert('No se encontraron columnas de ajuste.\n\nEjecutá primero "📋 Preparar columnas de % en Proveedores".');
+    return;
+  }
+
+  // Construir mapa: { codProv: { CATEGORIA: pct, ... } }
+  var mapaAjustes = {};
+  var mapaNombres = {};
+  for (var r = 1; r < dataProv.length; r++) {
+    var codProv = String(dataProv[r][idxCodProv]).trim();
+    if (!codProv) continue;
+    var activo = dataProv[r][idxActProv];
+    if (activo !== true && activo !== 'TRUE' && activo !== 'VERDADERO') continue;
+
+    mapaNombres[codProv] = String(dataProv[r][idxNombre]).trim();
+    mapaAjustes[codProv] = {};
+    colsAjuste.forEach(function(ca) {
+      var val = dataProv[r][ca.col];
+      var pct = parseFloat(val);
+      if (!isNaN(pct) && pct !== 0) {
+        mapaAjustes[codProv][ca.categoria] = pct;
+      }
+    });
+  }
+
+  // Verificar que haya al menos un % cargado
+  var hayAjustes = Object.keys(mapaAjustes).some(function(cod) {
+    return Object.keys(mapaAjustes[cod]).length > 0;
+  });
+  if (!hayAjustes) {
+    ui.alert('No hay porcentajes cargados en la hoja Proveedores.\n\nIngresá los valores en las columnas "ajuste_%_CATEGORIA" y volvé a ejecutar.');
+    return;
+  }
+
+  // Mostrar resumen de ajustes a aplicar y pedir confirmación
+  var resumen = [];
+  Object.keys(mapaAjustes).forEach(function(cod) {
+    var cats = mapaAjustes[cod];
+    if (Object.keys(cats).length === 0) return;
+    resumen.push('• ' + mapaNombres[cod] + ':');
+    Object.keys(cats).forEach(function(cat) {
+      var signo = cats[cat] > 0 ? '+' : '';
+      resumen.push('    - ' + cat + ': ' + signo + cats[cat] + '%');
+    });
+  });
+
+  var resp = ui.alert(
+    '💲 Confirmar ajuste de precios',
+    'Se aplicarán los siguientes ajustes:\n\n' + resumen.join('\n') +
+    '\n\n⚠️ Esta acción actualiza precio_referencial en Insumos y registra en Historial_Precios.\n¿Confirmás?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+
+  // Leer Insumos
+  var dataIns    = sheetInsumos.getDataRange().getValues();
+  var headersIns = dataIns[0];
+  var idxCodIns  = headersIns.indexOf('codigo_insumo');
+  var idxDesc    = headersIns.indexOf('descripcion');
+  var idxCatIns  = headersIns.indexOf('categoria');
+  var idxPrecio  = headersIns.indexOf('precio_referencial');
+  var idxProvPref = headersIns.indexOf('proveedor_preferido');
+  var idxActIns  = headersIns.indexOf('activo');
+
+  var fecha   = new Date();
+  var usuario = getCurrentUser();
+
+  var contActualizados = 0;
+  var contSinPrecio    = 0;
+  var detalleLog       = [];
+
+  for (var ri = 1; ri < dataIns.length; ri++) {
+    var actIns = dataIns[ri][idxActIns];
+    if (actIns !== true && actIns !== 'TRUE' && actIns !== 'VERDADERO') continue;
+
+    var codIns   = String(dataIns[ri][idxCodIns]).trim();
+    var desc     = String(dataIns[ri][idxDesc]).trim();
+    var cat      = String(dataIns[ri][idxCatIns]).trim();
+    var provPref = String(dataIns[ri][idxProvPref]).trim();
+    var precioAct = Number(dataIns[ri][idxPrecio]) || 0;
+
+    // Buscar si este proveedor tiene ajuste para esta categoría
+    var ajustesProv = mapaAjustes[provPref];
+    if (!ajustesProv) continue;
+    var pct = ajustesProv[cat];
+    if (pct === undefined) continue;
+
+    // Calcular nuevo precio
+    var precioNuevo = precioAct > 0
+      ? Math.round(precioAct * (1 + pct / 100) * 100) / 100
+      : 0;
+
+    if (precioAct === 0) {
+      contSinPrecio++;
+      continue; // no actualizar si no tenía precio base
+    }
+
+    // Actualizar precio_referencial en Insumos
+    sheetInsumos.getRange(ri + 1, idxPrecio + 1).setValue(precioNuevo);
+
+    // Registrar en Historial_Precios
+    if (sheetHist) {
+      var variacionPct = Math.round(((precioNuevo - precioAct) / precioAct) * 10000) / 100;
+      sheetHist.appendRow([
+        fecha,
+        codIns,
+        desc,
+        mapaNombres[provPref] || provPref,
+        precioAct,
+        precioNuevo,
+        (variacionPct > 0 ? '+' : '') + variacionPct + '%',
+        'AJUSTE_MASIVO_' + (pct > 0 ? '+' : '') + pct + '%',
+        usuario
+      ]);
+    }
+
+    contActualizados++;
+    detalleLog.push(desc + ': $' + precioAct.toFixed(2) + ' → $' + precioNuevo.toFixed(2));
+  }
+
+  // Limpiar los % ingresados en Proveedores (evitar re-aplicación accidental)
+  for (var rp = 1; rp < dataProv.length; rp++) {
+    colsAjuste.forEach(function(ca) {
+      sheetProv.getRange(rp + 1, ca.col + 1).clearContent();
+    });
+  }
+
+  SpreadsheetApp.flush();
+
+  // Mensaje final
+  var msgFinal = '✅ Ajuste aplicado exitosamente.\n\n' +
+    '• Insumos actualizados: ' + contActualizados + '\n' +
+    (contSinPrecio > 0 ? '• Sin precio base (no actualizados): ' + contSinPrecio + '\n' : '') +
+    '\nLos porcentajes fueron borrados de la hoja Proveedores para evitar una re-aplicación accidental.' +
+    '\n\nEjecutá "Actualizar Dashboard" para ver los cambios reflejados.';
+
+  ui.alert(msgFinal);
+}
+
+function actualizarStockIncremental(itemsRecibidos, catalogoInsumos) {
+  var sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  var lastRow    = sheetStock.getLastRow();
+  var ahora      = new Date();
+
+  // Leer Stock_Actual completo una sola vez
+  var dataStock   = lastRow > 1
+    ? sheetStock.getRange(2, 1, lastRow - 1, 9).getValues()
+    : [];
+
+  // Construir mapa: "codigo|lote" → índice en dataStock (0-based)
+  var mapaStock = {};
+  dataStock.forEach(function(row, idx) {
+    var cod  = String(row[0]).trim();
+    var lote = String(row[6]).trim();
+    mapaStock[cod + '|' + lote] = idx;
+  });
+
+  // Calcular stock total actual por código (para recalcular estado)
+  var stockTotalPorCodigo = {};
+  dataStock.forEach(function(row) {
+    var cod = String(row[0]).trim();
+    stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + (Number(row[2]) || 0);
+  });
+
+  // Codigos afectados por esta recepción (para recalcular estado al final)
+  var codigosAfectados = {};
+
+  itemsRecibidos.forEach(function(item) {
+    var cod  = String(item.codigo_insumo).trim();
+    var lote = String(item.lote).trim();
+    var llave = cod + '|' + lote;
+    var cantAgregar = Number(item.cantidad_stock) || 0;
+
+    codigosAfectados[cod] = true;
+
+    if (mapaStock.hasOwnProperty(llave)) {
+      // ── Lote ya existe: sumar cantidad ─────────────────────────
+      var idx = mapaStock[llave];
+      dataStock[idx][2] = (Number(dataStock[idx][2]) || 0) + cantAgregar; // col C: stock_disponible
+      dataStock[idx][5] = ahora;                                           // col F: fecha actualización
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + cantAgregar;
+
+    } else {
+      // ── Lote nuevo: agregar fila ────────────────────────────────
+      var ins     = item.infoInsumo;
+      var critico = ins ? Number(ins.stock_critico) || 0 : 0;
+
+      var nuevaFila = [
+        cod,
+        item.descripcion,
+        cantAgregar,          // C: stock_disponible
+        critico,              // D: stock_critico
+        'OK',                 // E: estado (se recalcula abajo)
+        ahora,                // F: fecha
+        lote,                 // G: lote
+        item.vencimiento,     // H: vencimiento
+        ins ? ins.clasificacion || '' : ''  // I: clasificacion
+      ];
+      dataStock.push(nuevaFila);
+      mapaStock[llave] = dataStock.length - 1;
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + cantAgregar;
+    }
+  });
+
+  // ── Recalcular estado para todos los lotes de los códigos afectados
+  dataStock.forEach(function(row) {
+    var cod = String(row[0]).trim();
+    if (!codigosAfectados[cod]) return;
+
+    var ins     = catalogoInsumos.find(function(i) { return String(i.codigo_insumo).trim() === cod; });
+    var critico = ins ? Number(ins.stock_critico) || 0 : Number(row[3]) || 0;
+    var total   = stockTotalPorCodigo[cod] || 0;
+
+    row[4] = total <= 0 ? 'Agotado' : total <= critico ? 'Crítico' : 'OK';
+  });
+
+  // ── Reescribir Stock_Actual completo (solo si hay datos) ────────
+  // Solo filtramos filas con stock > 0 (igual que actualizarStockActual)
+  var filasValidas = dataStock.filter(function(row) { return Number(row[2]) > 0; });
+
+  // Limpiar y reescribir
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+  }
+
+  if (filasValidas.length > 0) {
+    sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+    // Ordenar por vencimiento (FIFO) — igual que actualizarStockActual
+    sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+  }
+
+ // Stock_por_Proveedor NO se actualiza aquí.
+  // Es una vista de consulta — actualizarla desde el menú cuando sea necesario.
+}
+
+// ============================================================
+//  BONUS — ocultarHojasInternas()
+//  Ejecutar UNA VEZ después del deploy para simplificar UX
+//  Deja visibles solo las hojas operativas
+// ============================================================
+
+function ocultarHojasInternas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const OCULTAR = [
+    'Detalle_Ordenes',
+    'Detalle_Recepciones',
+    'Movimientos_Inventario',
+    'Historial_Precios'
+  ];
+
+  const resultados = [];
+  OCULTAR.forEach(nombre => {
+    const sh = ss.getSheetByName(nombre);
+    if (sh) {
+      sh.hideSheet();
+      resultados.push('✅ ' + nombre);
+    } else {
+      resultados.push('⚠️ No encontrada: ' + nombre);
+    }
+  });
+
+  ui.alert(
+    '🙈 Hojas ocultadas',
+    'Resultado:\n\n' + resultados.join('\n') +
+    '\n\nPodés mostrarlas desde Menú → Ver → Hojas ocultas si necesitás acceso directo.',
+    ui.ButtonSet.OK
+  );
+}
+
+function resetearParaProduccion() {
+  var ui = SpreadsheetApp.getUi();
+  
+  var conf1 = ui.alert(
+    '⚠️ RESET PARA PRODUCCIÓN',
+    'Esta operación ELIMINA TODOS LOS DATOS DE PRUEBA:\n\n' +
+    '• Ordenes_Compra y Detalle_Ordenes\n' +
+    '• Recepciones y Detalle_Recepciones\n' +
+    '• Movimientos_Inventario\n' +
+    '• Stock_Actual\n' +
+    '• Historial_Precios\n\n' +
+    'CONSERVA:\n' +
+    '• Insumos (catálogo)\n' +
+    '• Proveedores\n' +
+    '• Config_Conversiones\n\n' +
+    '¿Estás seguro?',
+    ui.ButtonSet.YES_NO
+  );
+  if (conf1 !== ui.Button.YES) return;
+
+  var conf2 = ui.prompt(
+    'Confirmación final',
+    'Escribí RESET para confirmar:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (conf2.getSelectedButton() !== ui.Button.OK) return;
+  if (conf2.getResponseText().trim().toUpperCase() !== 'RESET') {
+    ui.alert('Cancelado. No se realizaron cambios.');
+    return;
+  }
+
+  var hojasLimpiar = [
+    CONFIG.SHEETS.ORDENES,
+    CONFIG.SHEETS.DETALLE_ORDENES,
+    CONFIG.SHEETS.RECEPCIONES,
+    CONFIG.SHEETS.DETALLE_RECEPCIONES,
+    CONFIG.SHEETS.MOVIMIENTOS,
+    CONFIG.SHEETS.STOCK,
+    CONFIG.SHEETS.HIST_PRECIOS
+  ];
+
+  var resultados = [];
+  hojasLimpiar.forEach(function(nombre) {
+    try {
+      var sh = getSheet(nombre);
+      var lastRow = sh.getLastRow();
+      if (lastRow > 1) {
+        sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+        resultados.push('✅ ' + nombre + ' (' + (lastRow - 1) + ' filas eliminadas)');
+      } else {
+        resultados.push('ℹ️ ' + nombre + ' (ya estaba vacía)');
+      }
+    } catch(e) {
+      resultados.push('❌ ' + nombre + ': ' + e.message);
+    }
+  });
+
+  // Limpiar Dashboard y sus gráficos
+  try {
+    var shDash = getSheet(CONFIG.SHEETS.DASHBOARD);
+    shDash.clear();
+    shDash.getCharts().forEach(function(c) { shDash.removeChart(c); });
+    resultados.push('✅ Dashboard limpiado');
+  } catch(e) {}
+
+  // Limpiar Stock_por_Proveedor
+  try {
+    var shSP = getSheet(CONFIG.SHEETS.STOCK_PROV);
+    shSP.clear();
+    resultados.push('✅ Stock_por_Proveedor limpiada');
+  } catch(e) {}
+
+  // Limpiar cache de ScriptProperties
+  PropertiesService.getScriptProperties().deleteAllProperties();
+  resultados.push('✅ Cache interno limpiado');
+
+  ui.alert(
+    '✅ RESET COMPLETADO\n\n' +
+    resultados.join('\n') +
+    '\n\n📋 PRÓXIMOS PASOS:\n' +
+    '1. Menú → 📥 Importar Stock Inicial\n' +
+    '2. Menú → 📦 Stock por Proveedor\n' +
+    '3. Menú → 📊 Actualizar Dashboard\n' +
+    '4. Menú → 🙈 Ocultar hojas internas',
+    ui.ButtonSet.OK
+  );
+}
+
+function diagnosticarStockSinConversion() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // Leer conversiones activas
+  var tablaConv = getTablaConversiones();
+  var codigosConConversion = Object.keys(tablaConv);
+  
+  if (codigosConConversion.length === 0) {
+    ui.alert('No hay conversiones activas en Config_Conversiones.');
+    return;
+  }
+  
+  // Leer Stock_Actual
+  var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+  
+  // Leer Movimientos para ver cómo se cargó cada código
+  var shMov   = ss.getSheetByName('Movimientos_Inventario');
+  var dataMov = shMov.getDataRange().getValues();
+  
+  // Para cada código con conversión, ver si tiene movimientos de "Ajuste inicial"
+  // y si esos movimientos tienen nota de conversión o no
+  var msg = 'Insumos con conversión activa que tienen stock en cajas:\n\n';
+  var afectados = [];
+  
+  codigosConConversion.forEach(function(cod) {
+    var factor = tablaConv[cod].factor;
+    
+    // Buscar movimientos de importación para este código
+    var movImport = [];
+    for (var i = 1; i < dataMov.length; i++) {
+      if (String(dataMov[i][3]).trim() === cod && 
+          String(dataMov[i][2]).trim() === 'Ajuste inicial') {
+        var obs = String(dataMov[i][8]).trim();
+        var tieneConvNota = obs.indexOf('[CONV') !== -1;
+        movImport.push({
+          cantidad: Number(dataMov[i][5]),
+          lote:     String(dataMov[i][9]).trim(),
+          obs:      obs,
+          tieneConversion: tieneConvNota
+        });
+      }
+    }
+    
+    if (movImport.length === 0) return; // no fue importado, saltar
+    
+    // ¿Algún movimiento de importación tiene nota de conversión?
+    var algunoConvertido = movImport.some(function(m) { return m.tieneConversion; });
+    
+    if (!algunoConvertido) {
+      // Stock cargado sin conversión — está en cajas
+      var stockActual = 0;
+      stockData.forEach(function(s) {
+        if (String(s.codigo_insumo).trim() === cod) {
+          stockActual += Number(s.stock_disponible) || 0;
+        }
+      });
+      
+      var stockCorregido = stockActual * factor;
+      afectados.push({
+        cod:      cod,
+        factor:   factor,
+        stockCaj: stockActual,
+        stockUni: stockCorregido
+      });
+      msg += cod + ': ' + stockActual + ' cajas × ' + factor + ' = ' + stockCorregido + ' unidades\n';
+    }
+  });
+  
+  if (afectados.length === 0) {
+    msg = '✅ Todos los insumos con conversión fueron importados correctamente.';
+  } else {
+    msg += '\nTotal afectados: ' + afectados.length;
+    msg += '\n\nSi el resultado es correcto, ejecutá\najustarStockPorConversion() para corregirlos.';
+  }
+  
+  ui.alert(msg);
+}
+
+function ajustarStockPorConversion() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var resp = ui.alert(
+    '⚠️ Ajuste de stock por conversiones',
+    'Multiplica el stock actual de 40 insumos por su factor de conversión.\n\n' +
+    'Registra un movimiento de Ajuste en Movimientos_Inventario por cada lote.\n\n' +
+    '¿Confirmás?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) return;
+
+  var tablaConv    = getTablaConversiones();
+  var stockData    = getDatosSheet(CONFIG.SHEETS.STOCK);
+  var shMov        = ss.getSheetByName('Movimientos_Inventario');
+  var shStock      = ss.getSheetByName('Stock_Actual');
+  var dataMov      = shMov.getDataRange().getValues();
+  var dataStock    = shStock.getDataRange().getValues();
+  var ahora        = new Date();
+  var usuario      = Session.getActiveUser().getEmail();
+
+  // Códigos que NO fueron convertidos en la importación
+  // (misma lógica que el diagnóstico)
+  var codigosAfectados = {};
+  Object.keys(tablaConv).forEach(function(cod) {
+    var tieneConvEnMov = false;
+    for (var i = 1; i < dataMov.length; i++) {
+      if (String(dataMov[i][3]).trim() === cod &&
+          String(dataMov[i][2]).trim() === 'Ajuste inicial') {
+        if (String(dataMov[i][8]).indexOf('[CONV') !== -1) {
+          tieneConvEnMov = true;
+          break;
+        }
+      }
+    }
+    if (!tieneConvEnMov) {
+      codigosAfectados[cod] = tablaConv[cod].factor;
+    }
+  });
+
+  // Procesar cada fila de Stock_Actual afectada
+  var movAjustes  = [];
+  var filasActualizar = []; // { rowNum, nuevoStock }
+  var contLotes   = 0;
+
+  for (var i = 1; i < dataStock.length; i++) {
+    var cod    = String(dataStock[i][0]).trim();
+    var factor = codigosAfectados[cod];
+    if (!factor) continue;
+
+    var stockActual = Number(dataStock[i][2]) || 0;
+    if (stockActual <= 0) continue;
+
+    var stockNuevo  = stockActual * factor;
+    var diferencia  = stockNuevo - stockActual; // lo que hay que agregar
+    var lote        = String(dataStock[i][6]).trim();
+    var venc        = dataStock[i][7];
+    var desc        = String(dataStock[i][1]).trim();
+    var cat         = String(dataStock[i][8]).trim();
+
+    // Guardar para escribir en batch
+    filasActualizar.push({ rowNum: i + 1, nuevoStock: stockNuevo });
+
+    // Movimiento de ajuste para trazabilidad
+    movAjustes.push([
+      'CONV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+      ahora,
+      'Ajuste',
+      cod,
+      desc,
+      diferencia,                   // cantidad ajustada (la diferencia)
+      'AJUSTE-CONVERSION-x' + factor,
+      usuario,
+      '[CONV x' + factor + '] Stock corregido de ' + stockActual + ' cajas → ' + stockNuevo + ' unidades',
+      lote,
+      venc,
+      cat
+    ]);
+
+    contLotes++;
+  }
+
+  if (filasActualizar.length === 0) {
+    ui.alert('No se encontraron filas para ajustar.');
+    return;
+  }
+
+  // Batch write Stock_Actual — solo columna C (stock_disponible)
+  filasActualizar.forEach(function(item) {
+    shStock.getRange(item.rowNum, 3).setValue(item.nuevoStock);
+  });
+
+  // Recalcular estado (E) para los códigos afectados
+  // Necesitamos stock total por código después del ajuste
+  var stockTotalPost = {};
+  for (var j = 1; j < dataStock.length; j++) {
+    var c = String(dataStock[j][0]).trim();
+    if (!codigosAfectados[c]) continue;
+    // Buscar si fue actualizado
+    var nuevaCant = dataStock[j][2]; // valor original
+    filasActualizar.forEach(function(item) {
+      if (item.rowNum === j + 1) nuevaCant = item.nuevoStock;
+    });
+    stockTotalPost[c] = (stockTotalPost[c] || 0) + (Number(nuevaCant) || 0);
+  }
+
+  // Actualizar estado en todas las filas afectadas
+  var catalogoInsumos = getInsumosActivos();
+  for (var k = 1; k < dataStock.length; k++) {
+    var cod2 = String(dataStock[k][0]).trim();
+    if (!codigosAfectados[cod2]) continue;
+    var ins     = catalogoInsumos.find(function(i) { return String(i.codigo_insumo).trim() === cod2; });
+    var critico = ins ? Number(ins.stock_critico) || 0 : Number(dataStock[k][3]) || 0;
+    var total   = stockTotalPost[cod2] || 0;
+    var estado  = total <= 0 ? 'Agotado' : total <= critico ? 'Crítico' : 'OK';
+    shStock.getRange(k + 1, 5).setValue(estado);
+  }
+
+  // Batch write Movimientos_Inventario
+  var lastMov = shMov.getLastRow();
+  shMov.getRange(lastMov + 1, 1, movAjustes.length, movAjustes[0].length)
+       .setValues(movAjustes);
+
+  ui.alert(
+    '✅ Ajuste completado\n\n' +
+    '• Lotes ajustados: ' + contLotes + '\n' +
+    '• Movimientos registrados: ' + movAjustes.length + '\n\n' +
+    'Actualizá Stock_por_Proveedor y Dashboard desde el menú.'
+  );
+}
+
+// ============================================================
+//  NUEVAS FUNCIONES — BioNoa v2.5
+//  Agregar al final del archivo codigo_gs principal
+//
+//  TAMBIÉN: reemplazar la función onOpen() existente por la de
+//  más abajo (agrega los 2 ítems nuevos al menú).
+// ============================================================
+
+
+// ============================================================
+//  onOpen() ACTUALIZADO — reemplaza el existente
+// ============================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('🛒 Gestión Compras')
+    .addItem('📝 Nueva Orden de Compra',       'mostrarFormularioOrden')
+    .addItem('🛒 Generar OC desde Stock',       'generarOrdenDesdeStock')
+    .addSeparator()
+    .addItem('📋 Ver Pendientes',               'mostrarListaPendientes')
+    .addItem('📦 Recepcionar Pedido',           'mostrarFormularioRecepcion')
+    .addSeparator()
+    .addItem('🔧 Ajuste de Stock',              'mostrarFormularioAjusteStock')   // ← NUEVO
+    .addSeparator()
+    .addItem('📊 Actualizar Dashboard',         'actualizarDashboard')
+    .addSeparator()
+    .addItem('⚙️ Gestionar Conversiones',       'mostrarFormularioConversiones') // ← reemplaza abrirConfigConversiones
+    .addItem('📈 Ver Historial Precios',        'mostrarHistorialPrecios')
+    .addSeparator()
+    .addItem('💲 Aplicar ajuste de precios',    'aplicarAjustePrecios')
+    .addItem('📋 Preparar columnas % en Proveedores', 'prepararColumnasPorcentaje')
+    .addItem('📦 Stock por Proveedor',          'actualizarStockPorProveedor')
+    .addSeparator()
+    .addItem('📥 Importar Stock Inicial',       'mostrarFormularioImportStock')
+    .addItem('🙈 Ocultar hojas internas',       'ocultarHojasInternas')
+    .addSeparator()
+    .addItem('🔴 Reset para producción',        'resetearParaProduccion')
+    .addToUi();
+}
+
+
+// ============================================================
+//  MÓDULO: AJUSTE MANUAL DE STOCK
+// ============================================================
+
+/**
+ * Abre el formulario de ajuste de stock.
+ */
+function mostrarFormularioAjusteStock() {
+  var html = HtmlService.createHtmlOutputFromFile('FormularioAjusteStock')
+    .setWidth(680)
+    .setHeight(560)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, '🔧 Ajuste de Stock');
+}
+
+/**
+ * Devuelve todos los insumos activos con su stock total actual.
+ * Usado por el buscador del formulario.
+ */
+function getInsumosConStockYSinStock() {
+  var insumos = getInsumosActivos();
+  var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+  var stockPorCodigo = {};
+  stockData.forEach(function(row) {
+    var cod = String(row.codigo_insumo).trim();
+    stockPorCodigo[cod] = (stockPorCodigo[cod] || 0) + (Number(row.stock_disponible) || 0);
+  });
+
+  return insumos.map(function(ins) {
+    var cod = String(ins.codigo_insumo).trim();
+    return {
+      codigo:      cod,
+      descripcion: ins.descripcion,
+      categoria:   ins.categoria || '',
+      stock_total: stockPorCodigo[cod] || 0
+    };
+  }).sort(function(a, b) { return a.descripcion.localeCompare(b.descripcion); });
+}
+
+/**
+ * Devuelve los lotes con stock disponible de un insumo dado.
+ * Si el insumo no tiene stock, devuelve un lote ficticio "SIN LOTE" con cantidad 0
+ * para que el usuario pueda igualmente cargar un ajuste positivo.
+ */
+function getLotesParaAjuste(codigoInsumo) {
+  var stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+  var lotes = stockData
+    .filter(function(row) {
+      return String(row.codigo_insumo).trim() === codigoInsumo;
+    })
+    .map(function(row) {
+      return {
+        lote:        String(row.lote || 'SIN LOTE'),
+        stock_actual: Number(row.stock_disponible) || 0,
+        vencimiento: row.vencimiento ? formatearFecha(row.vencimiento) : ''
+      };
+    });
+
+  // Si no hay lotes con stock, igual devolvemos SIN LOTE con 0
+  // para que se pueda hacer un ajuste positivo desde cero
+  if (lotes.length === 0) {
+    lotes.push({ lote: 'SIN LOTE', stock_actual: 0, vencimiento: '' });
+  }
+
+  return lotes;
+}
+
+/**
+ * Registra un ajuste de stock puntual sobre un lote específico.
+ *
+ * @param {Object} ajusteData
+ *   codigo_insumo  {string}
+ *   descripcion    {string}
+ *   lote           {string}
+ *   vencimiento    {string}
+ *   stock_actual   {number}  — cantidad actual en el lote
+ *   stock_correcto {number}  — cantidad que DEBERÍA haber
+ *   motivo         {string}
+ */
+function registrarAjusteStock(ajusteData) {
+  try {
+    var delta = Number(ajusteData.stock_correcto) - Number(ajusteData.stock_actual);
+
+    if (delta === 0) {
+      return { ok: true, mensaje: 'Sin cambios: el stock ya es correcto.' };
+    }
+
+    var usuario        = getCurrentUser();
+    var ahora          = new Date();
+    var catalogoInsumos = getInsumosActivos();
+    var infoInsumo     = catalogoInsumos.find(function(ins) {
+      return ins.codigo_insumo === ajusteData.codigo_insumo;
+    });
+    var categoria = infoInsumo ? (infoInsumo.categoria || '') : '';
+
+    // ── Registrar en Movimientos_Inventario ────────────────────────
+    // delta puede ser positivo o negativo.
+    // actualizarStockActual() suma el campo cantidad para tipo 'Ajuste',
+    // por lo que un delta negativo produce correctamente una resta.
+    getSheet(CONFIG.SHEETS.MOVIMIENTOS).appendRow([
+      'MOV-' + Date.now(),
+      ahora,
+      'Ajuste',
+      ajusteData.codigo_insumo,
+      ajusteData.descripcion,
+      delta,   // positivo = suma, negativo = resta
+      'AJUSTE-MANUAL',
+      usuario,
+      'Corrección manual | ' + (ajusteData.motivo || 'Sin motivo') +
+        ' | Anterior: ' + ajusteData.stock_actual +
+        ' → Correcto: ' + ajusteData.stock_correcto,
+      ajusteData.lote,
+      ajusteData.vencimiento || '',
+      categoria
+    ]);
+
+    // ── Actualizar Stock_Actual sin reconstrucción total ───────────
+    _actualizarStockDesdeAjuste(ajusteData, delta, catalogoInsumos, ahora);
+
+    var signo = delta > 0 ? '+' : '';
+    return {
+      ok:     true,
+      mensaje: 'Ajuste aplicado (' + signo + delta + ' u.) en lote "' +
+               ajusteData.lote + '" de ' + ajusteData.descripcion + '.'
+    };
+
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al ajustar: ' + e.message };
+  }
+}
+
+/**
+ * Actualiza Stock_Actual de forma incremental tras un ajuste.
+ * No reconstruye toda la hoja, solo toca la fila del lote afectado.
+ */
+function _actualizarStockDesdeAjuste(ajusteData, delta, catalogoInsumos, ahora) {
+  var sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  var lastRow    = sheetStock.getLastRow();
+  var cod  = String(ajusteData.codigo_insumo).trim();
+  var lote = String(ajusteData.lote).trim();
+
+  var dataStock = lastRow > 1
+    ? sheetStock.getRange(2, 1, lastRow - 1, 9).getValues()
+    : [];
+
+  // Calcular totales actuales por código
+  var stockTotalPorCodigo = {};
+  dataStock.forEach(function(row) {
+    var c = String(row[0]).trim();
+    stockTotalPorCodigo[c] = (stockTotalPorCodigo[c] || 0) + (Number(row[2]) || 0);
+  });
+
+  // Buscar y actualizar la fila del lote
+  var filaEncontrada = -1;
+  for (var i = 0; i < dataStock.length; i++) {
+    if (String(dataStock[i][0]).trim() === cod && String(dataStock[i][6]).trim() === lote) {
+      var nuevoStock      = Math.max((Number(dataStock[i][2]) || 0) + delta, 0);
+      dataStock[i][2]     = nuevoStock;
+      dataStock[i][5]     = ahora;
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + delta;
+      filaEncontrada      = i;
+      break;
+    }
+  }
+
+  // Si el lote no existía y el ajuste es positivo, crear fila nueva
+  if (filaEncontrada === -1 && delta > 0) {
+    var ins     = catalogoInsumos.find(function(x) { return String(x.codigo_insumo).trim() === cod; });
+    var critico = ins ? Number(ins.stock_critico) || 0 : 0;
+    dataStock.push([
+      cod,
+      ins ? ins.descripcion : ajusteData.descripcion,
+      delta,
+      critico,
+      'OK',
+      ahora,
+      lote,
+      ajusteData.vencimiento || '',
+      ins ? (ins.clasificacion || '') : ''
+    ]);
+    stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + delta;
+  }
+
+  // Recalcular estado (OK / Crítico / Agotado) para todas las filas del código
+  var ins2    = catalogoInsumos.find(function(x) { return String(x.codigo_insumo).trim() === cod; });
+  var critico2 = ins2 ? Number(ins2.stock_critico) || 0 : 0;
+  var totalFinal  = stockTotalPorCodigo[cod] || 0;
+  var nuevoEstado = totalFinal <= 0 ? 'Agotado' : totalFinal <= critico2 ? 'Crítico' : 'OK';
+
+  for (var j = 0; j < dataStock.length; j++) {
+    if (String(dataStock[j][0]).trim() === cod) {
+      dataStock[j][4] = nuevoEstado;
+    }
+  }
+
+  // Filtrar filas con stock > 0 y reescribir la hoja
+  var filasValidas = dataStock.filter(function(row) { return Number(row[2]) > 0; });
+
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+  }
+  if (filasValidas.length > 0) {
+    sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+    sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+  }
+}
+
+
+// ============================================================
+//  MÓDULO: GESTIÓN DE CONVERSIONES (reemplaza abrirConfigConversiones)
+// ============================================================
+
+/**
+ * Abre el formulario visual de gestión de conversiones.
+ */
+function mostrarFormularioConversiones() {
+  var html = HtmlService.createHtmlOutputFromFile('FormularioConversiones')
+    .setWidth(760)
+    .setHeight(600)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, '⚙️ Gestionar Conversiones');
+}
+
+/**
+ * Devuelve todos los insumos activos con su estado de conversión actual.
+ * Si tiene conversión, incluye los datos; si no, los campos vienen vacíos.
+ */
+function getInsumosConConversiones() {
+  var insumos      = getInsumosActivos();
+  var conversiones = _getTablaConversionesCompleta();
+
+  return insumos.map(function(ins) {
+    var cod  = String(ins.codigo_insumo).trim();
+    var conv = conversiones[cod];
+    return {
+      codigo:          cod,
+      descripcion:     ins.descripcion,
+      categoria:       ins.categoria    || '',
+      unidad_medida:   ins.unidad_medida || '',
+      tiene_conversion: !!conv && conv.activo,
+      factor:          conv ? conv.factor          : '',
+      unidad_destino:  conv ? conv.unidad_destino  : '',
+      unidad_compra:   conv ? conv.unidad_compra   : '',
+      activo:          conv ? conv.activo          : false,
+      observaciones:   conv ? conv.observaciones   : ''
+    };
+  }).sort(function(a, b) {
+    // Primero los que tienen conversión activa
+    if (a.tiene_conversion && !b.tiene_conversion) return -1;
+    if (!a.tiene_conversion && b.tiene_conversion) return 1;
+    return a.descripcion.localeCompare(b.descripcion);
+  });
+}
+
+/**
+ * Lee Config_Conversiones completo (activos e inactivos) y devuelve
+ * un mapa { codigo → { fila, factor, unidad_destino, unidad_compra, activo, observaciones } }.
+ * Función interna, no llamar desde el HTML.
+ */
+function _getTablaConversionesCompleta() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Config_Conversiones');
+  if (!sheet || sheet.getLastRow() < 3) return {};
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[1]; // fila 2 = headers (fila 1 = banner)
+
+  var idxCod    = headers.indexOf('codigo_insumo');
+  var idxFactor = headers.indexOf('factor_conversion');
+  var idxUnidad = headers.indexOf('unidad_destino');
+  var idxActivo = headers.indexOf('activo');
+  var idxCompra = headers.indexOf('unidad_de_compra');
+  var idxObs    = headers.indexOf('observaciones');
+
+  var tabla = {};
+  for (var i = 2; i < data.length; i++) {
+    var cod = String(data[i][idxCod] || '').trim();
+    if (!cod) continue;
+    tabla[cod] = {
+      fila:           i + 1,  // 1-indexed para getRange
+      factor:         Number(data[i][idxFactor]) || 0,
+      unidad_destino: String(data[i][idxUnidad] || '').trim(),
+      unidad_compra:  String(data[i][idxCompra] || '').trim(),
+      activo:         data[i][idxActivo] === true ||
+                      String(data[i][idxActivo]).toUpperCase() === 'TRUE',
+      observaciones:  String(data[i][idxObs]    || '').trim()
+    };
+  }
+  return tabla;
+}
+
+/**
+ * Guarda o actualiza la conversión de un insumo.
+ * Si el insumo ya tiene fila en Config_Conversiones, la actualiza.
+ * Si no, agrega una fila nueva.
+ *
+ * @param {Object} convData
+ *   codigo, descripcion, factor, unidad_destino, unidad_compra, activo, observaciones
+ */
+function guardarConversionInsumo(convData) {
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('Config_Conversiones');
+
+    // Crear la hoja si no existe
+    if (!sheet) {
+      crearHojaConversiones();
+      sheet = ss.getSheetByName('Config_Conversiones');
+    }
+
+    var tabla    = _getTablaConversionesCompleta();
+    var existing = tabla[String(convData.codigo).trim()];
+
+    var rowData = [
+      convData.codigo,
+      convData.descripcion,
+      convData.unidad_compra   || 'CAJA',
+      Number(convData.factor)  || 1,
+      convData.unidad_destino  || 'Unidad',
+      convData.activo === true || convData.activo === 'true',
+      convData.observaciones   || ''
+    ];
+
+    if (existing) {
+      // Actualizar fila existente (cols 1-7, empieza en col A)
+      sheet.getRange(existing.fila, 1, 1, 7).setValues([rowData]);
+    } else {
+      // Nueva fila al final
+      sheet.appendRow(rowData);
+    }
+
+    SpreadsheetApp.flush();
+    return { ok: true, mensaje: 'Conversión guardada para ' + convData.codigo + '.' };
+
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al guardar: ' + e.message };
+  }
+}
+
+/**
+ * Desactiva (sin borrar) la conversión de un insumo.
+ */
+function desactivarConversionInsumo(codigoInsumo) {
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('Config_Conversiones');
+    if (!sheet) return { ok: false, mensaje: 'No existe la hoja Config_Conversiones.' };
+
+    var tabla    = _getTablaConversionesCompleta();
+    var existing = tabla[String(codigoInsumo).trim()];
+    if (!existing) return { ok: false, mensaje: 'No se encontró conversión para ' + codigoInsumo + '.' };
+
+    var headers  = sheet.getDataRange().getValues()[1];
+    var idxActivo = headers.indexOf('activo') + 1; // 1-indexed
+    sheet.getRange(existing.fila, idxActivo).setValue(false);
+
+    SpreadsheetApp.flush();
+    return { ok: true, mensaje: 'Conversión desactivada para ' + codigoInsumo + '.' };
+
+  } catch (e) {
+    return { ok: false, mensaje: 'Error al desactivar: ' + e.message };
+  }
+}
+
+// ============================================================
+//  FIX v2.5 — corregirStockPorCambioConversionYHL()
+//
+//  CUÁNDO USAR: una sola vez, después de haber corregido
+//  factor_conversion 2→100 en Config_Conversiones para los
+//  ítems BNOA-YHL-xxx (formato 2x50 = 100 tests/caja).
+//
+//  QUÉ HACE:
+//  - Busca en Config_Conversiones todos los ítems ACTIVOS con
+//    factor_conversion = 100 y unidad_destino = 100.
+//  - Para cada uno, multiplica el stock_disponible × 50 en
+//    Stock_Actual (corrección: factor viejo=2, factor nuevo=100).
+//  - Registra un movimiento tipo "Ajuste" en Movimientos_Inventario
+//    con observación que indica el motivo.
+//
+//  CÓMO EJECUTAR:
+//  En el editor de Apps Script, seleccionar esta función
+//  en el menú desplegable y presionar ▶ Ejecutar.
+//  No llama a nada más, es autocontenida.
+// ============================================================
+
+function corregirStockPorCambioConversionYHL() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ui = SpreadsheetApp.getUi();
+
+  // Confirmación antes de ejecutar
+  var resp = ui.alert(
+    '⚠️ Corrección de stock — factor 2 → 100',
+    'Esta función multiplica × 50 el stock_disponible de todos los ' +
+    'ítems BNOA-YHL con factor_conversion = 100 en Config_Conversiones.\n\n' +
+    'Solo debe ejecutarse UNA VEZ, después de haber actualizado los factores.\n\n' +
+    '¿Confirmar?',
+    ui.ButtonSet.YES_NO
+  );
+  if (resp !== ui.Button.YES) {
+    ui.alert('Operación cancelada.');
+    return;
+  }
+
+  // ── 1. Leer Config_Conversiones: identificar ítems a corregir ──
+  var sheetConv = ss.getSheetByName('Config_Conversiones');
+  if (!sheetConv) { ui.alert('No se encontró hoja Config_Conversiones.'); return; }
+
+  var rawConv = sheetConv.getDataRange().getValues();
+  // Fila 0 = banner (si existe), fila 1 = headers, datos desde fila 2
+  var hdrIdx = -1;
+  for (var i = 0; i < Math.min(rawConv.length, 3); i++) {
+    if (String(rawConv[i][0]).toLowerCase().indexOf('codigo') > -1) { hdrIdx = i; break; }
+  }
+  if (hdrIdx === -1) { ui.alert('No se encontraron headers en Config_Conversiones.'); return; }
+
+  var hConv     = rawConv[hdrIdx];
+  var iCodConv  = hConv.indexOf('codigo_insumo');
+  var iFactor   = hConv.indexOf('factor_conversion');
+  var iUnidDest = hConv.indexOf('unidad_destino');
+  var iActivo   = hConv.indexOf('activo');
+
+  // Códigos a corregir: factor=100, unidad_destino=100, activo=TRUE
+  var codigosACorregir = {};
+  for (var r = hdrIdx + 1; r < rawConv.length; r++) {
+    var row = rawConv[r];
+    var cod = String(row[iCodConv] || '').trim();
+    if (!cod) continue;
+    var factor   = Number(row[iFactor]);
+    var unidDest = Number(row[iUnidDest]);
+    var activo   = row[iActivo];
+    var estaActivo = (activo === true || String(activo).toUpperCase() === 'TRUE');
+    if (factor === 100 && unidDest === 100 && estaActivo && cod.indexOf('BNOA-YHL') === 0) {
+      codigosACorregir[cod] = true;
+    }
+  }
+
+  var totalCodigos = Object.keys(codigosACorregir).length;
+  if (totalCodigos === 0) {
+    ui.alert('No se encontraron ítems BNOA-YHL con factor=100 en Config_Conversiones.\n' +
+             'Verificá que los factores ya fueron actualizados.');
+    return;
+  }
+
+  // ── 2. Actualizar Stock_Actual ──
+  var sheetStock = ss.getSheetByName('Stock_Actual');
+  if (!sheetStock) { ui.alert('No se encontró hoja Stock_Actual.'); return; }
+
+  var rawStock = sheetStock.getDataRange().getValues();
+  // Buscar fila de headers
+  var sHdrIdx = -1;
+  for (var i = 0; i < Math.min(rawStock.length, 3); i++) {
+    if (String(rawStock[i][0]).toLowerCase().indexOf('codigo') > -1) { sHdrIdx = i; break; }
+  }
+  if (sHdrIdx === -1) { ui.alert('No se encontraron headers en Stock_Actual.'); return; }
+
+  var hStock      = rawStock[sHdrIdx];
+  var iCodStock   = hStock.indexOf('codigo_insumo');
+  var iStockDisp  = hStock.indexOf('stock_disponible');
+  var iLoteStock  = hStock.indexOf('lote');
+  var iVencStock  = hStock.indexOf('vencimiento');
+
+  var MULTIPLICADOR = 50; // factor_nuevo / factor_viejo = 100 / 2
+  var ahora = new Date();
+  var movimientos = []; // acumular para batch write
+  var lotesActualizados = 0;
+
+  for (var i = sHdrIdx + 1; i < rawStock.length; i++) {
+    var rowStock = rawStock[i];
+    var codStock = String(rowStock[iCodStock] || '').trim();
+    if (!codStock || !codigosACorregir[codStock]) continue;
+
+    var stockActual = Number(rowStock[iStockDisp]) || 0;
+    if (stockActual <= 0) continue; // No hay nada que corregir
+
+    var stockNuevo = stockActual * MULTIPLICADOR;
+    var delta      = stockNuevo - stockActual;
+    var lote       = String(rowStock[iLoteStock] || 'SIN LOTE');
+    var venc       = rowStock[iVencStock] || '';
+
+    // Actualizar celda en Stock_Actual (fila i+1 en la hoja, base 1)
+    sheetStock.getRange(i + 1, iStockDisp + 1).setValue(stockNuevo);
+
+    // Preparar movimiento de Ajuste
+    movimientos.push([
+      'CONV-' + ahora.getTime() + '-' + codStock.slice(-4) + '-' + lote,
+      ahora,
+      'Ajuste',
+      codStock,
+      '', // nombre_insumo — se completa abajo si se puede
+      delta,
+      'CORRECCION-FACTOR-2A100',
+      Session.getActiveUser().getEmail(),
+      'Corrección masiva factor 2→100 | Stock anterior: ' + stockActual + ' → nuevo: ' + stockNuevo,
+      lote,
+      venc,
+      'Reactivo'
+    ]);
+
+    lotesActualizados++;
+  }
+
+  // ── 3. Escribir movimientos en Movimientos_Inventario ──
+  if (movimientos.length > 0) {
+    var sheetMov = ss.getSheetByName('Movimientos_Inventario');
+    if (!sheetMov) { ui.alert('No se encontró hoja Movimientos_Inventario.'); return; }
+    var ultimaFilaMov = sheetMov.getLastRow();
+    sheetMov.getRange(ultimaFilaMov + 1, 1, movimientos.length, movimientos[0].length)
+            .setValues(movimientos);
+  }
+
+  ui.alert(
+    '✅ Corrección completada',
+    'Se actualizaron ' + lotesActualizados + ' lotes en ' + totalCodigos + ' insumos BNOA-YHL.\n\n' +
+    'Cada stock fue multiplicado × ' + MULTIPLICADOR + ' (factor 2 → 100).\n' +
+    'Se registraron ' + movimientos.length + ' movimientos de Ajuste en Movimientos_Inventario.\n\n' +
+    'Ejecutá Menú → 📦 Stock por Proveedor para ver los valores actualizados.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+

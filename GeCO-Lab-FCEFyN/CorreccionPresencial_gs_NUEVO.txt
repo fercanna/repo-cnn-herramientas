@@ -1,0 +1,842 @@
+// ============================================================
+// GeCO Lab — CorreccionPresencial.gs v4
+// CAMBIOS respecto a v3:
+//   ① registrarEvaluacionRubrica()
+//       - Lee Nivel_Esperado desde Puestos_Competencias (col K)
+//       - Calcula brecha (nivel_alcanzado vs nivel_esperado)
+//       - Deriva tipo_plan: "Toma de conciencia" (Normativo) o "Capacitación"
+//       - generaAccion = (nivel_alcanzado_num < nivel_esperado_num)
+//       - Escribe cols Z/AA/AB en Registro_Competencias
+//       - Pasa tipoPlan a crearPlanAccion()
+//       - Reemplaza enviarMailEvaluado() → _crearBorradorResultadoRubrica()
+//         (crea borrador para revisión del evaluador antes de enviar)
+//   ② _crearBorradorResultadoRubrica(): nueva función que usa GmailApp.createDraft
+//
+// DEPENDENCIAS:
+//   - Config.gs         → calcularEscala(), requierePlanAccion(),
+//                         getNormaAplicable(), getContextoOrganizacional()
+//   - ClaudeApi.gs      → generarRubricaPresencial()
+//   - Drive.gs          → leerTextoDeArchivo()
+//   - PlanAcciones.gs   → crearPlanAccion()
+// ============================================================
+
+// ==============================================================
+// FLUJO 1 (ORIGINAL) — Corrección de evaluaciones presenciales
+// (no cambia en v4 — mantener igual que versión anterior)
+// ==============================================================
+
+function abrirDialogoPresencial() {
+  const html = HtmlService.createHtmlOutputFromFile('DialogoPresencial')
+    .setWidth(600)
+    .setHeight(680);
+  SpreadsheetApp.getUi().showModalDialog(html, '✏️ Evaluación presencial');
+}
+
+function abrirDialogoPresencialParaEval(idEvaluacion) {
+  const html = HtmlService.createTemplateFromFile('DialogoPresencial');
+  html.idEvaluacionInicial = idEvaluacion || '';
+  const output = html.evaluate().setWidth(600).setHeight(680);
+  SpreadsheetApp.getUi().showModalDialog(output, '✏️ Evaluación presencial');
+}
+
+function getEvaluacionesPendientesPresencial() {
+  try {
+    const ss   = SpreadsheetApp.getActiveSpreadsheet();
+    const hoja = ss.getSheetByName('Registro_Competencias');
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const modo   = String(datos[i][13] || '').toLowerCase();
+      const estado = String(datos[i][22] || '');
+      if (modo === 'presencial' && (estado === 'Pendiente' || estado === 'En Curso')) {
+        resultado.push({
+          idEvaluacion:    String(datos[i][0]),
+          evaluado:        String(datos[i][3]),
+          dominio:         String(datos[i][8]),
+          documento:       String(datos[i][11]),
+          fechaGeneracion: datos[i][1]
+            ? Utilities.formatDate(new Date(datos[i][1]), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm')
+            : '—',
+          nroPreguntas: Number(datos[i][14]) || 0
+        });
+      }
+    }
+
+    resultado.sort(function(a, b) {
+      return String(b.fechaGeneracion).localeCompare(String(a.fechaGeneracion));
+    });
+
+    return resultado;
+
+  } catch (e) {
+    Logger.log('[CorreccionPresencial] Error cargando pendientes: ' + e.message);
+    return [];
+  }
+}
+
+function corregirEvaluacionPresencial(datos) {
+  try {
+    if (!datos.idEvaluacion || datos.idEvaluacion.trim() === '') {
+      return { ok: false, error: 'No se recibió el ID de evaluación.' };
+    }
+
+    const correctas = Number(datos.correctas);
+    const total     = Number(datos.total);
+
+    if (isNaN(correctas) || isNaN(total) || total <= 0) {
+      return { ok: false, error: 'Los valores de correctas/total no son válidos.' };
+    }
+    if (correctas < 0 || correctas > total) {
+      return { ok: false, error: 'Correctas debe estar entre 0 y ' + total + '.' };
+    }
+
+    const pct    = Math.round((correctas / total) * 100);
+    const escala = calcularEscala(pct);
+    const generaAccion = requierePlanAccion(escala);
+    const ahora  = new Date();
+
+    const ss      = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró la hoja Registro_Competencias.' };
+
+    const datosReg = hojaReg.getDataRange().getValues();
+    let filaIdx  = -1;
+    let datosFila = null;
+
+    for (let i = 1; i < datosReg.length; i++) {
+      if (String(datosReg[i][0]).trim() === datos.idEvaluacion.trim()) {
+        filaIdx   = i + 1;
+        datosFila = datosReg[i];
+        break;
+      }
+    }
+
+    if (filaIdx < 0) {
+      return { ok: false, error: 'No se encontró la evaluación: ' + datos.idEvaluacion };
+    }
+
+    const evaluadoNombre = String(datosFila[3]  || '');
+    const idPersona      = String(datosFila[4]  || '');
+    const dominioEval    = String(datosFila[8]  || '');
+    const documentoEval  = String(datosFila[11] || '');
+    const nroPreguntas   = Number(datosFila[14] || total);
+
+    const totalReal     = nroPreguntas > 0 ? nroPreguntas : total;
+    const correctasReal = Math.min(correctas, totalReal);
+    const pctReal       = Math.round((correctasReal / totalReal) * 100);
+    const escalaReal    = calcularEscala(pctReal);
+    const generaAccionReal = requierePlanAccion(escalaReal);
+
+    hojaReg.getRange(filaIdx, 3).setValue(ahora);
+    hojaReg.getRange(filaIdx, 16).setValue(correctasReal);
+    hojaReg.getRange(filaIdx, 17).setValue(pctReal);
+    hojaReg.getRange(filaIdx, 18).setValue(escalaReal);
+    hojaReg.getRange(filaIdx, 23).setValue('Completado');
+    hojaReg.getRange(filaIdx, 24).setValue(generaAccionReal);
+
+    const obsActual = String(datosFila[24] || '');
+    const obsNueva  = datos.observaciones ? datos.observaciones.trim() : '';
+    const obsTotal  = obsNueva ? (obsActual ? obsActual + ' | ' + obsNueva : obsNueva) : obsActual;
+    hojaReg.getRange(filaIdx, 25).setValue(obsTotal);
+
+    if (generaAccionReal) {
+      crearPlanAccion({
+        ss:           ss,
+        idEvaluacion: datos.idEvaluacion,
+        evaluado:     evaluadoNombre,
+        dominio:      dominioEval,
+        puntajePct:   pctReal,
+        escala:       escalaReal
+      });
+    }
+
+    Logger.log('[CorreccionPresencial] OK — ' + evaluadoNombre +
+               ': ' + correctasReal + '/' + totalReal +
+               ' (' + pctReal + '% — ' + escalaReal + ')' +
+               (generaAccionReal ? ' → Plan de acción creado.' : ''));
+
+    return { ok: true, puntaje: pctReal, escala: escalaReal, generaAccion: generaAccionReal };
+
+  } catch (e) {
+    Logger.log('[CorreccionPresencial] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+
+// ==============================================================
+// FLUJO 2 — Evaluación directa por rúbrica conductual
+// ==============================================================
+
+function getPersonasActivas() {
+  try {
+    const ss   = SpreadsheetApp.getActiveSpreadsheet();
+    const hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return [];
+
+    const datos = hoja.getDataRange().getValues();
+    const resultado = [];
+
+    for (let i = 1; i < datos.length; i++) {
+      const nombre = String(datos[i][1] || '').trim();
+      if (!nombre) continue;
+      const activo = datos[i][5];
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+
+      resultado.push({
+        id:     String(datos[i][0]).trim(),
+        nombre: nombre,
+        puesto: String(datos[i][3] || '').trim(),
+        area:   String(datos[i][4] || '').trim(),
+        mail:   String(datos[i][2] || '').trim()
+      });
+    }
+
+    return resultado.sort(function(a, b) {
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
+
+  } catch (e) {
+    Logger.log('[getPersonasActivas] ERROR: ' + e.message);
+    return [];
+  }
+}
+
+function getCompetenciasTacitasPendientes(idPersona, puesto) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    const hojaComp = ss.getSheetByName('Puestos_Competencias');
+    if (!hojaComp || hojaComp.getLastRow() < 2) return [];
+    const datosComp = hojaComp.getDataRange().getValues();
+
+    const puestoNorm = String(puesto || '').trim().toLowerCase();
+    const comps = [];
+
+    for (let i = 1; i < datosComp.length; i++) {
+      if (!datosComp[i][0]) continue;
+
+      const puestoComp = String(datosComp[i][1] || '').trim().toLowerCase();
+      const activo     = datosComp[i][9];
+      const naturaleza = String(datosComp[i][4] || '').trim();
+      const driveId    = String(datosComp[i][6] || '').trim();
+
+      if (activo === false || String(activo).toLowerCase() === 'false') continue;
+      if (puestoComp !== puestoNorm) continue;
+
+      const esPresencial = (naturaleza === 'Tácito') || (!driveId);
+      if (!esPresencial) continue;
+
+      comps.push({
+        id:            String(datosComp[i][0]).trim(),
+        dominio:       String(datosComp[i][2] || '').trim(),
+        categoria:     String(datosComp[i][3] || '').trim(),
+        naturaleza:    naturaleza,
+        criticidad:    String(datosComp[i][5] || '').trim(),
+        driveId:       driveId,
+        driveNombre:   String(datosComp[i][7] || '').trim(),
+        frecMeses:     Number(datosComp[i][8]) || 12,
+        nivelEsperado: String(datosComp[i][10] || 'Competente').trim(), // col K
+        vencida:       true,
+        diasVencida:   null,
+        ultimaEval:    null
+      });
+    }
+
+    if (comps.length === 0) return [];
+
+    const hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (hojaReg && hojaReg.getLastRow() > 1) {
+      const datosReg = hojaReg.getDataRange().getValues();
+      const ahora    = new Date();
+
+      comps.forEach(function(c) {
+        var ultimaFecha = null;
+        for (var i = 1; i < datosReg.length; i++) {
+          var idPer  = String(datosReg[i][4]  || '').trim();
+          var idComp = String(datosReg[i][7]  || '').trim();
+          var estado = String(datosReg[i][22] || '').trim();
+          var fechaC = datosReg[i][2];
+
+          if (idPer === idPersona && idComp === c.id &&
+              estado === 'Completado' && fechaC) {
+            var f = new Date(fechaC);
+            if (!ultimaFecha || f > ultimaFecha) ultimaFecha = f;
+          }
+        }
+
+        if (!ultimaFecha) {
+          c.vencida     = true;
+          c.diasVencida = null;
+        } else {
+          var diasDesde = Math.floor((ahora - ultimaFecha) / (1000 * 60 * 60 * 24));
+          var limite    = c.frecMeses * 30;
+          c.ultimaEval  = Utilities.formatDate(ultimaFecha, Session.getScriptTimeZone(), 'dd/MM/yyyy');
+          c.diasVencida = diasDesde - limite;
+          c.vencida     = diasDesde >= limite;
+        }
+      });
+    }
+
+    comps.sort(function(a, b) {
+      if (a.vencida && !b.vencida) return -1;
+      if (!a.vencida && b.vencida) return  1;
+      if (a.vencida && b.vencida) {
+        if (a.diasVencida === null) return -1;
+        if (b.diasVencida === null) return  1;
+        return b.diasVencida - a.diasVencida;
+      }
+      return 0;
+    });
+
+    return comps;
+
+  } catch (e) {
+    Logger.log('[getCompetenciasTacitasPendientes] ERROR: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * Inicia una evaluación presencial por rúbrica.
+ * Lee descripción de puesto desde Drive, llama a Claude, crea fila en Registro.
+ */
+function iniciarEvaluacionPresencial(params) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // ── 1. Persona ───────────────────────────────────────────────
+    const hojaPer = ss.getSheetByName('Personas');
+    if (!hojaPer) return { ok: false, error: 'No se encontró la hoja Personas.' };
+    const datosPer = hojaPer.getDataRange().getValues();
+
+    var persona = null;
+    for (var i = 1; i < datosPer.length; i++) {
+      if (String(datosPer[i][0]).trim() === params.idPersona) {
+        persona = {
+          id:     String(datosPer[i][0]).trim(),
+          nombre: String(datosPer[i][1] || '').trim(),
+          mail:   String(datosPer[i][2] || '').trim(),
+          puesto: String(datosPer[i][3] || '').trim(),
+          area:   String(datosPer[i][4] || '').trim()
+        };
+        break;
+      }
+    }
+    if (!persona) return { ok: false, error: 'No se encontró persona con ID: ' + params.idPersona };
+
+    // ── 2. Competencia ───────────────────────────────────────────
+    const hojaComp = ss.getSheetByName('Puestos_Competencias');
+    if (!hojaComp) return { ok: false, error: 'No se encontró Puestos_Competencias.' };
+    const datosComp = hojaComp.getDataRange().getValues();
+
+    var competencia = null;
+    for (var j = 1; j < datosComp.length; j++) {
+      if (String(datosComp[j][0]).trim() === params.idCompetencia) {
+        competencia = {
+          id:            String(datosComp[j][0]).trim(),
+          puesto:        String(datosComp[j][1] || '').trim(),
+          dominio:       String(datosComp[j][2] || '').trim(),
+          categoria:     String(datosComp[j][3] || '').trim(),
+          naturaleza:    String(datosComp[j][4] || '').trim(),
+          criticidad:    String(datosComp[j][5] || '').trim(),
+          driveId:       String(datosComp[j][6] || '').trim(),
+          driveNombre:   String(datosComp[j][7] || '').trim(),
+          nivelEsperado: String(datosComp[j][10] || 'Competente').trim() // col K
+        };
+        break;
+      }
+    }
+    if (!competencia) return { ok: false, error: 'No se encontró competencia con ID: ' + params.idCompetencia };
+
+    // ── 3. Descripción de puesto desde Drive ─────────────────────
+    var textoDescripcionPuesto = '';
+    if (competencia.driveId) {
+      try {
+        textoDescripcionPuesto = leerTextoDeArchivo(competencia.driveId);
+      } catch (e) {
+        Logger.log('[iniciarEvaluacionPresencial] No se pudo leer doc Drive: ' + e.message);
+      }
+    }
+
+    // ── 4. Generar rúbrica via Claude ────────────────────────────
+    var rubrica;
+    try {
+      rubrica = generarRubricaPresencial({
+        dominio:                competencia.dominio,
+        puesto:                 persona.puesto,
+        normaAplicable:         getNormaAplicable(),
+        contextoOrg:            getContextoOrganizacional(),
+        textoDescripcionPuesto: textoDescripcionPuesto
+      });
+    } catch (e) {
+      return { ok: false, error: 'Error al generar la rúbrica: ' + e.message };
+    }
+
+    // ── 5. ID de evaluación ──────────────────────────────────────
+    var now      = new Date();
+    var pad      = function(n) { return String(n).padStart(2, '0'); };
+    var fechaStr = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate());
+    var horaStr  = pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+    var apellido = persona.nombre.split(' ').pop()
+                    .toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ]/g, '').substring(0, 10);
+    var idEvaluacion = 'EVAL-' + fechaStr + '-' + horaStr + '-' + apellido;
+
+    // ── 6. Fila en Registro_Competencias ─────────────────────────
+    var hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró Registro_Competencias.' };
+
+    var evaluador = Session.getActiveUser().getEmail();
+    var fila = [
+      idEvaluacion,                                    // A
+      now,                                             // B
+      '',                                              // C
+      persona.nombre,                                  // D
+      persona.id,                                      // E
+      persona.area,                                    // F
+      persona.puesto,                                  // G
+      competencia.id,                                  // H
+      competencia.dominio,                             // I
+      competencia.categoria,                           // J
+      competencia.criticidad,                          // K
+      competencia.driveNombre || 'Rúbrica conductual', // L
+      competencia.driveId,                             // M
+      'Presencial',                                    // N
+      0,                                               // O
+      '',                                              // P
+      '',                                              // Q
+      '',                                              // R
+      evaluador,                                       // S
+      '',                                              // T
+      '',                                              // U
+      '',                                              // V
+      'En Curso',                                      // W
+      '',                                              // X
+      '',                                              // Y
+      '',                                              // Z — Nivel_Alcanzado (se llena al completar)
+      competencia.nivelEsperado,                       // AA — Nivel_Esperado
+      '',                                              // AB — Brecha (se calcula al completar)
+    ];
+    hojaReg.appendRow(fila);
+
+    Logger.log('[iniciarEvaluacionPresencial] ID: ' + idEvaluacion +
+               ' | ' + persona.nombre + ' / ' + competencia.dominio +
+               ' | Nivel esperado: ' + competencia.nivelEsperado);
+
+    return {
+      ok:           true,
+      idEvaluacion: idEvaluacion,
+      persona:      persona,
+      competencia:  competencia,
+      rubrica:      rubrica
+    };
+
+  } catch (e) {
+    Logger.log('[iniciarEvaluacionPresencial] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Registra el resultado de una evaluación por rúbrica.
+ * NUEVO en v4:
+ *   - Calcula brecha (nivel alcanzado vs nivel esperado)
+ *   - generaAccion = (brecha > 0) en lugar de basarse solo en escala
+ *   - Deriva tipo_plan desde categoría
+ *   - Crea borrador de Gmail en lugar de enviar automáticamente
+ *   - Escribe cols Z/AA/AB en Registro_Competencias
+ */
+function registrarEvaluacionRubrica(params) {
+  try {
+    if (!params.idEvaluacion || !params.nivel) {
+      return { ok: false, error: 'Falta el ID de evaluación o el nivel seleccionado.' };
+    }
+
+    var pct    = _nivelAPuntaje(params.nivel);
+    var escala = calcularEscala(pct);
+    var ahora  = new Date();
+
+    var ss      = SpreadsheetApp.getActiveSpreadsheet();
+    var hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) return { ok: false, error: 'No se encontró Registro_Competencias.' };
+
+    var datosReg = hojaReg.getDataRange().getValues();
+    var filaIdx  = -1;
+    var datosFila = null;
+
+    for (var i = 1; i < datosReg.length; i++) {
+      if (String(datosReg[i][0]).trim() === params.idEvaluacion.trim()) {
+        filaIdx   = i + 1;
+        datosFila = datosReg[i];
+        break;
+      }
+    }
+
+    if (filaIdx < 0) {
+      return { ok: false, error: 'No se encontró la evaluación: ' + params.idEvaluacion };
+    }
+
+    var evaluadoNombre  = String(datosFila[3]  || '');
+    var idPersona       = String(datosFila[4]  || '');
+    var dominioEval     = String(datosFila[8]  || '');
+    var categoriaEval   = String(datosFila[9]  || '');   // col J — para derivar tipo_plan
+    var documentoEval   = String(datosFila[11] || '');
+    // Nivel esperado: leer de col AA(26, 0-based) si ya fue guardado; si no, buscar en Puestos_Competencias
+    var nivelEsperado   = String(datosFila[26] || '').trim() || _leerNivelEsperado(ss, String(datosFila[7] || '').trim());
+
+    // ── Brecha ───────────────────────────────────────────────────
+    var nivelAlcanzado    = params.nivel;
+    var brechaTexto       = _calcularBrecha(nivelAlcanzado, nivelEsperado);
+    var brechaNum         = _nivelANumero(nivelEsperado) - _nivelANumero(nivelAlcanzado);
+
+    // generaAccion: brecha positiva (no alcanzó el nivel esperado)
+    var generaAccion = brechaNum > 0;
+
+    // ── Tipo de plan según categoría (ISO 9001) ──────────────────
+    // Normativo → Toma de conciencia (cláusula 7.3)
+    // Técnico / Herramientas / Blandas → Capacitación (cláusula 7.2)
+    var tipoPlan = (categoriaEval.toLowerCase() === 'normativo')
+      ? 'Toma de conciencia'
+      : 'Capacitación';
+
+    // ── Observaciones ────────────────────────────────────────────
+    var obsNivel = 'Nivel: ' + nivelAlcanzado;
+    var obsEval  = params.observaciones ? params.observaciones.trim() : '';
+    var obsTotal = obsEval ? obsNivel + ' | ' + obsEval : obsNivel;
+    if (brechaNum > 0) obsTotal += ' | Brecha: ' + brechaTexto;
+
+    // ── Actualizar Registro_Competencias (cols base A-Y) ─────────
+    hojaReg.getRange(filaIdx, 3).setValue(ahora);           // C — Fecha_Completado
+    hojaReg.getRange(filaIdx, 16).setValue(1);              // P — Correctas (simbólico)
+    hojaReg.getRange(filaIdx, 17).setValue(pct);            // Q — Puntaje_Pct
+    hojaReg.getRange(filaIdx, 18).setValue(escala);         // R — Escala
+    hojaReg.getRange(filaIdx, 23).setValue('Completado');   // W — Estado
+    hojaReg.getRange(filaIdx, 24).setValue(generaAccion);   // X — Genera_Accion
+    hojaReg.getRange(filaIdx, 25).setValue(obsTotal);       // Y — Observaciones
+
+    // ── Nuevas columnas v3 (Z=26, AA=27, AB=28) ─────────────────
+    hojaReg.getRange(filaIdx, 26).setValue(nivelAlcanzado); // Z — Nivel_Alcanzado
+    hojaReg.getRange(filaIdx, 27).setValue(nivelEsperado);  // AA — Nivel_Esperado
+    hojaReg.getRange(filaIdx, 28).setValue(brechaTexto);    // AB — Brecha
+
+    // ── Plan de acción automático si hay brecha ──────────────────
+    var idAccion = '';
+    if (generaAccion) {
+      try {
+        idAccion = crearPlanAccion({
+          ss:           ss,
+          idEvaluacion: params.idEvaluacion,
+          evaluado:     evaluadoNombre,
+          dominio:      dominioEval,
+          puntajePct:   pct,
+          escala:       escala,
+          tipoPlan:     tipoPlan,    // NUEVO v4
+          brecha:       brechaTexto  // para la descripción del plan
+        });
+        Logger.log('[registrarEvaluacionRubrica] Plan creado: ' + idAccion + ' (tipo: ' + tipoPlan + ')');
+      } catch (planErr) {
+        Logger.log('[registrarEvaluacionRubrica] Error creando plan: ' + planErr.message);
+      }
+    }
+
+    // ── PDF (no bloqueante) ──────────────────────────────────────
+    var pdfUrl = '';
+    try {
+      var resPdf = exportarResultadoEvaluacion(params.idEvaluacion);
+      if (resPdf && resPdf.ok) pdfUrl = resPdf.pdfUrl || '';
+    } catch (e) {
+      Logger.log('[registrarEvaluacionRubrica] PDF no generado: ' + e.message);
+    }
+
+    // ── Borrador Gmail (NUEVO en v4: draft en lugar de envío directo) ──
+    var mailEvaluado = _buscarMailPersonaPresencial(ss, idPersona, evaluadoNombre);
+    var mailEvaluador = Session.getActiveUser().getEmail();
+
+    _crearBorradorResultadoRubrica({
+      nombre:          evaluadoNombre,
+      mailEvaluado:    mailEvaluado,     // puede estar vacío
+      mailEvaluador:   mailEvaluador,
+      dominio:         dominioEval,
+      documento:       documentoEval,
+      fecha:           ahora,
+      puntaje:         pct,
+      escala:          escala,
+      nivelAlcanzado:  nivelAlcanzado,
+      nivelEsperado:   nivelEsperado,
+      brecha:          brechaTexto,
+      generaAccion:    generaAccion,
+      tipoPlan:        tipoPlan,
+      observaciones:   obsEval,
+      pdfUrl:          pdfUrl,
+      registroUrl:     ss.getUrl()
+    });
+
+    Logger.log('[registrarEvaluacionRubrica] OK — ' + evaluadoNombre +
+               ': ' + nivelAlcanzado + ' (esperado: ' + nivelEsperado + ')' +
+               ' | Brecha: ' + brechaTexto +
+               ' | Plan: ' + (generaAccion ? tipoPlan : 'No requerido'));
+
+    return {
+      ok:           true,
+      puntaje:      pct,
+      escala:       escala,
+      nivelAlcanzado: nivelAlcanzado,
+      nivelEsperado:  nivelEsperado,
+      brecha:         brechaTexto,
+      generaAccion: generaAccion,
+      tipoPlan:     generaAccion ? tipoPlan : '',
+      pdfUrl:       pdfUrl
+    };
+
+  } catch (e) {
+    Logger.log('[registrarEvaluacionRubrica] ERROR: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+
+// ==============================================================
+// HELPERS INTERNOS
+// ==============================================================
+
+/**
+ * Busca el mail de una persona en la hoja Personas.
+ */
+function _buscarMailPersonaPresencial(ss, idPersona, nombre) {
+  try {
+    var hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return '';
+    var datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 3).getValues();
+
+    if (idPersona) {
+      for (var i = 0; i < datos.length; i++) {
+        if (String(datos[i][0]).trim() === idPersona) {
+          var m = String(datos[i][2]).trim();
+          if (m && m.includes('@')) return m;
+        }
+      }
+    }
+    var nombreNorm = nombre.trim().toLowerCase();
+    for (var j = 0; j < datos.length; j++) {
+      if (String(datos[j][1]).trim().toLowerCase() === nombreNorm) {
+        var m2 = String(datos[j][2]).trim();
+        if (m2 && m2.includes('@')) return m2;
+      }
+    }
+  } catch (e) {
+    Logger.log('[_buscarMailPersonaPresencial] Error: ' + e.message);
+  }
+  return '';
+}
+
+/**
+ * Lee el Nivel_Esperado de Puestos_Competencias dado un ID_Competencia.
+ * Fallback: 'Competente'.
+ */
+function _leerNivelEsperado(ss, idCompetencia) {
+  if (!idCompetencia) return 'Competente';
+  try {
+    var hoja = ss.getSheetByName('Puestos_Competencias');
+    if (!hoja || hoja.getLastRow() < 2) return 'Competente';
+    var datos = hoja.getDataRange().getValues();
+    for (var i = 1; i < datos.length; i++) {
+      if (String(datos[i][0]).trim() === idCompetencia) {
+        return String(datos[i][10] || 'Competente').trim(); // col K (índice 10)
+      }
+    }
+  } catch (e) {
+    Logger.log('[_leerNivelEsperado] Error: ' + e.message);
+  }
+  return 'Competente';
+}
+
+/**
+ * Convierte nivel textual a número (para calcular brecha).
+ */
+function _nivelANumero(nivel) {
+  var mapa = { 'Inicial': 1, 'Básico': 2, 'Competente': 3, 'Referente': 4 };
+  return mapa[nivel] || 2; // default Básico si no reconoce
+}
+
+/**
+ * Calcula el texto de brecha entre nivel alcanzado y esperado.
+ * Positivo = por debajo del esperado (requiere acción).
+ * Negativo = supera el esperado.
+ * Cero = cumple exactamente.
+ */
+function _calcularBrecha(nivelAlcanzado, nivelEsperado) {
+  var diff = _nivelANumero(nivelEsperado) - _nivelANumero(nivelAlcanzado);
+  if (diff <= 0) return diff < 0 ? 'Supera expectativa' : 'Ninguna';
+  return '+' + diff + (diff === 1 ? ' nivel' : ' niveles');
+}
+
+/**
+ * Convierte nivel textual a puntaje porcentual para compatibilidad con escala.
+ */
+function _nivelAPuntaje(nivel) {
+  var mapa = { 'Inicial': 20, 'Básico': 45, 'Competente': 70, 'Referente': 90 };
+  return mapa[nivel] !== undefined ? mapa[nivel] : 50;
+}
+
+/**
+ * Crea un borrador de Gmail con el resultado de la evaluación por rúbrica.
+ * NUEVO en v4: reemplaza el envío directo (enviarMailEvaluado) para dar control al evaluador.
+ *
+ * Si el evaluado tiene mail → draft dirigido al evaluado (CC evaluador)
+ * Si no tiene mail → draft dirigido al evaluador con nota para completar datos
+ */
+function _crearBorradorResultadoRubrica(d) {
+  try {
+    var coloresEscala = {
+      'Excelente':    { bg: '#e6f4ea', texto: '#137333', icono: '[EXC]' },
+      'Bueno':        { bg: '#e8f0fe', texto: '#1a73e8', icono: '[OK]'  },
+      'Regular':      { bg: '#fef7e0', texto: '#b06000', icono: '[REG]' },
+      'Insuficiente': { bg: '#fce8e6', texto: '#c5221f', icono: '[INS]' }
+    };
+    var ei = coloresEscala[d.escala] || coloresEscala['Regular'];
+
+    var fechaStr = Utilities.formatDate(d.fecha, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+
+    // Bloque de brecha (solo si hay acción requerida)
+    var bloqueBrecha = '';
+    if (d.generaAccion) {
+      bloqueBrecha =
+        '<div style="background:#fff8e1;border-left:4px solid #f9a825;padding:12px 16px;' +
+        'border-radius:0 6px 6px 0;margin:16px 0;font-size:13px;">' +
+        '<strong>Brecha detectada: ' + d.brecha + '</strong><br>' +
+        'Nivel alcanzado: <strong>' + d.nivelAlcanzado + '</strong> — ' +
+        'Nivel esperado: <strong>' + d.nivelEsperado + '</strong><br>' +
+        'Se generó automáticamente un plan de <strong>' + d.tipoPlan + '</strong>.' +
+        (d.pdfUrl ? '<br><a href="' + d.pdfUrl + '" style="color:#1a73e8">Ver reporte PDF →</a>' : '') +
+        '</div>';
+    } else if (d.nivelAlcanzado === 'Referente' || d.brecha === 'Supera expectativa') {
+      bloqueBrecha =
+        '<div style="background:#e6f4ea;border-left:4px solid #34a853;padding:12px 16px;' +
+        'border-radius:0 6px 6px 0;margin:16px 0;font-size:13px;">' +
+        '<strong>' + (d.brecha === 'Supera expectativa' ? 'Supera el nivel esperado' : 'Cumple el nivel esperado') + '</strong><br>' +
+        'No se requiere plan de acción.' +
+        '</div>';
+    }
+
+    var obsHtml = d.observaciones
+      ? '<p style="font-size:13px;color:#3c4043;background:#f9f9f9;border:1px solid #e0e0e0;' +
+        'border-radius:6px;padding:10px;margin-top:12px;">' +
+        '<strong>Observación del evaluador:</strong><br>' +
+        d.observaciones.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p>'
+      : '';
+
+    var htmlBody =
+      '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>' +
+      '<body style="font-family:Arial,sans-serif;background:#f8f9fa;margin:0;padding:24px;">' +
+      '<div style="max-width:580px;margin:0 auto;background:white;border-radius:10px;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.08);overflow:hidden;">' +
+
+      // Header
+      '<div style="background:#1a73e8;padding:20px 28px;">' +
+      '<div style="font-size:20px;font-weight:700;color:white;">GeCO Lab</div>' +
+      '<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:2px;">Resultado de evaluación por rúbrica</div>' +
+      '</div>' +
+
+      // Cuerpo
+      '<div style="padding:20px 28px;">' +
+      '<p style="font-size:14px;color:#202124;">Hola <strong>' + (d.mailEvaluado ? d.nombre : 'equipo') + '</strong>,</p>' +
+      '<p style="font-size:13px;color:#5f6368;">Evaluación de competencia <strong>' + d.dominio +
+      '</strong> completada el ' + fechaStr + '.</p>' +
+
+      // Resultado
+      '<div style="background:' + ei.bg + ';border-radius:8px;padding:16px 20px;margin:16px 0;' +
+      'display:flex;justify-content:space-between;align-items:center;">' +
+      '<div>' +
+      '<div style="font-size:28px;">' + ei.icono + '</div>' +
+      '<div style="font-size:22px;font-weight:700;color:' + ei.texto + ';">' + d.escala + '</div>' +
+      '<div style="font-size:13px;color:#5f6368;margin-top:2px;">' +
+      'Nivel evaluado: <strong>' + d.nivelAlcanzado + '</strong>' +
+      '</div>' +
+      '</div>' +
+      '<div style="font-size:42px;font-weight:800;color:' + ei.texto + ';">' + d.puntaje + '%</div>' +
+      '</div>' +
+
+      bloqueBrecha +
+      obsHtml +
+
+      '</div>' +
+
+      // Footer
+      '<div style="background:#f8f9fa;padding:12px 28px;border-top:1px solid #e0e0e0;' +
+      'font-size:11px;color:#9aa0a6;text-align:center;">' +
+      'Generado automáticamente por GeCO Lab — Revisá y enviá cuando consideres oportuno.' +
+      (d.registroUrl ? ' <a href="' + d.registroUrl + '" style="color:#9aa0a6;">Ver registro →</a>' : '') +
+      '</div></div></body></html>';
+
+    var asunto = 'GeCO Lab — Resultado de evaluación: ' + d.dominio + ' (' + d.nivelAlcanzado + ')';
+
+    if (d.mailEvaluado) {
+      // Borrador dirigido al evaluado
+      GmailApp.createDraft(d.mailEvaluado, asunto, '', {
+        htmlBody: htmlBody,
+        cc: d.mailEvaluador,
+        charset: 'UTF-8'
+      });
+      Logger.log('[_crearBorradorResultadoRubrica] Borrador creado para: ' + d.mailEvaluado);
+    } else {
+      // Sin mail del evaluado: borrador al evaluador con advertencia
+      var asuntoInterno = '[SIN MAIL EVALUADO] ' + asunto;
+      var notaInterna   = '<div style="background:#fce8e6;padding:10px 16px;font-size:12px;' +
+        'color:#c5221f;border-radius:6px;margin-bottom:12px;">' +
+        '<strong>Nota interna:</strong> ' + d.nombre + ' no tiene mail registrado en la hoja Personas. ' +
+        'Completar el dato y reenviar este borrador manualmente.' +
+        '</div>';
+      GmailApp.createDraft(d.mailEvaluador, asuntoInterno, '', {
+        htmlBody: notaInterna + htmlBody,
+        charset: 'UTF-8'
+      });
+      Logger.log('[_crearBorradorResultadoRubrica] Sin mail del evaluado — borrador enviado al evaluador: ' + d.mailEvaluador);
+    }
+
+  } catch (e) {
+    // No bloqueante
+    Logger.log('[_crearBorradorResultadoRubrica] Error: ' + e.message);
+  }
+}
+
+function _generarDetallePresencial(correctas, total) {
+  return [{
+    numero: 1, enunciado: 'Evaluación presencial — resultado ingresado por el evaluador.',
+    opciones: [], elegida: '', correcta: '', esCorrecta: true,
+    justificacion: correctas + ' de ' + total + ' respuestas correctas.'
+  }];
+}
+
+// ==============================================================
+// FUNCIONES DE PRUEBA
+// ==============================================================
+
+function TEST_correccionPresencial() {
+  var pendientes = getEvaluacionesPendientesPresencial();
+  if (pendientes.length === 0) {
+    Logger.log('TEST: No hay evaluaciones presenciales (flujo legado) pendientes.');
+    return;
+  }
+  var eval_ = pendientes[0];
+  Logger.log('TEST: ' + eval_.idEvaluacion + ' — ' + eval_.evaluado);
+  var resultado = corregirEvaluacionPresencial({
+    idEvaluacion: eval_.idEvaluacion,
+    correctas: Math.floor(eval_.nroPreguntas * 0.8),
+    total: eval_.nroPreguntas,
+    observaciones: 'TEST — corrección de prueba'
+  });
+  Logger.log('TEST resultado: ' + JSON.stringify(resultado));
+}
+
+function TEST_registrarRubrica() {
+  // Ajustar idEvaluacion a una existente en estado "En Curso"
+  var resultado = registrarEvaluacionRubrica({
+    idEvaluacion:  'EVAL-TEST-001',
+    nivel:         'Básico',
+    observaciones: 'Prueba v4 — brecha y plan automático'
+  });
+  Logger.log('TEST resultado: ' + JSON.stringify(resultado));
+}

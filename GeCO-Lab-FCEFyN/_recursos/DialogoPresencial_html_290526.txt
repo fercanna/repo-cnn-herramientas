@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<!-- ============================================================
+     INSTRUCCIÓN: Reemplazar el archivo completo DialogoPresencial.html
+     en Apps Script por este contenido.
+     Wizard de 3 pasos: persona → competencia → rúbrica + registro.
+     ============================================================ -->
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Roboto, Arial, sans-serif;
+      font-size: 14px;
+      color: #202124;
+      background: #fff;
+      padding: 16px 20px 12px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .header-title { font-size: 15px; font-weight: 600; color: #1a73e8; }
+    .header-sub   { font-size: 11px; color: #5f6368; margin-top: 2px; }
+
+    /* ── Steps indicator ── */
+    .steps {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 16px;
+    }
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #9aa0a6;
+    }
+    .step-item.active { color: #1a73e8; font-weight: 600; }
+    .step-item.done   { color: #137333; }
+    .step-num {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: #e8eaed;
+      color: #5f6368;
+      font-size: 11px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-item.active .step-num { background: #1a73e8; color: #fff; }
+    .step-item.done   .step-num { background: #137333; color: #fff; }
+    .step-sep { flex: 1; height: 1px; background: #e0e0e0; margin: 0 6px; }
+
+    /* ── Alerts ── */
+    .alert {
+      display: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .alert.visible { display: block; }
+    .alert-error   { background: #fce8e6; color: #c5221f; }
+    .alert-info    { background: #e8f0fe; color: #1558b0; }
+
+    /* ── Spinner ── */
+    .spinner-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      gap: 14px;
+      color: #5f6368;
+      font-size: 13px;
+      text-align: center;
+    }
+    .spinner-wrap.visible { display: flex; }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid #e0e0e0;
+      border-top-color: #1a73e8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Persona cards (paso 1) ── */
+    .persona-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      max-height: 440px;
+      overflow-y: auto;
+    }
+    .persona-card {
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .persona-card:hover { border-color: #1a73e8; background: #f8f9ff; }
+    .avatar {
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      background: #e8f0fe;
+      color: #1558b0;
+      font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .persona-nombre { font-size: 13px; font-weight: 600; }
+    .persona-puesto { font-size: 11px; color: #5f6368; margin-top: 1px; }
+
+    /* ── Competencia list (paso 2) ── */
+    .comp-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .comp-item {
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .comp-item:hover { border-color: #1a73e8; background: #f8f9ff; }
+    .comp-row1 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .comp-nombre { font-size: 13px; font-weight: 600; flex: 1; min-width: 120px; }
+    .badge {
+      font-size: 10px; font-weight: 600;
+      padding: 2px 7px; border-radius: 12px;
+      white-space: nowrap;
+    }
+    .badge-red    { background: #fce8e6; color: #c5221f; }
+    .badge-amber  { background: #fef7e0; color: #b06000; }
+    .badge-gray   { background: #f1f3f4; color: #5f6368; }
+    .badge-blue   { background: #e8f0fe; color: #1558b0; }
+    .comp-meta { font-size: 11px; color: #5f6368; margin-top: 3px; }
+
+    /* ── Rúbrica (paso 3) ── */
+    .rubrica-contexto {
+      background: #f8f9fa;
+      border-left: 3px solid #1a73e8;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      color: #3c4043;
+      line-height: 1.5;
+    }
+    .rubrica-label {
+      font-size: 11px; font-weight: 600;
+      color: #5f6368; text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 8px;
+    }
+    .niveles-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .nivel-card {
+      border: 1.5px solid #dadce0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .nivel-card:hover { border-color: #5f6368; }
+    .nivel-card.sel-0 { border-color: #c5221f; background: #fce8e6; }
+    .nivel-card.sel-1 { border-color: #b06000; background: #fef7e0; }
+    .nivel-card.sel-2 { border-color: #1a73e8; background: #e8f0fe; }
+    .nivel-card.sel-3 { border-color: #137333; background: #e6f4ea; }
+    .nivel-tag {
+      font-size: 10px; font-weight: 600;
+      padding: 2px 8px; border-radius: 12px;
+      display: inline-block; margin-bottom: 6px;
+    }
+    .tag-0 { background: #fce8e6; color: #c5221f; }
+    .tag-1 { background: #fef7e0; color: #b06000; }
+    .tag-2 { background: #e8f0fe; color: #1558b0; }
+    .tag-3 { background: #e6f4ea; color: #137333; }
+    .nivel-desc {
+      font-size: 11px; color: #3c4043; line-height: 1.5;
+    }
+
+    /* ── Observación ── */
+    .field-label {
+      font-size: 11px; font-weight: 600;
+      color: #5f6368; text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #202124;
+      background: #fff;
+      resize: vertical;
+      min-height: 60px;
+      outline: none;
+    }
+    textarea:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px rgba(26,115,232,0.15); }
+
+    /* ── Resultado (paso 4) ── */
+    .resultado-card {
+      background: #e6f4ea;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .resultado-icon { font-size: 28px; margin-bottom: 6px; }
+    .resultado-escala { font-size: 18px; font-weight: 700; color: #137333; }
+    .resultado-pct   { font-size: 13px; color: #3c4043; margin-top: 2px; }
+
+    .resultado-aviso {
+      background: #fef7e0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #5f3c00;
+      margin-bottom: 12px;
+    }
+
+    .detalle-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .detalle-table td {
+      padding: 5px 0;
+      border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
+    }
+    .detalle-table td:first-child {
+      color: #5f6368;
+      width: 40%;
+      padding-right: 8px;
+    }
+
+    /* ── Botones ── */
+    .btn-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 20px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-secondary { background: #f1f3f4; color: #3c4043; }
+    .btn-secondary:hover { background: #e8eaed; }
+    .btn-primary   { background: #1a73e8; color: #fff; }
+    .btn-primary:hover   { background: #1557b0; }
+    .btn-primary:disabled { background: #dadce0; color: #9aa0a6; cursor: not-allowed; }
+    .btn-outline { background: #fff; color: #1a73e8; border: 1px solid #1a73e8; }
+    .btn-outline:hover { background: #e8f0fe; }
+
+    .back-link {
+      font-size: 12px; color: #1a73e8;
+      cursor: pointer; text-decoration: underline;
+      display: inline-block; margin-bottom: 10px;
+    }
+    .back-link:hover { color: #1557b0; }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="header-title">Evaluación presencial — rúbrica conductual</div>
+      <div class="header-sub">GeCO Lab · SE-FCEFyN</div>
+    </div>
+  </div>
+
+  <!-- Indicador de pasos -->
+  <div class="steps" id="stepsBar">
+    <div class="step-item active" id="si1">
+      <div class="step-num">1</div><span>Persona</span>
+    </div>
+    <div class="step-sep"></div>
+    <div class="step-item" id="si2">
+      <div class="step-num">2</div><span>Competencia</span>
+    </div>
+    <div class="step-sep"></div>
+    <div class="step-item" id="si3">
+      <div class="step-num">3</div><span>Rúbrica</span>
+    </div>
+  </div>
+
+  <!-- Alerta global -->
+  <div id="alertMsg" class="alert"></div>
+
+  <!-- ── PASO 1: Seleccionar persona ─────────────────────────── -->
+  <div id="step1">
+    <div id="spinnerPersonas" class="spinner-wrap visible">
+      <div class="spinner"></div>
+      <span>Cargando personas...</span>
+    </div>
+    <div id="personaGrid" class="persona-grid" style="display:none;"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- ── PASO 2: Seleccionar competencia ──────────────────────── -->
+  <div id="step2" style="display:none;">
+    <span class="back-link" onclick="volverAlPaso(1)">← Cambiar persona</span>
+    <div id="personaSelBadge" style="margin-bottom:10px;font-size:13px;color:#3c4043;"></div>
+    <div id="spinnerComps" class="spinner-wrap">
+      <div class="spinner"></div>
+      <span>Cargando competencias...</span>
+    </div>
+    <div id="compList" class="comp-list" style="display:none;"></div>
+    <div id="sinComps" style="display:none;text-align:center;padding:24px;color:#5f6368;font-size:13px;">
+      No hay competencias tácitas registradas para este puesto.
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- ── PASO 3: Rúbrica + registro ───────────────────────────── -->
+  <div id="step3" style="display:none;">
+    <span class="back-link" onclick="volverAlPaso(2)">← Cambiar competencia</span>
+
+    <div id="spinnerRubrica" class="spinner-wrap visible">
+      <div class="spinner"></div>
+      <span>Claude está generando la rúbrica conductual...</span>
+      <span style="font-size:11px;color:#9aa0a6;">Esto puede tomar unos segundos.</span>
+    </div>
+
+    <div id="rubricaContent" style="display:none;">
+      <div class="rubrica-contexto" id="rubricaContexto"></div>
+
+      <p class="rubrica-label">Seleccioná el nivel que mejor describe el desempeño observado</p>
+      <div class="niveles-grid" id="nivelesGrid"></div>
+
+      <p class="field-label">Evidencia u observación <span style="color:#c5221f;text-transform:none;font-weight:400;">*</span></p>
+      <textarea id="obsText" placeholder="Describí brevemente qué observaste o qué evidencia sustenta esta evaluación..."></textarea>
+
+      <div class="btn-row">
+        <div id="spinnerReg" class="spinner-wrap" style="padding:0;"></div>
+        <button class="btn btn-secondary" onclick="google.script.host.close()">Cancelar</button>
+        <button class="btn btn-primary" id="btnRegistrar" onclick="registrar()" disabled>
+          Registrar evaluación
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PASO 4: Resultado ─────────────────────────────────────── -->
+  <div id="step4" style="display:none;">
+    <div class="resultado-card" id="resultadoCard">
+      <div class="resultado-icon" id="resultadoIcon"></div>
+      <div class="resultado-escala" id="resultadoEscala"></div>
+      <div class="resultado-pct"   id="resultadoPct"></div>
+    </div>
+    <div id="avisoAccion" class="resultado-aviso" style="display:none;"></div>
+    <table class="detalle-table" id="detalleTable"></table>
+    <div class="btn-row">
+      <button class="btn btn-outline" onclick="nuevaEvaluacion()">Nueva evaluación</button>
+      <button class="btn btn-secondary" onclick="google.script.host.close()">Cerrar</button>
+    </div>
+  </div>
+
+</body>
+
+<script>
+  // ── Estado ───────────────────────────────────────────────────
+  var personaSel    = null;
+  var competenciaSel = null;
+  var idEvaluacion  = null;
+  var nivelSel      = -1;
+  var rubricaData   = [];
+
+  var tagClases  = ['tag-0', 'tag-1', 'tag-2', 'tag-3'];
+  var selClases  = ['sel-0', 'sel-1', 'sel-2', 'sel-3'];
+  var iconosEscala = {
+    Excelente: '🏆', Bueno: '✅', Regular: '⚠️', Insuficiente: '❌'
+  };
+
+  // ── Inicialización ────────────────────────────────────────────
+  window.onload = function() {
+    google.script.run
+      .withSuccessHandler(renderPersonas)
+      .withFailureHandler(function(e) { mostrarAlerta('Error cargando personas: ' + e.message, 'error'); })
+      .getPersonasActivas();
+  };
+
+  // ── Paso 1: personas ──────────────────────────────────────────
+  function renderPersonas(lista) {
+    document.getElementById('spinnerPersonas').classList.remove('visible');
+    if (!lista || lista.length === 0) {
+      mostrarAlerta('No hay personas activas en el directorio. Verificá la hoja Personas.', 'error');
+      return;
+    }
+    var grid = document.getElementById('personaGrid');
+    lista.forEach(function(p) {
+      var iniciales = p.nombre.split(' ').map(function(w) { return w[0] || ''; })
+                      .slice(0, 2).join('').toUpperCase();
+      var card = document.createElement('div');
+      card.className = 'persona-card';
+      card.innerHTML =
+        '<div class="avatar">' + iniciales + '</div>' +
+        '<div>' +
+          '<div class="persona-nombre">' + p.nombre + '</div>' +
+          '<div class="persona-puesto">' + (p.puesto || 'Sin puesto asignado') + '</div>' +
+        '</div>';
+      card.onclick = function() { seleccionarPersona(p); };
+      grid.appendChild(card);
+    });
+    grid.style.display = 'grid';
+  }
+
+  function seleccionarPersona(p) {
+    personaSel = p;
+    ocultarAlerta();
+    actualizarSteps(2);
+
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+
+    document.getElementById('personaSelBadge').innerHTML =
+      '<strong>' + p.nombre + '</strong> · ' + (p.puesto || 'Sin puesto') +
+      (p.area ? ' · ' + p.area : '');
+
+    document.getElementById('spinnerComps').classList.add('visible');
+    document.getElementById('compList').style.display = 'none';
+
+    google.script.run
+      .withSuccessHandler(renderCompetencias)
+      .withFailureHandler(function(e) {
+        document.getElementById('spinnerComps').classList.remove('visible');
+        mostrarAlerta('Error cargando competencias: ' + e.message, 'error');
+      })
+      .getCompetenciasTacitasPendientes(p.id, p.puesto);
+  }
+
+  // ── Paso 2: competencias ──────────────────────────────────────
+  function renderCompetencias(lista) {
+    document.getElementById('spinnerComps').classList.remove('visible');
+
+    if (!lista || lista.length === 0) {
+      document.getElementById('sinComps').style.display = 'block';
+      return;
+    }
+
+    var ul = document.getElementById('compList');
+    lista.forEach(function(c) {
+      var item = document.createElement('div');
+      item.className = 'comp-item';
+
+      var badgeVenc = '';
+      if (c.vencida) {
+        var txt = (c.diasVencida === null) ? 'Sin evaluar' : c.diasVencida + ' días vencida';
+        badgeVenc = '<span class="badge badge-red">' + txt + '</span>';
+      } else {
+        badgeVenc = '<span class="badge badge-gray">Vigente</span>';
+      }
+
+      var badgeCrit = c.criticidad === 'Alta'
+        ? '<span class="badge badge-amber">' + c.criticidad + '</span>' : '';
+      var badgeNat  = '<span class="badge badge-blue">' + c.naturaleza + '</span>';
+
+      item.innerHTML =
+        '<div class="comp-row1">' +
+          '<span class="comp-nombre">' + c.dominio + '</span>' +
+          badgeVenc + badgeCrit + badgeNat +
+        '</div>' +
+        '<div class="comp-meta">' + c.categoria +
+          (c.ultimaEval ? ' · Última evaluación: ' + c.ultimaEval : '') +
+        '</div>';
+      item.onclick = function() { seleccionarCompetencia(c); };
+      ul.appendChild(item);
+    });
+    ul.style.display = 'flex';
+  }
+
+  function seleccionarCompetencia(c) {
+    competenciaSel = c;
+    nivelSel       = -1;
+    ocultarAlerta();
+    actualizarSteps(3);
+
+    document.getElementById('step2').style.display = 'none';
+    document.getElementById('step3').style.display = 'block';
+    document.getElementById('spinnerRubrica').classList.add('visible');
+    document.getElementById('rubricaContent').style.display = 'none';
+
+    google.script.run
+      .withSuccessHandler(onIniciarOk)
+      .withFailureHandler(function(e) {
+        document.getElementById('spinnerRubrica').classList.remove('visible');
+        mostrarAlerta('Error al generar la rúbrica: ' + e.message, 'error');
+      })
+      .iniciarEvaluacionPresencial({ idPersona: personaSel.id, idCompetencia: c.id });
+  }
+
+  // ── Paso 3: rúbrica ───────────────────────────────────────────
+  function onIniciarOk(res) {
+    document.getElementById('spinnerRubrica').classList.remove('visible');
+
+    if (!res.ok) {
+      mostrarAlerta(res.error || 'Error desconocido al iniciar la evaluación.', 'error');
+      return;
+    }
+
+    idEvaluacion = res.idEvaluacion;
+    rubricaData  = res.rubrica;
+
+    document.getElementById('rubricaContexto').innerHTML =
+      '<strong>' + res.persona.nombre + '</strong> · ' +
+      res.competencia.dominio +
+      ' <span style="color:#5f6368;font-size:11px;">· ' + res.competencia.criticidad + ' · ' + res.competencia.naturaleza + '</span>';
+
+    var grid = document.getElementById('nivelesGrid');
+    grid.innerHTML = '';
+    res.rubrica.forEach(function(nivel, i) {
+      var card = document.createElement('div');
+      card.className = 'nivel-card';
+      card.id = 'nv' + i;
+      card.innerHTML =
+        '<span class="nivel-tag ' + tagClases[i] + '">' + nivel.nivel + '</span>' +
+        '<p class="nivel-desc">' + nivel.descriptor + '</p>';
+      card.onclick = function() { seleccionarNivel(i); };
+      grid.appendChild(card);
+    });
+
+    document.getElementById('obsText').value = '';
+    document.getElementById('btnRegistrar').disabled = true;
+    document.getElementById('rubricaContent').style.display = 'block';
+  }
+
+  function seleccionarNivel(i) {
+    nivelSel = i;
+    [0, 1, 2, 3].forEach(function(j) {
+      var el = document.getElementById('nv' + j);
+      if (el) el.className = 'nivel-card' + (j === i ? ' ' + selClases[i] : '');
+    });
+    validarBoton();
+  }
+
+  document.addEventListener('input', function(e) {
+    if (e.target && e.target.id === 'obsText') validarBoton();
+  });
+
+  function validarBoton() {
+    var obs = document.getElementById('obsText').value.trim();
+    document.getElementById('btnRegistrar').disabled = (nivelSel === -1 || !obs);
+  }
+
+  // ── Registro ──────────────────────────────────────────────────
+  function registrar() {
+    var obs = document.getElementById('obsText').value.trim();
+    if (nivelSel === -1 || !obs) return;
+
+    var nivel = rubricaData[nivelSel].nivel;
+
+    document.getElementById('btnRegistrar').disabled = true;
+    document.getElementById('spinnerReg').innerHTML =
+      '<div class="spinner" style="width:18px;height:18px;border-width:2px;"></div>';
+
+    google.script.run
+      .withSuccessHandler(onRegistroOk)
+      .withFailureHandler(function(e) {
+        document.getElementById('spinnerReg').innerHTML = '';
+        document.getElementById('btnRegistrar').disabled = false;
+        mostrarAlerta('Error al registrar: ' + e.message, 'error');
+      })
+      .registrarEvaluacionRubrica({
+        idEvaluacion:  idEvaluacion,
+        nivel:         nivel,
+        observaciones: obs
+      });
+  }
+
+  function onRegistroOk(res) {
+    document.getElementById('spinnerReg').innerHTML = '';
+    if (!res.ok) {
+      document.getElementById('btnRegistrar').disabled = false;
+      mostrarAlerta(res.error || 'Error desconocido al registrar.', 'error');
+      return;
+    }
+
+    document.getElementById('step3').style.display = 'none';
+    document.getElementById('stepsBar').style.display = 'none';
+    ocultarAlerta();
+
+    var icono = iconosEscala[res.escala] || '✅';
+    document.getElementById('resultadoIcon').textContent  = icono;
+    document.getElementById('resultadoEscala').textContent = res.escala;
+    document.getElementById('resultadoPct').textContent   = res.puntaje + '%';
+
+    if (res.generaAccion) {
+      var diasObj = res.escala === 'Insuficiente' ? 30 : 60;
+      document.getElementById('avisoAccion').innerHTML =
+        '📋 <strong>Plan de acción creado</strong> — objetivo en ' + diasObj +
+        ' días. Revisalo en la hoja Plan_Acciones.';
+      document.getElementById('avisoAccion').style.display = 'block';
+    }
+
+    var nivel    = rubricaData[nivelSel].nivel;
+    var obs      = document.getElementById('obsText').value.trim();
+    var filas = [
+      ['Evaluado',        personaSel.nombre],
+      ['Puesto',          personaSel.puesto],
+      ['Competencia',     competenciaSel.dominio],
+      ['Nivel asignado',  nivel + ' (' + res.puntaje + '%)'],
+      ['Escala GeCO',     res.escala],
+      ['Evidencia',       obs],
+      ['ID Evaluación',   idEvaluacion]
+    ];
+
+    var table = document.getElementById('detalleTable');
+    table.innerHTML = filas.map(function(f) {
+      return '<tr><td>' + f[0] + '</td><td><strong>' + f[1] + '</strong></td></tr>';
+    }).join('');
+
+    document.getElementById('step4').style.display = 'block';
+  }
+
+  // ── Navegación ────────────────────────────────────────────────
+  function volverAlPaso(n) {
+    ocultarAlerta();
+    if (n === 1) {
+      document.getElementById('step2').style.display = 'none';
+      document.getElementById('step1').style.display = 'block';
+      actualizarSteps(1);
+    } else if (n === 2) {
+      nivelSel = -1;
+      document.getElementById('step3').style.display = 'none';
+      document.getElementById('step2').style.display = 'block';
+      actualizarSteps(2);
+    }
+  }
+
+  function nuevaEvaluacion() {
+    personaSel    = null;
+    competenciaSel = null;
+    idEvaluacion  = null;
+    nivelSel      = -1;
+    rubricaData   = [];
+
+    document.getElementById('step4').style.display = 'none';
+    document.getElementById('stepsBar').style.display = 'flex';
+    document.getElementById('nivelesGrid').innerHTML = '';
+    document.getElementById('compList').innerHTML    = '';
+    document.getElementById('personaGrid').innerHTML = '';
+    document.getElementById('personaGrid').style.display = 'none';
+    document.getElementById('spinnerPersonas').classList.add('visible');
+    actualizarSteps(1);
+    document.getElementById('step1').style.display = 'block';
+
+    google.script.run
+      .withSuccessHandler(renderPersonas)
+      .withFailureHandler(function(e) { mostrarAlerta('Error: ' + e.message, 'error'); })
+      .getPersonasActivas();
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────
+  function actualizarSteps(paso) {
+    [1, 2, 3].forEach(function(n) {
+      var el = document.getElementById('si' + n);
+      el.className = 'step-item' +
+        (n < paso ? ' done' : n === paso ? ' active' : '');
+    });
+  }
+
+  function mostrarAlerta(msg, tipo) {
+    var el = document.getElementById('alertMsg');
+    el.textContent = msg;
+    el.className = 'alert visible alert-' + tipo;
+  }
+
+  function ocultarAlerta() {
+    document.getElementById('alertMsg').className = 'alert';
+  }
+</script>
+</html>

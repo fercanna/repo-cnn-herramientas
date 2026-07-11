@@ -1,0 +1,523 @@
+// ============================================================
+// GeCO Lab — Trigger.gs v2
+// Corrección automática al recibir respuesta de un Google Form.
+//
+// DEPENDENCIAS:
+//   - Config.gs   → calcularEscala(), requierePlanAccion()
+//   - MailEvaluado.gs → enviarMailEvaluado()
+//
+// NOTA DE MIGRACIÓN:
+//   Al agregar Config.gs al proyecto, eliminar de ClaudeApi.gs las
+//   funciones: getClaudeApiKey(), getSpreadsheetId(), getDriveFolderId()
+//   ya que Config.gs las redefine con lógica extendida.
+//
+// CÓMO INSTALAR EL TRIGGER:
+//   El trigger se instala automáticamente al crear cada Form desde
+//   generarEvaluacion() en Codigo.gs. Ver instalarTriggerForm().
+// ============================================================
+
+// ------------------------------------------------------------------
+// TRIGGER PRINCIPAL — se dispara al completar un Google Form
+// ------------------------------------------------------------------
+
+/**
+ * Disparado por Google Form al recibir una respuesta.
+ * Resuelve el scope completo de variables desde las hojas del sistema.
+ *
+ * Flujo:
+ *   1. Obtener formId y respuestas del evento
+ *   2. Buscar claves en Claves_Evaluacion por formId
+ *   3. Recuperar ID_Evaluacion y todos los datos del evaluado
+ *      desde Registro_Competencias (no depende de variables externas)
+ *   4. Comparar respuestas con claves → calcular puntaje
+ *   5. Actualizar Registro_Competencias (Estado, Puntaje, Escala)
+ *   6. Crear plan de acción si el resultado es Regular o Insuficiente
+ *   7. Enviar mail al evaluado
+ */
+function onFormSubmit(e) {
+  try {
+    // ── 1. Datos del evento ──────────────────────────────────────
+    const formId       = e.source.getId();
+    const response     = e.response;
+    const itemResponses = response.getItemResponses();
+
+    if (!formId) {
+      Logger.log('[Trigger] ERROR: no se pudo obtener formId del evento.');
+      return;
+    }
+
+    // ── 2. Construir mapa de respuestas con opciones completas ────
+    // Para cada pregunta: enunciado → { elegidaLetra, opcionesCompletas[] }
+    const mapaRespuestas = _construirMapaRespuestas(itemResponses);
+
+    // ── 3. Abrir Spreadsheet (seguro en contexto de trigger) ──────
+    const ss = _getSS();
+
+    // ── 4. Leer claves de Claves_Evaluacion ──────────────────────
+    const hojaClaves = ss.getSheetByName('Claves_Evaluacion');
+    if (!hojaClaves) {
+      Logger.log('[Trigger] ERROR: no existe la hoja Claves_Evaluacion.');
+      return;
+    }
+
+    const datosClaves = hojaClaves.getDataRange().getValues();
+    // Encabezados: FormID | ID_Evaluacion | N°_Pregunta | Enunciado | Resp_Correcta | Justificación | Doc_Fuente | Fecha | Modo
+    const claves = datosClaves.slice(1).filter(function(row) {
+      return String(row[0]).trim() === formId;
+    });
+
+    if (claves.length === 0) {
+      Logger.log('[Trigger] No se encontraron claves para formId: ' + formId);
+      return;
+    }
+
+    // ── 5. Obtener ID_Evaluacion y fila en Registro ───────────────
+    const idEvaluacion = String(claves[0][1] || '').trim();
+    const modoEval     = String(claves[0][8] || 'Autónomo').trim();
+
+    const hojaReg = ss.getSheetByName('Registro_Competencias');
+    if (!hojaReg) {
+      Logger.log('[Trigger] ERROR: no existe la hoja Registro_Competencias.');
+      return;
+    }
+
+    const datosReg = hojaReg.getDataRange().getValues();
+    const { filaIdx, datosFila } = _buscarFilaRegistro(datosReg, idEvaluacion, formId);
+
+    if (filaIdx < 0) {
+      Logger.log('[Trigger] No se encontró fila en Registro para: ' + idEvaluacion);
+      return;
+    }
+
+    // ── 6. Extraer datos del evaluado desde la fila del Registro ──
+    // Columnas (índice 0-based):
+    // 0=ID_Evaluacion, 1=Fecha_Gen, 2=Fecha_Comp, 3=Evaluado, 4=ID_Persona,
+    // 5=Área, 6=Puesto, 7=ID_Competencia, 8=Dominio, 9=Categoría, 10=Criticidad,
+    // 11=Documento, 12=Drive_ID, 13=Modo, 14=Nro_Preguntas, 15=Correctas,
+    // 16=Puntaje_Pct, 17=Escala, 18=Evaluador, 19=Form_URL, 20=Form_Edit_URL,
+    // 21=Respuestas_URL, 22=Estado, 23=Genera_Accion, 24=Observaciones
+    const evaluadoNombre   = String(datosFila[3]  || '');
+    const idPersona        = String(datosFila[4]  || '');
+    const evaluadoArea     = String(datosFila[5]  || '');
+    const evaluadoPuesto   = String(datosFila[6]  || '');
+    const idCompetencia    = String(datosFila[7]  || '');
+    const dominioEval      = String(datosFila[8]  || '');
+    const categoriaEval    = String(datosFila[9]  || '');
+    const criticidadEval   = String(datosFila[10] || '');
+    const documentoEval    = String(datosFila[11] || claves[0][6] || '');
+    const evaluadorEmail   = String(datosFila[18] || '');
+    const formUrl          = String(datosFila[19] || '');
+    const ssUrl            = ss.getUrl();
+
+    // Mail del evaluado (buscar en Personas por ID o nombre)
+    const mailEvaluado = _buscarMailPersona(ss, idPersona, evaluadoNombre);
+
+    // URL de la respuesta específica (para el registro)
+    let respuestasUrl = '';
+    try { respuestasUrl = response.getEditResponseUrl(); } catch (_) {}
+
+    // ── 7. Comparar respuestas con claves ─────────────────────────
+    let correctas = 0;
+    const total   = claves.length;
+    const detalle = [];
+
+    claves.forEach(function(clave, idx) {
+      const enunciado     = String(clave[3]).trim();   // col D
+      const correctaLetra = String(clave[4]).trim().toUpperCase().charAt(0); // col E → "A","B","C","D"
+      const justificacion = String(clave[5] || '');    // col F
+
+      const respInfo = mapaRespuestas[enunciado] || { elegidaLetra: '', opciones: [] };
+      const elegidaLetra = respInfo.elegidaLetra;
+      const esCorrecta   = elegidaLetra !== '' && elegidaLetra === correctaLetra;
+
+      if (esCorrecta) correctas++;
+
+      detalle.push({
+        numero:       idx + 1,
+        enunciado:    enunciado,
+        opciones:     respInfo.opciones,    // strings completos "A. texto"
+        elegida:      elegidaLetra,         // "A", "B", "C" o "D"
+        correcta:     correctaLetra,        // "A", "B", "C" o "D"
+        esCorrecta:   esCorrecta,
+        justificacion: justificacion
+      });
+    });
+
+    // ── 8. Calcular puntaje y escala ──────────────────────────────
+    const pct    = Math.round((correctas / total) * 100);
+    const escala = calcularEscala(pct);          // usa umbrales de Config sheet
+    const generaAccion = requierePlanAccion(escala);
+    const ahora  = new Date();
+
+    // ── 9. Actualizar fila en Registro_Competencias ───────────────
+    _actualizarRegistroTrasCorreccion(hojaReg, filaIdx, {
+      fechaCompletado: ahora,
+      correctas:       correctas,
+      puntajePct:      pct,
+      escala:          escala,
+      respuestasUrl:   respuestasUrl,
+      estado:          'Completado',
+      generaAccion:    generaAccion
+    });
+
+    // ── 10. Crear plan de acción si corresponde ───────────────────
+    if (generaAccion) {
+      crearPlanAccion({
+        ss:            ss,
+        idEvaluacion:  idEvaluacion,
+        evaluado:      evaluadoNombre,
+        dominio:       dominioEval,
+        puntajePct:    pct,
+        escala:        escala
+      });
+    }
+
+    // ── 11. Enviar mail al evaluado ───────────────────────────────
+    if (mailEvaluado) {
+      const datosEvaluacion = {
+        nombre:      evaluadoNombre,
+        mail:        mailEvaluado,
+        documento:   documentoEval,
+        dominio:     dominioEval,
+        fecha:       ahora,
+        puntaje:     pct,
+        escala:      escala,
+        correctas:   correctas,
+        total:       total,
+        evaluador:   evaluadorEmail || 'el equipo de calidad',
+        registroUrl: ssUrl,
+        preguntas:   detalle
+      };
+      enviarMailEvaluado(datosEvaluacion);
+    } else {
+      Logger.log('[Trigger] Sin mail para evaluado: ' + evaluadoNombre + '. No se envía notificación.');
+    }
+
+    Logger.log('[Trigger] OK — ' + evaluadoNombre +
+               ': ' + correctas + '/' + total +
+               ' (' + pct + '% — ' + escala + ')' +
+               (generaAccion ? ' → Plan de acción creado.' : ''));
+
+  } catch (err) {
+    Logger.log('[Trigger] ERROR no controlado: ' + err.message + '\n' + err.stack);
+  }
+}
+
+// ------------------------------------------------------------------
+// HELPERS INTERNOS
+// ------------------------------------------------------------------
+
+/**
+ * Abre el Spreadsheet de forma segura tanto en contexto de trigger
+ * como en ejecución manual.
+ * Prioridad: Script Properties → getActiveSpreadsheet()
+ */
+function _getSS() {
+  // 1. Script Properties (más confiable en contexto de trigger)
+  try {
+    const ssId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    if (ssId && ssId.trim() !== '') return SpreadsheetApp.openById(ssId.trim());
+  } catch (_) {}
+
+  // 2. Active spreadsheet (funciona en ejecución manual)
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss) return ss;
+  } catch (_) {}
+
+  throw new Error('[Trigger] No se pudo obtener el Spreadsheet. ' +
+    'Verificar que SPREADSHEET_ID esté configurado en Script Properties.');
+}
+
+/**
+ * Construye un mapa enunciado → { elegidaLetra, opciones[] }
+ * extrayendo la respuesta y todas las opciones disponibles de cada item.
+ * @param {ItemResponse[]} itemResponses
+ * @returns {Object}
+ */
+function _construirMapaRespuestas(itemResponses) {
+  const mapa = {};
+  itemResponses.forEach(function(ir) {
+    try {
+      const item = ir.getItem();
+      if (item.getType() !== FormApp.ItemType.MULTIPLE_CHOICE) return;
+
+      const enunciado = item.getTitle().trim();
+
+      // Opciones completas del Form (ej: "A. texto de la opción")
+      const opciones = item.asMultipleChoiceItem().getChoices()
+        .map(function(c) { return c.getValue(); });
+
+      // Respuesta elegida (ej: "A. texto de la opción")
+      const respuestaCompleta = String(ir.getResponse()).trim();
+
+      // Extraer letra de la respuesta: charAt(0) → "A", "B", "C" o "D"
+      const elegidaLetra = respuestaCompleta.length > 0
+        ? respuestaCompleta.charAt(0).toUpperCase()
+        : '';
+
+      mapa[enunciado] = { elegidaLetra: elegidaLetra, opciones: opciones };
+
+    } catch (e) {
+      Logger.log('[Trigger] Error procesando ItemResponse: ' + e.message);
+    }
+  });
+  return mapa;
+}
+
+/**
+ * Busca la fila correspondiente en Registro_Competencias.
+ * Estrategia 1 (nuevo modelo): match por ID_Evaluacion en col A.
+ * Estrategia 2 (retrocompat): match por formId en Form_URL (col T, idx 19).
+ * @returns {{ filaIdx: number, datosFila: Array }}
+ *   filaIdx: número de fila (1-based) para getRange(), -1 si no se encontró
+ */
+function _buscarFilaRegistro(datosReg, idEvaluacion, formId) {
+  // Estrategia 1: ID_Evaluacion en col A (nuevo modelo)
+  if (idEvaluacion) {
+    for (let i = 1; i < datosReg.length; i++) {
+      if (String(datosReg[i][0]).trim() === idEvaluacion) {
+        return { filaIdx: i + 1, datosFila: datosReg[i] };
+      }
+    }
+  }
+
+  // Estrategia 2: FormID en col A (modelo viejo donde col A era FormID)
+  // o formId contenido en Form_URL (col T = índice 19)
+  for (let i = 1; i < datosReg.length; i++) {
+    const colA    = String(datosReg[i][0] || '');
+    const formUrl = String(datosReg[i][19] || '');
+    if (colA === formId || formUrl.indexOf(formId) !== -1) {
+      return { filaIdx: i + 1, datosFila: datosReg[i] };
+    }
+  }
+
+  return { filaIdx: -1, datosFila: null };
+}
+
+/**
+ * Busca el mail del evaluado en la hoja Personas.
+ * Intenta por ID_Persona (col A) primero, luego por nombre (col B).
+ * @param {Spreadsheet} ss
+ * @param {string} idPersona
+ * @param {string} nombre
+ * @returns {string} mail o '' si no se encontró
+ */
+function _buscarMailPersona(ss, idPersona, nombre) {
+  try {
+    const hoja = ss.getSheetByName('Personas');
+    if (!hoja || hoja.getLastRow() < 2) return '';
+
+    const datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 3).getValues();
+    // Col A (idx 0) = ID_Persona | Col B (idx 1) = Nombre | Col C (idx 2) = Mail
+
+    // Búsqueda por ID_Persona
+    if (idPersona) {
+      for (let i = 0; i < datos.length; i++) {
+        if (String(datos[i][0]).trim() === idPersona) {
+          return String(datos[i][2]).trim();
+        }
+      }
+    }
+
+    // Búsqueda por nombre (fallback)
+    const nombreNorm = nombre.trim().toLowerCase();
+    for (let i = 0; i < datos.length; i++) {
+      if (String(datos[i][1]).trim().toLowerCase() === nombreNorm) {
+        return String(datos[i][2]).trim();
+      }
+    }
+
+  } catch (e) {
+    Logger.log('[Trigger] Error buscando mail de persona: ' + e.message);
+  }
+  return '';
+}
+
+/**
+ * Escribe los resultados de la corrección en la fila del Registro.
+ * Usa setValues en un rango acotado para minimizar llamadas a la API.
+ * @param {Sheet} hojaReg
+ * @param {number} filaIdx — fila 1-based
+ * @param {Object} datos — { fechaCompletado, correctas, puntajePct, escala, respuestasUrl, estado, generaAccion }
+ */
+function _actualizarRegistroTrasCorreccion(hojaReg, filaIdx, datos) {
+  // Col C (3): Fecha_Completado
+  hojaReg.getRange(filaIdx, 3).setValue(datos.fechaCompletado);
+  // Col P (16): Correctas
+  hojaReg.getRange(filaIdx, 16).setValue(datos.correctas);
+  // Col Q (17): Puntaje_Pct
+  hojaReg.getRange(filaIdx, 17).setValue(datos.puntajePct);
+  // Col R (18): Escala
+  hojaReg.getRange(filaIdx, 18).setValue(datos.escala);
+  // Col V (22): Respuestas_URL
+  hojaReg.getRange(filaIdx, 22).setValue(datos.respuestasUrl);
+  // Col W (23): Estado
+  hojaReg.getRange(filaIdx, 23).setValue(datos.estado);
+  // Col X (24): Genera_Accion
+  hojaReg.getRange(filaIdx, 24).setValue(datos.generaAccion);
+}
+
+// ------------------------------------------------------------------
+// PLAN DE ACCIÓN
+// Crea una fila en Plan_Acciones cuando el resultado es insuficiente.
+// Se moverá a PlanAcciones.gs en la Fase 3 del roadmap.
+// ------------------------------------------------------------------
+
+/**
+ * Crea una fila en Plan_Acciones para un resultado que requiere mejora.
+ * @param {Object} params
+ *   - ss: Spreadsheet
+ *   - idEvaluacion: string
+ *   - evaluado: string (nombre)
+ *   - dominio: string
+ *   - puntajePct: number
+ *   - escala: string ('Regular' o 'Insuficiente')
+ * @returns {string} ID_Accion generado
+ */
+function crearPlanAccion(params) {
+  try {
+    const ss = params.ss || _getSS();
+    const hoja = ss.getSheetByName('Plan_Acciones');
+
+    if (!hoja) {
+      Logger.log('[Trigger] Plan_Acciones no existe. Ejecutar setupCompleto() primero.');
+      return '';
+    }
+
+    const ahora  = new Date();
+    const fecha  = Utilities.formatDate(ahora, Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+    const idAccion = 'ACC-' + fecha;
+
+    // Columnas Plan_Acciones:
+    // A=ID_Accion | B=ID_Evaluacion | C=Fecha_Gen | D=Evaluado | E=Dominio
+    // F=Puntaje_Pct | G=Escala | H=Tipo_Accion | I=Descripción | J=Responsable
+    // K=Fecha_Objetivo | L=Estado | M=Fecha_Cierre | N=ID_Reevaluacion | O=Resultado_Final | P=Notas
+    hoja.appendRow([
+      idAccion,
+      params.idEvaluacion || '',
+      ahora,
+      params.evaluado || '',
+      params.dominio  || '',
+      params.puntajePct || 0,
+      params.escala   || '',
+      '',        // Tipo_Accion — el evaluador lo completa en la hoja
+      '',        // Descripción
+      '',        // Responsable
+      '',        // Fecha_Objetivo
+      'Pendiente', // Estado
+      '',        // Fecha_Cierre
+      '',        // ID_Reevaluacion
+      '',        // Resultado_Final
+      ''         // Notas
+    ]);
+
+    Logger.log('[Trigger] Plan de acción creado: ' + idAccion +
+               ' para ' + params.evaluado + ' — ' + params.dominio);
+    return idAccion;
+
+  } catch (e) {
+    Logger.log('[Trigger] Error creando plan de acción: ' + e.message);
+    return '';
+  }
+}
+
+// ------------------------------------------------------------------
+// GESTIÓN DE TRIGGERS POR FORM
+// ------------------------------------------------------------------
+
+/**
+ * Instala un trigger onFormSubmit para un Form específico.
+ * Llamar desde generarEvaluacion() al crear cada Form.
+ * @param {string} formId — ID del Google Form
+ */
+function instalarTriggerForm(formId) {
+  try {
+    const form = FormApp.openById(formId);
+    ScriptApp.newTrigger('onFormSubmit')
+      .forForm(form)
+      .onFormSubmit()
+      .create();
+    Logger.log('[Trigger] Trigger instalado para formId: ' + formId);
+  } catch (e) {
+    Logger.log('[Trigger] Error instalando trigger para ' + formId + ': ' + e.message);
+  }
+}
+
+/**
+ * Elimina todos los triggers onFormSubmit asociados a un Form específico.
+ * Útil para limpiar triggers obsoletos.
+ * @param {string} formId
+ */
+function desinstalarTriggerForm(formId) {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'onFormSubmit' &&
+        t.getTriggerSourceId() === formId) {
+      ScriptApp.deleteTrigger(t);
+      Logger.log('[Trigger] Trigger eliminado para formId: ' + formId);
+    }
+  });
+}
+
+/**
+ * Elimina TODOS los triggers del proyecto (usar con precaución).
+ */
+function limpiarTodosLosTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    ScriptApp.deleteTrigger(t);
+  });
+  Logger.log('[Trigger] Todos los triggers eliminados.');
+}
+
+// ------------------------------------------------------------------
+// FUNCIONES DE PRUEBA — ejecutar manualmente desde el editor
+// ------------------------------------------------------------------
+
+/**
+ * Lista todos los triggers activos del proyecto.
+ * Usar para verificar el estado de los triggers instalados.
+ */
+function listarTriggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  Logger.log('=== Triggers activos: ' + triggers.length + ' ===');
+  triggers.forEach(function(t) {
+    Logger.log(
+      t.getHandlerFunction() + ' | ' +
+      t.getEventType() + ' | ' +
+      'Source: ' + t.getTriggerSourceId()
+    );
+  });
+}
+
+/**
+ * Simula un resultado de evaluación para probar el pipeline completo.
+ * ⚠️ SOLO PARA DESARROLLO — crea filas reales en las hojas.
+ */
+function TEST_simularResultado() {
+  const ss = _getSS();
+  const hojaReg = ss.getSheetByName('Registro_Competencias');
+  if (!hojaReg) {
+    Logger.log('TEST: No existe Registro_Competencias.');
+    return;
+  }
+
+  // Buscar primer registro con Estado=Pendiente y Modo=Autónomo
+  const datos = hojaReg.getDataRange().getValues();
+  for (let i = 1; i < datos.length; i++) {
+    if (String(datos[i][22]) === 'Pendiente' && String(datos[i][13]).toLowerCase() === 'autónomo') {
+      Logger.log('TEST: Simulando corrección para: ' + datos[i][3]);
+      _actualizarRegistroTrasCorreccion(hojaReg, i + 1, {
+        fechaCompletado: new Date(),
+        correctas:       3,
+        puntajePct:      60,
+        escala:          calcularEscala(60),
+        respuestasUrl:   '',
+        estado:          'Completado',
+        generaAccion:    requierePlanAccion(calcularEscala(60))
+      });
+      Logger.log('TEST: Registro actualizado OK.');
+      return;
+    }
+  }
+  Logger.log('TEST: No se encontraron evaluaciones autónomas pendientes.');
+}

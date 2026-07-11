@@ -1,0 +1,742 @@
+// ========================================
+// MÓDULO: RECEPCIONES
+// ========================================
+
+function mostrarFormularioRecepcion() {
+  const html = HtmlService.createHtmlOutputFromFile('FormularioRecepcion')
+    .setWidth(900).setHeight(700)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Recepción de Pedido');
+}
+
+function generarNumeroRecepcion() {
+  const sheet   = getSheet(CONFIG.SHEETS.RECEPCIONES);
+  const lastRow = sheet.getLastRow();
+  const anio    = new Date().getFullYear();
+  if (lastRow <= 1) return 'REC-' + anio + '-001';
+  const ultima  = sheet.getRange(lastRow, 1).getValue();
+  const numero  = parseInt(ultima.split('-')[2]) + 1;
+  return 'REC-' + anio + '-' + numero.toString().padStart(3, '0');
+}
+
+/**
+ * Registra el ingreso de mercadería a stock.
+ *
+ * @param {Object} recepcionData
+ *   numero_orden   {string}
+ *   recibido_por   {string}
+ *   observaciones  {string}
+ *   items          {Array} — cada item:
+ *     { codigo_insumo, cantidad_recibida, cantidad_esperada,
+ *       lote, vencimiento, estado_conformidad, observaciones,
+ *       precio_recepcion? }
+ *
+ * @returns {string} Número de recepción generado
+ */
+function registrarRecepcion(recepcionData) {
+  try {
+    const numeroRecepcion   = generarNumeroRecepcion();
+    const fechaRecepcion    = new Date();
+    const usuario           = getCurrentUser();
+    const catalogoInsumos   = getInsumosActivos();
+    const tablaConversiones = getTablaConversiones();
+
+    const tieneDiscrepancias = recepcionData.items.some(function(item) {
+      return item.estado_conformidad !== 'Conforme';
+    });
+
+    // ── Cabecera de recepción ──────────────────────────────────────
+    // numero_recepcion | fecha | numero_orden | usuario | observaciones | tiene_discrepancias | recibido_por
+    getSheet(CONFIG.SHEETS.RECEPCIONES).appendRow([
+      numeroRecepcion,
+      fechaRecepcion,
+      recepcionData.numero_orden,
+      usuario,
+      recepcionData.observaciones || '',
+      tieneDiscrepancias,
+      recepcionData.recibido_por  || ''
+    ]);
+
+    // ── Acumular filas para escritura batch ────────────────────────
+    const sheetDetalleRecep = getSheet(CONFIG.SHEETS.DETALLE_RECEPCIONES);
+    const sheetMovimientos  = getSheet(CONFIG.SHEETS.MOVIMIENTOS);
+
+    const filasDetalle  = [];
+    const filasMovs     = [];
+    const itemsConvInfo = [];
+
+    recepcionData.items.forEach(function(item) {
+      const infoInsumo      = catalogoInsumos.find(function(ins) {
+        return ins.codigo_insumo === item.codigo_insumo;
+      });
+      const nombreInsumo    = infoInsumo ? infoInsumo.descripcion : 'No encontrado';
+      const categoriaInsumo = infoInsumo ? infoInsumo.categoria   : '';
+
+      const conv = aplicarConversion(
+        item.codigo_insumo,
+        Number(item.cantidad_recibida),
+        tablaConversiones
+      );
+
+      const notaConversion = conv.tiene_conversion
+        ? '[CONV x' + conv.factor + '] ' + item.cantidad_recibida + ' ' +
+          (infoInsumo ? infoInsumo.unidad_medida || 'caja(s)' : 'caja(s)') +
+          ' → ' + conv.cantidad_stock + ' ' + conv.unidad_stock
+        : '';
+
+      // Fila Detalle_Recepciones
+      // numero_recepcion | item | codigo_insumo | nombre | cant_recibida | cant_esperada |
+      // estado_conformidad | observaciones | lote | vencimiento | categoria | nota_conversion
+      filasDetalle.push([
+        numeroRecepcion,
+        item.item,
+        item.codigo_insumo,
+        nombreInsumo,
+        item.cantidad_recibida,
+        item.cantidad_esperada,
+        item.estado_conformidad,
+        item.observaciones || '',
+        item.lote          || 'SIN LOTE',
+        item.vencimiento   || '',
+        categoriaInsumo,
+        notaConversion
+      ]);
+
+      // Fila Movimientos_Inventario
+      filasMovs.push([
+        'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+        fechaRecepcion,
+        'Ingreso',
+        item.codigo_insumo,
+        nombreInsumo,
+        conv.cantidad_stock,
+        numeroRecepcion,
+        usuario,
+        'Rec. Orden ' + recepcionData.numero_orden +
+          (notaConversion ? ' | ' + notaConversion : ''),
+        item.lote        || 'SIN LOTE',
+        item.vencimiento || '',
+        categoriaInsumo
+      ]);
+
+      itemsConvInfo.push({
+        codigo_insumo:  item.codigo_insumo,
+        lote:           item.lote        || 'SIN LOTE',
+        vencimiento:    item.vencimiento || '',
+        cantidad_stock: conv.cantidad_stock,
+        descripcion:    nombreInsumo,
+        infoInsumo
+      });
+
+      // Historial de precios si el formulario trae precio de recepción
+      if (item.precio_recepcion && item.precio_recepcion > 0) {
+        registrarHistorialPrecios(
+          [{ codigo_insumo: item.codigo_insumo, descripcion: nombreInsumo,
+             precio_unitario: item.precio_recepcion }],
+          numeroRecepcion,
+          usuario,
+          fechaRecepcion,
+          'Recepción ' + recepcionData.numero_orden
+        );
+      }
+    });
+
+    // ── Escritura batch ────────────────────────────────────────────
+    const lastDetalle = sheetDetalleRecep.getLastRow();
+    sheetDetalleRecep
+      .getRange(lastDetalle + 1, 1, filasDetalle.length, filasDetalle[0].length)
+      .setValues(filasDetalle);
+
+    const lastMovs = sheetMovimientos.getLastRow();
+    sheetMovimientos
+      .getRange(lastMovs + 1, 1, filasMovs.length, filasMovs[0].length)
+      .setValues(filasMovs);
+
+    // ── Actualizar cantidades en la OC y su estado ─────────────────
+    actualizarCantidadesEnOrden(recepcionData);
+
+    // ── Stock incremental (solo los lotes afectados) ───────────────
+    actualizarStockIncremental(itemsConvInfo, catalogoInsumos);
+
+    return numeroRecepcion;
+
+  } catch (error) {
+    throw new Error('No se pudo registrar la recepción: ' + error.message);
+  }
+}
+
+function actualizarCantidadesEnOrden(recepcionData) {
+  const sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  const data         = sheetDetalle.getDataRange().getValues();
+
+  recepcionData.items.forEach(function(itemRec) {
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] !== recepcionData.numero_orden) continue;
+      if (data[i][2] !== itemRec.codigo_insumo)      continue;
+
+      const cantPrevia     = Number(data[i][7]) || 0;
+      const nuevaCant      = cantPrevia + Number(itemRec.cantidad_recibida);
+      const cantSolicitada = Number(data[i][4]);
+      const estado         = nuevaCant >= cantSolicitada
+        ? CONFIG.ESTADOS.ITEM.COMPLETO
+        : CONFIG.ESTADOS.ITEM.PARCIAL;
+
+      // Columnas H (índice 7→col 8) e I (índice 8→col 9) en una sola escritura
+      sheetDetalle.getRange(i + 1, 8, 1, 2).setValues([[nuevaCant, estado]]);
+      break;
+    }
+  });
+
+  actualizarEstadoOrden(recepcionData.numero_orden);
+}
+
+function actualizarEstadoOrden(numeroOrden) {
+  const sheetDetalle = getSheet(CONFIG.SHEETS.DETALLE_ORDENES);
+  const data         = sheetDetalle.getDataRange().getValues();
+  const items        = data.slice(1).filter(function(r) { return r[0] === numeroOrden; });
+  if (items.length === 0) return;
+
+  const estados         = items.map(function(item) { return item[8]; });
+  const todosCompletos  = estados.every(function(e) { return e === CONFIG.ESTADOS.ITEM.COMPLETO; });
+  const todosPendientes = estados.every(function(e) { return e === CONFIG.ESTADOS.ITEM.PENDIENTE; });
+
+  const nuevoEstado = todosCompletos  ? CONFIG.ESTADOS.ORDEN.RECEPCIONADA :
+                      todosPendientes ? CONFIG.ESTADOS.ORDEN.PENDIENTE    :
+                                        CONFIG.ESTADOS.ORDEN.PARCIAL;
+
+  const sheetOrdenes  = getSheet(CONFIG.SHEETS.ORDENES);
+  const dataOrdenes   = sheetOrdenes.getDataRange().getValues();
+
+  for (let i = 1; i < dataOrdenes.length; i++) {
+    if (dataOrdenes[i][0] !== numeroOrden) continue;
+    if (dataOrdenes[i][4] !== nuevoEstado) {
+      sheetOrdenes.getRange(i + 1, 5).setValue(nuevoEstado); // col E = estado
+    }
+    break;
+  }
+}
+
+// ========================================
+// MÓDULO: STOCK E INVENTARIO
+// ========================================
+
+/**
+ * Reconstrucción total de Stock_Actual a partir de Movimientos_Inventario.
+ * Usar sólo cuando se necesite recalcular todo (ej. después de un ajuste masivo).
+ * Para operaciones normales usar actualizarStockIncremental().
+ */
+function actualizarStockActual() {
+  const sheetStock  = getSheet(CONFIG.SHEETS.STOCK);
+  const movimientos = getDatosSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  const insumos     = getDatosSheet(CONFIG.SHEETS.INSUMOS);
+
+  // 1. Calcular stock por código+lote
+  const stockDetallado = {};
+  movimientos.forEach(function(mov) {
+    const loteId = mov.lote ? String(mov.lote).trim() : 'SIN LOTE';
+    const llave  = String(mov.codigo_insumo).trim() + '|' + loteId;
+
+    if (!stockDetallado[llave]) {
+      stockDetallado[llave] = {
+        cantidad:    0,
+        vencimiento: mov.vencimiento || '',
+        codigo:      mov.codigo_insumo,
+        lote:        loteId
+      };
+    }
+
+    const cant = Number(mov.cantidad) || 0;
+    if (mov.tipo_movimiento === 'Ingreso' || mov.tipo_movimiento === 'Ajuste') {
+      stockDetallado[llave].cantidad += cant;
+    } else if (mov.tipo_movimiento === 'Egreso') {
+      stockDetallado[llave].cantidad -= cant;
+    }
+  });
+
+  // 2. Stock total por insumo (para calcular estado)
+  const stockTotalPorInsumo = {};
+  Object.keys(stockDetallado).forEach(function(llave) {
+    const item   = stockDetallado[llave];
+    const codigo = item.codigo;
+    if (!stockTotalPorInsumo[codigo]) stockTotalPorInsumo[codigo] = 0;
+    stockTotalPorInsumo[codigo] += item.cantidad;
+  });
+
+  // 3. Limpiar hoja
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, sheetStock.getLastColumn())
+      .clearContent();
+  }
+
+  const filasStock = [];
+  const ahora      = new Date();
+
+  Object.keys(stockDetallado).forEach(function(llave) {
+    const item = stockDetallado[llave];
+    const ins  = insumos.find(function(i) { return i.codigo_insumo === item.codigo; });
+
+    if (!ins || item.cantidad <= 0) return;
+
+    const critico    = Number(ins.stock_critico) || 0;
+    const stockTotal = stockTotalPorInsumo[item.codigo] || 0;
+    const estado     = stockTotal <= 0 ? 'Agotado' :
+                       stockTotal <= critico ? 'Crítico' : 'OK';
+
+    filasStock.push([
+      item.codigo,           // A: codigo_insumo
+      ins.descripcion,       // B: descripcion
+      item.cantidad,         // C: stock_disponible (este lote)
+      critico,               // D: stock_critico
+      estado,                // E: estado (basado en stock TOTAL)
+      ahora,                 // F: fecha_actualizacion
+      item.lote,             // G: lote
+      item.vencimiento,      // H: vencimiento
+      ins.clasificacion || ''// I: clasificacion
+    ]);
+  });
+
+  if (filasStock.length > 0) {
+    sheetStock.getRange(2, 1, filasStock.length, 9).setValues(filasStock);
+    // FIFO: ordenar por vencimiento ascendente
+    sheetStock.getRange(2, 1, filasStock.length, 9).sort({ column: 8, ascending: true });
+  }
+
+  aplicarFormatoStock();
+  actualizarStockPorProveedor();
+}
+
+/**
+ * Actualización incremental: solo toca los lotes afectados por la operación.
+ * Mucho más rápida que actualizarStockActual() para operaciones individuales.
+ *
+ * @param {Array}  itemsRecibidos  — lista de { codigo_insumo, lote, vencimiento, cantidad_stock, descripcion, infoInsumo }
+ * @param {Array}  catalogoInsumos — resultado de getInsumosActivos()
+ */
+function actualizarStockIncremental(itemsRecibidos, catalogoInsumos) {
+  const sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  const lastRow    = sheetStock.getLastRow();
+  const ahora      = new Date();
+
+  const dataStock = lastRow > 1
+    ? sheetStock.getRange(2, 1, lastRow - 1, 9).getValues()
+    : [];
+
+  // Índice rápido: "codigo|lote" → posición en dataStock
+  const mapaStock = {};
+  dataStock.forEach(function(row, idx) {
+    const cod  = String(row[0]).trim();
+    const lote = String(row[6]).trim();
+    mapaStock[cod + '|' + lote] = idx;
+  });
+
+  // Stock total actual por código (para recalcular estado al final)
+  const stockTotalPorCodigo = {};
+  dataStock.forEach(function(row) {
+    const cod = String(row[0]).trim();
+    stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + (Number(row[2]) || 0);
+  });
+
+  const codigosAfectados = {};
+
+  itemsRecibidos.forEach(function(item) {
+    const cod       = String(item.codigo_insumo).trim();
+    const lote      = String(item.lote).trim();
+    const llave     = cod + '|' + lote;
+    const cantAgregar = Number(item.cantidad_stock) || 0;
+
+    codigosAfectados[cod] = true;
+
+    if (mapaStock.hasOwnProperty(llave)) {
+      // Lote existente: sumar cantidad
+      const idx    = mapaStock[llave];
+      dataStock[idx][2] = (Number(dataStock[idx][2]) || 0) + cantAgregar;
+      dataStock[idx][5] = ahora;
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + cantAgregar;
+
+    } else {
+      // Lote nuevo: agregar fila
+      const ins     = item.infoInsumo;
+      const critico = ins ? Number(ins.stock_critico) || 0 : 0;
+
+      const nuevaFila = [
+        cod,
+        item.descripcion,
+        cantAgregar,
+        critico,
+        'OK',           // se recalcula abajo
+        ahora,
+        lote,
+        item.vencimiento,
+        ins ? ins.clasificacion || '' : ''
+      ];
+      dataStock.push(nuevaFila);
+      mapaStock[llave] = dataStock.length - 1;
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + cantAgregar;
+    }
+  });
+
+  // Recalcular estado para todos los lotes de los códigos afectados
+  dataStock.forEach(function(row) {
+    const cod = String(row[0]).trim();
+    if (!codigosAfectados[cod]) return;
+
+    const ins     = catalogoInsumos.find(function(i) {
+      return String(i.codigo_insumo).trim() === cod;
+    });
+    const critico = ins ? Number(ins.stock_critico) || 0 : Number(row[3]) || 0;
+    const total   = stockTotalPorCodigo[cod] || 0;
+
+    row[4] = total <= 0 ? 'Agotado' : total <= critico ? 'Crítico' : 'OK';
+  });
+
+  // Filtrar filas con stock > 0 y reescribir
+  const filasValidas = dataStock.filter(function(row) { return Number(row[2]) > 0; });
+
+  if (sheetStock.getLastRow() > 1) {
+    sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+  }
+  if (filasValidas.length > 0) {
+    sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+    sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+  }
+  // Stock_por_Proveedor NO se actualiza aquí — es una vista de consulta.
+}
+
+// ── Bajas de consumo (desde la hoja Bajas_Consumo) ──────────────────────────
+
+function mostrarListaPendientes() {
+  try {
+    const html = HtmlService.createHtmlOutputFromFile('ListaPendientes')
+      .setWidth(600).setHeight(450)
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    SpreadsheetApp.getUi().showModalDialog(html, '📋 Órdenes Pendientes de Recepción');
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('Error al abrir la lista: ' + e.message);
+  }
+}
+
+function procesarBajaDesdeHoja() {
+  const ui         = SpreadsheetApp.getUi();
+  const sheetBajas = getSheet('Bajas_Consumo');
+
+  const valorB2          = String(sheetBajas.getRange('B2').getValue()).trim();
+  const codigoEnC2       = String(sheetBajas.getRange('C2').getValue()).trim();
+  const loteSeleccionado = String(sheetBajas.getRange('B3').getValue()).trim();
+  const cantidadBaja     = Number(sheetBajas.getRange('B4').getValue());
+  const observacion      = String(sheetBajas.getRange('B5').getValue()).trim();
+
+  // C2 siempre contiene el código resuelto (puesto por _cargarInsumoEnBajas)
+  const valorBusqueda = codigoEnC2 || valorB2;
+
+  if (!valorBusqueda || !loteSeleccionado || cantidadBaja <= 0) {
+    ui.alert('⚠️ Error: Complete Insumo, Lote y una Cantidad válida.');
+    return;
+  }
+
+  const stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+  const itemStock = stockData.find(function(s) {
+    const codS  = String(s.codigo_insumo || '').trim();
+    const descS = String(s.descripcion   || '').trim();
+    const loteS = String(s.lote          || '').trim();
+    return (codS === valorBusqueda || descS === valorBusqueda) &&
+           loteS === loteSeleccionado;
+  });
+
+  if (!itemStock || Number(itemStock.stock_disponible) < cantidadBaja) {
+    const disp = itemStock ? itemStock.stock_disponible : 0;
+    ui.alert('❌ Stock insuficiente en el lote: ' + loteSeleccionado + '\nDisponible: ' + disp);
+    return;
+  }
+
+  const confirmar = ui.alert(
+    '¿Confirmar consumo de ' + cantidadBaja + ' unidad(es) de ' + itemStock.descripcion + '?',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmar !== ui.Button.YES) return;
+
+  try {
+    const infoInsumo = getInsumo(itemStock.codigo_insumo);
+    const fechaAhora = new Date();
+    const usuario    = getCurrentUser();
+
+    // Registrar egreso en Movimientos_Inventario
+    getSheet(CONFIG.SHEETS.MOVIMIENTOS).appendRow([
+      'MOV-' + Date.now(),
+      fechaAhora,
+      'Egreso',
+      itemStock.codigo_insumo,
+      itemStock.descripcion,
+      cantidadBaja,
+      'BAJA-HOJA',
+      usuario,
+      'Consumo: ' + observacion,
+      loteSeleccionado,
+      itemStock.vencimiento || '',
+      infoInsumo ? infoInsumo.categoria : ''
+    ]);
+
+    // Stock incremental (egreso)
+    const sheetStock    = getSheet(CONFIG.SHEETS.STOCK);
+    const dataStock     = sheetStock.getDataRange().getValues();
+    const catalogoIns   = getInsumosActivos();
+
+    const stockTotalPorCodigo = {};
+    dataStock.slice(1).forEach(function(row) {
+      const cod = String(row[0]).trim();
+      stockTotalPorCodigo[cod] = (stockTotalPorCodigo[cod] || 0) + (Number(row[2]) || 0);
+    });
+
+    const codBaja  = String(itemStock.codigo_insumo).trim();
+    const loteBaja = String(loteSeleccionado).trim();
+
+    for (let i = 1; i < dataStock.length; i++) {
+      if (String(dataStock[i][0]).trim() !== codBaja) continue;
+      if (String(dataStock[i][6]).trim() !== loteBaja) continue;
+      dataStock[i][2] = Math.max((Number(dataStock[i][2]) || 0) - cantidadBaja, 0);
+      dataStock[i][5] = fechaAhora;
+      stockTotalPorCodigo[codBaja] = (stockTotalPorCodigo[codBaja] || 0) - cantidadBaja;
+      break;
+    }
+
+    const ins      = catalogoIns.find(function(i) {
+      return String(i.codigo_insumo).trim() === codBaja;
+    });
+    const critico    = ins ? Number(ins.stock_critico) || 0 : 0;
+    const totalFinal = stockTotalPorCodigo[codBaja] || 0;
+    const nuevoEst   = totalFinal <= 0 ? 'Agotado' : totalFinal <= critico ? 'Crítico' : 'OK';
+
+    for (let j = 1; j < dataStock.length; j++) {
+      if (String(dataStock[j][0]).trim() === codBaja) dataStock[j][4] = nuevoEst;
+    }
+
+    const filasValidas = dataStock.slice(1).filter(function(row) { return Number(row[2]) > 0; });
+    if (sheetStock.getLastRow() > 1) {
+      sheetStock.getRange(2, 1, sheetStock.getLastRow() - 1, 9).clearContent();
+    }
+    if (filasValidas.length > 0) {
+      sheetStock.getRange(2, 1, filasValidas.length, 9).setValues(filasValidas);
+      sheetStock.getRange(2, 1, filasValidas.length, 9).sort({ column: 8, ascending: true });
+    }
+
+    sheetBajas.getRange('B2:B5').clearContent();
+    ui.alert('✅ Consumo registrado exitosamente.\n\nStock actualizado.');
+
+  } catch (e) {
+    ui.alert('❌ Error crítico: ' + e.message);
+  }
+}
+
+// ── onEdit: búsqueda inteligente en Bajas_Consumo ────────────────────────────
+
+function onEdit(e) {
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  if (sheet.getName() !== 'Bajas_Consumo') return;
+
+  // CASO 1: Se editó B2 (búsqueda de insumo)
+  if (range.getA1Notation() === 'B2') {
+    const valorIngresado   = String(range.getValue()).trim();
+    const celdaLote        = sheet.getRange('B3');
+    const celdaInfo        = sheet.getRange('C2');
+    const celdaDescripcion = sheet.getRange('D2');
+
+    celdaLote.clearDataValidations();
+    celdaLote.clearContent();
+    sheet.getRange('C3').clearContent();
+    celdaInfo.clearContent();
+    celdaDescripcion.clearContent();
+
+    if (valorIngresado === '') return;
+
+    const stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+
+    // Formato "COD — Descripción" (viene de dropdown múltiple)
+    if (valorIngresado.indexOf(' — ') !== -1) {
+      const partes    = valorIngresado.split(' — ');
+      const codLimpio = partes[0].trim();
+      const descLimpia = partes.slice(1).join(' — ').trim();
+      range.clearDataValidations();
+      range.setValue(codLimpio);
+      _cargarInsumoEnBajas(sheet, stockData, codLimpio, descLimpia,
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // Match exacto por código
+    const matchCod = stockData.find(function(s) {
+      return String(s.codigo_insumo).trim().toUpperCase() === valorIngresado.toUpperCase();
+    });
+    if (matchCod) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        String(matchCod.codigo_insumo).trim(), String(matchCod.descripcion).trim(),
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // Match exacto por descripción
+    const valorNorm = valorIngresado.toUpperCase().replace(/\s+/g, ' ');
+    const matchDesc = stockData.find(function(s) {
+      return String(s.descripcion).trim().toUpperCase().replace(/\s+/g, ' ') === valorNorm;
+    });
+    if (matchDesc) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        String(matchDesc.codigo_insumo).trim(), String(matchDesc.descripcion).trim(),
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // Búsqueda parcial
+    const codigosMatch = {};
+    stockData.forEach(function(s) {
+      const descNorm = String(s.descripcion).trim().toUpperCase().replace(/\s+/g, ' ');
+      const codNorm  = String(s.codigo_insumo).trim().toUpperCase();
+      if (descNorm.indexOf(valorNorm) !== -1 || codNorm.indexOf(valorNorm) !== -1) {
+        const cod = String(s.codigo_insumo).trim();
+        if (!codigosMatch[cod]) codigosMatch[cod] = String(s.descripcion).trim();
+      }
+    });
+
+    const keys = Object.keys(codigosMatch);
+
+    if (keys.length === 0) {
+      celdaInfo.setValue('❌ Sin resultados para: ' + valorIngresado);
+      return;
+    }
+    if (keys.length === 1) {
+      _cargarInsumoEnBajas(sheet, stockData,
+        keys[0], codigosMatch[keys[0]],
+        celdaLote, celdaInfo, celdaDescripcion);
+      return;
+    }
+
+    // Múltiples coincidencias → dropdown en B2
+    const opciones = keys.map(function(cod) { return cod + ' — ' + codigosMatch[cod]; });
+    const ruleB2   = SpreadsheetApp.newDataValidation()
+      .requireValueInList(opciones, true).setAllowInvalid(true).build();
+    range.setDataValidation(ruleB2);
+    range.setValue('');
+    celdaInfo.setValue('↓ ' + keys.length + ' coincidencias — elegí de la lista');
+  }
+
+  // CASO 2: Se editó B3 (selección de lote)
+  if (range.getA1Notation() === 'B3') {
+    const codigoInsumo     = String(sheet.getRange('B2').getValue()).trim();
+    const loteSeleccionado = String(range.getValue()).trim();
+    if (!codigoInsumo || !loteSeleccionado) return;
+    const stockData = getDatosSheet(CONFIG.SHEETS.STOCK);
+    mostrarInfoLote(sheet, codigoInsumo, loteSeleccionado, stockData);
+  }
+}
+
+function _cargarInsumoEnBajas(sheet, stockData, codigoFinal, descFinal,
+                               celdaLote, celdaInfo, celdaDescripcion) {
+  // Poner el código limpio en B2 para que procesarBajaDesdeHoja lo lea bien
+  sheet.getRange('B2').setValue(codigoFinal);
+  celdaInfo.setValue(codigoFinal);
+  celdaDescripcion.setValue(descFinal);
+
+  const lotesDisponibles = stockData.filter(function(s) {
+    return String(s.codigo_insumo).trim() === codigoFinal &&
+           Number(s.stock_disponible) > 0;
+  });
+
+  if (lotesDisponibles.length === 0) {
+    celdaInfo.setValue('⚠️ Sin stock: ' + codigoFinal);
+    return;
+  }
+
+  // FIFO: ordenar por vencimiento
+  lotesDisponibles.sort(function(a, b) {
+    const fA = a.vencimiento ? new Date(a.vencimiento) : new Date(2099, 11, 31);
+    const fB = b.vencimiento ? new Date(b.vencimiento) : new Date(2099, 11, 31);
+    return fA - fB;
+  });
+
+  const listLotes = lotesDisponibles.map(function(s) { return String(s.lote || 'SIN LOTE'); });
+
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(listLotes, true).setAllowInvalid(false).build();
+  celdaLote.setDataValidation(rule);
+  celdaLote.setValue(listLotes[0]);
+  mostrarInfoLote(sheet, codigoFinal, listLotes[0], lotesDisponibles);
+}
+
+function mostrarInfoLote(sheet, codigoInsumo, loteSeleccionado, stockData) {
+  const itemLote = stockData.find(function(s) {
+    return String(s.codigo_insumo).trim() === codigoInsumo &&
+           String(s.lote || '').trim()    === loteSeleccionado;
+  });
+  if (!itemLote) return;
+  sheet.getRange('C3').setValue(
+    'Disponible: ' + (itemLote.stock_disponible || 0) +
+    (itemLote.vencimiento ? ' | Vence: ' + formatearFecha(itemLote.vencimiento) : '')
+  );
+}
+
+// ── Formato condicional ───────────────────────────────────────────────────────
+
+function aplicarFormatoStock() {
+  const sheetStock = getSheet(CONFIG.SHEETS.STOCK);
+  const lastRow    = sheetStock.getLastRow();
+  if (lastRow <= 1) return;
+
+  sheetStock.clearConditionalFormatRules();
+  const rangeEstado = sheetStock.getRange(2, 5, lastRow - 1, 1);
+  const rules = [
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Agotado').setBackground('#f4c7c3').setFontColor('#a61c00')
+      .setRanges([rangeEstado]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Crítico').setBackground('#fce8b2').setFontColor('#7f6003')
+      .setRanges([rangeEstado]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('OK').setBackground('#b7e1cd').setFontColor('#0d652d')
+      .setRanges([rangeEstado]).build()
+  ];
+  sheetStock.setConditionalFormatRules(rules);
+}
+
+function aplicarFormatoMovimientos() {
+  const sheet   = getSheet(CONFIG.SHEETS.MOVIMIENTOS);
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  sheet.clearConditionalFormatRules();
+  const range = sheet.getRange(2, 3, lastRow - 1, 1); // col C: tipo_movimiento
+
+  const rules = sheet.getConditionalFormatRules();
+  rules.push(
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Ingreso').setBackground('#D9EAD3').setRanges([range]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Egreso').setBackground('#F4CCCC').setRanges([range]).build()
+  );
+  sheet.setConditionalFormatRules(rules);
+}
+
+function aplicarFormatoDetalleRecepciones() {
+  const sheet   = getSheet(CONFIG.SHEETS.DETALLE_RECEPCIONES);
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  sheet.clearConditionalFormatRules();
+
+  const headers   = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const colEstado = headers.indexOf('estado_conformidad') + 1;
+  if (colEstado === 0) return;
+
+  const range = sheet.getRange(2, colEstado, lastRow - 1, 1);
+  sheet.setConditionalFormatRules([
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Conforme')
+      .setBackground('#D9EAD3').setFontColor('#0D652D').setRanges([range]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('Conforme Parcial')
+      .setBackground('#FFF2CC').setFontColor('#7F6003').setRanges([range]).build(),
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo('No Conforme')
+      .setBackground('#F4CCCC').setFontColor('#A61C00').setRanges([range]).build()
+  ]);
+}
