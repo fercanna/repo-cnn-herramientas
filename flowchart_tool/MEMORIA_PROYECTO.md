@@ -132,3 +132,17 @@ La herramienta quedó empaquetada como skill de Claude (`flujograma-proceso.skil
 en `flowchart_tool/`), con el `SKILL.md`, los scripts y la plantilla de planilla
 incluidos. Pendiente: sumarla al repo del proyecto Hermes (ubicación a definir por
 Fer — no se encontró un repo Git en las carpetas conectadas a esta sesión).
+
+## Skill hermana: instructivo → planilla (2026-08-02)
+
+Se armó una segunda skill, `instructivo_a_flujograma`, en
+`repo-cnn-agente_LISTO/_agente/skills/instructivo_a_flujograma/`. Invierte el primer
+paso del flujo de arriba: en vez de relevar el proceso a mano y completar la planilla,
+parte de un instructivo del cliente ya redactado (ISO 9001, PDF/Word) y genera un
+borrador de `planilla_flujograma.xlsx` vía LLM, con una columna extra `Confianza`
+(Alta/Media/Baja) para que la revisión se enfoque en lo que el modelo tuvo que
+inferir. El resultado se pasa tal cual a `xlsx_to_json.py` + `generate_flowchart.js`
+de esta carpeta — no cambia nada del pipeline planilla → pptx. Probada con dos
+instructivos reales de LACE (AGGP05I01 y TGGI09); ver README de esa skill para el
+detalle de los casos de prueba y las reglas de extracción (qué cuenta como paso, qué
+se ignora, cómo trata las cláusulas "en caso de no cumplir...").
