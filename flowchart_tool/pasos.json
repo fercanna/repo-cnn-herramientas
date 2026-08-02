@@ -1,0 +1,128 @@
+[
+  {
+    "id": "I1",
+    "nombre": "Cliente presenta reclamo",
+    "tipo": "Inicio/Fin",
+    "fase": "Recepción",
+    "carril": "Cliente",
+    "siguientes": [
+      "P1"
+    ],
+    "etiquetas_rama": [],
+    "notas": ""
+  },
+  {
+    "id": "P1",
+    "nombre": "Registra reclamo en sistema",
+    "tipo": "Proceso",
+    "fase": "Recepción",
+    "carril": "Atención al Cliente",
+    "siguientes": [
+      "D1"
+    ],
+    "etiquetas_rama": [],
+    "notas": "Sistema CRM"
+  },
+  {
+    "id": "D1",
+    "nombre": "¿Reclamo válido?",
+    "tipo": "Decisión",
+    "fase": "Análisis",
+    "carril": "Atención al Cliente",
+    "siguientes": [
+      "P2",
+      "P6"
+    ],
+    "etiquetas_rama": [
+      "Sí",
+      "No"
+    ],
+    "notas": ""
+  },
+  {
+    "id": "P2",
+    "nombre": "Deriva a Calidad",
+    "tipo": "Proceso",
+    "fase": "Análisis",
+    "carril": "Atención al Cliente",
+    "siguientes": [
+      "P3"
+    ],
+    "etiquetas_rama": [],
+    "notas": ""
+  },
+  {
+    "id": "P3",
+    "nombre": "Analiza causa raíz",
+    "tipo": "Proceso",
+    "fase": "Análisis",
+    "carril": "Calidad",
+    "siguientes": [
+      "D2"
+    ],
+    "etiquetas_rama": [],
+    "notas": ""
+  },
+  {
+    "id": "D2",
+    "nombre": "¿Requiere acción correctiva?",
+    "tipo": "Decisión",
+    "fase": "Resolución",
+    "carril": "Calidad",
+    "siguientes": [
+      "P4",
+      "P5"
+    ],
+    "etiquetas_rama": [
+      "Sí",
+      "No"
+    ],
+    "notas": ""
+  },
+  {
+    "id": "P4",
+    "nombre": "Implementa acción correctiva",
+    "tipo": "Proceso",
+    "fase": "Resolución",
+    "carril": "Calidad",
+    "siguientes": [
+      "P5"
+    ],
+    "etiquetas_rama": [],
+    "notas": "Ver procedimiento AC-01"
+  },
+  {
+    "id": "P5",
+    "nombre": "Informa resolución al cliente",
+    "tipo": "Proceso",
+    "fase": "Resolución",
+    "carril": "Atención al Cliente",
+    "siguientes": [
+      "F1"
+    ],
+    "etiquetas_rama": [],
+    "notas": ""
+  },
+  {
+    "id": "P6",
+    "nombre": "Informa rechazo al cliente",
+    "tipo": "Proceso",
+    "fase": "Análisis",
+    "carril": "Atención al Cliente",
+    "siguientes": [
+      "F1"
+    ],
+    "etiquetas_rama": [],
+    "notas": ""
+  },
+  {
+    "id": "F1",
+    "nombre": "Fin",
+    "tipo": "Inicio/Fin",
+    "fase": "Cierre",
+    "carril": "Cliente",
+    "siguientes": [],
+    "etiquetas_rama": [],
+    "notas": ""
+  }
+]

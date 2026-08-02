@@ -21,3 +21,6 @@ __pycache__/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Dependencias de Node (se reinstalan con npm install)
+node_modules/

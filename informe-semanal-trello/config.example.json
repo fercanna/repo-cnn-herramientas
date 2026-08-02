@@ -1,0 +1,5 @@
+{
+  "cliente_id": "nombre_cliente",
+  "nombre_laboratorio": "Nombre del laboratorio",
+  "normas": ["9001", "17025"]
+}
