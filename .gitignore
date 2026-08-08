@@ -24,3 +24,6 @@ Thumbs.db
 
 # Dependencias de Node (se reinstalan con npm install)
 node_modules/
+
+# Documentos reales de clientes (instructivos, SGC) — nunca versionar
+flowchart_tool/Instructivo_*.pdf
