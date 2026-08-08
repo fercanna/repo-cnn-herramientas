@@ -146,3 +146,40 @@ de esta carpeta — no cambia nada del pipeline planilla → pptx. Probada con d
 instructivos reales de LACE (AGGP05I01 y TGGI09); ver README de esa skill para el
 detalle de los casos de prueba y las reglas de extracción (qué cuenta como paso, qué
 se ignora, cómo trata las cláusulas "en caso de no cumplir...").
+
+## Incidente 2026-08-07: `instructivo_a_flujograma` invisible para la interfaz de skills empaquetadas
+
+Fer le pidió a Hermes que convirtiera un instructivo de LACE en planilla de
+flujograma. La sesión tardó 90+ minutos: en vez de usar `instructivo_a_flujograma`,
+la interfaz improvisó con una skill genérica de OCR y `execute_code`/`terminal`
+sueltos, armando su propia estructura de Excel.
+
+Causa: hay **dos runtimes distintos**, no uno mal configurado.
+
+- `agente.py` (terminal, aisuite, modelo Claude Sonnet 4.5) — ahí `instructivo_a_flujograma`
+  está bien cableada como tool desde el 2026-08-02 y funciona.
+- La interfaz que corrió esa sesión (la que mostraba `skill_view`, modelo `qwen3.6-27b`)
+  es un programa aparte que carga skills empaquetadas como `.skill`/`SKILL.md` — el
+  mismo formato de `flujograma-proceso.skill`. `instructivo_a_flujograma` no existía
+  en ese formato (solo como función Python en `_agente/skills/`), así que esa interfaz
+  no tenía forma de encontrarla.
+
+**Arreglo:** se empaquetó `instructivo-a-flujograma.skill` en el mismo formato que
+`flujograma-proceso.skill` (`SKILL.md` + `scripts/escribir_planilla.py`), copiado en:
+
+- `repo-cnn-herramientas_LISTO/flowchart_tool/instructivo-a-flujograma.skill`
+- `repo-cnn-agente_LISTO/_agente/skills/instructivo_a_flujograma/instructivo-a-flujograma.skill`
+
+Diferencia de diseño respecto de la versión original: la versión `agente.py`
+(`instructivo_a_flujograma.py`) hace su propia llamada a un LLM vía `aisuite` para
+extraer y estructurar el instructivo. La versión `.skill` NO llama a ningún LLM por su
+cuenta — las reglas de extracción (qué es un paso, ID, Fase, Carril, Decisiones,
+Confianza, etc.) están en el `SKILL.md` para que las aplique directamente el agente
+que corre esa skill; el único script (`escribir_planilla.py`) es determinístico,
+solo renderiza el `.xlsx` a partir del JSON de pasos ya estructurado. Evita una
+llamada a LLM redundante y no depende de tener API keys configuradas en ese entorno.
+
+Pendiente de confirmar: no se identificó con certeza qué programa/app es exactamente
+esa segunda interfaz (Fer no lo tenía a mano). Si en algún momento se sabe, conviene
+anotar acá dónde busca esa app sus skills, para no depender de copiar el `.skill` a
+mano en cada carpeta.
