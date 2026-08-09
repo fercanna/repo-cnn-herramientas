@@ -28,6 +28,16 @@ def timer_widget():
         if key not in st.session_state:
             st.session_state[key] = None
 
+    # --- Recuperación de un timer que quedó corriendo en la DB ---
+    # Si se cortó la conexión, se cerró el navegador, o se reinició la app
+    # mientras el timer estaba activo, lo recuperamos acá en vez de perderlo.
+    if not st.session_state.timer_running:
+        active = db_manager.get_active_timer()
+        if active:
+            st.session_state.timing_task_id = active['task_id']
+            st.session_state.start_time = datetime.fromisoformat(active['start_time'])
+            st.session_state.timer_running = True
+
     # --- Lógica de la Interfaz de Usuario ---
     if st.session_state.get('confirming_overlap_timer'):
         st.warning("¡Atención! El tiempo registrado se superpone con las siguientes sesiones:")
@@ -38,10 +48,12 @@ def timer_widget():
             entry_data = st.session_state.get('pending_time_entry')
             if entry_data:
                 _add_time_entry_to_db(entry_data)
+            db_manager.clear_active_timer()
             # Limpiar estado y refrescar
             st.session_state.clear()
             st.rerun()
         if st.button("Cancelar Registro", use_container_width=True):
+            db_manager.clear_active_timer()
             st.session_state.clear()
             st.rerun()
 
@@ -76,6 +88,7 @@ def timer_widget():
                 st.rerun()
             else:
                 _add_time_entry_to_db(pending_entry)
+                db_manager.clear_active_timer()
                 st.session_state.timer_running = False
                 st.session_state.timing_task_id = None
                 st.rerun()
@@ -103,7 +116,10 @@ def timer_widget():
 
         if st.button("Iniciar Temporizador", use_container_width=True):
             if selected_task_label:
-                st.session_state.timing_task_id = task_options[selected_task_label]
-                st.session_state.start_time = datetime.now()
+                task_id = task_options[selected_task_label]
+                start_time = datetime.now()
+                db_manager.start_active_timer(task_id, start_time.isoformat())
+                st.session_state.timing_task_id = task_id
+                st.session_state.start_time = start_time
                 st.session_state.timer_running = True
                 st.rerun()

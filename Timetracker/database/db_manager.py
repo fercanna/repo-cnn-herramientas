@@ -56,6 +56,18 @@ def init_db():
     )
     """)
 
+    # Tracks the currently running timer (if any) so it survives a dropped
+    # connection, browser reload, or app restart. Single-user app, so at
+    # most one row ever exists here.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS active_timer (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        task_id INTEGER NOT NULL,
+        start_time DATETIME NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -178,6 +190,34 @@ def delete_client(client_id):
     conn = _get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+    conn.commit()
+    conn.close()
+
+def start_active_timer(task_id, start_time):
+    """Persists the running timer so it survives a dropped connection/reload."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO active_timer (id, task_id, start_time) VALUES (1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET task_id = excluded.task_id, start_time = excluded.start_time
+    """, (task_id, start_time))
+    conn.commit()
+    conn.close()
+
+def get_active_timer():
+    """Returns the currently running timer (task_id, start_time), if any."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT task_id, start_time FROM active_timer WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def clear_active_timer():
+    """Clears the running timer once it's stopped and saved (or cancelled)."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM active_timer WHERE id = 1")
     conn.commit()
     conn.close()
 
