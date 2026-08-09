@@ -53,7 +53,9 @@ def task_entry_form():
                     "notes": notes or None
                 }
                 _add_task_to_db(task_data)
-                # No se requiere st.rerun() aquí, Streamlit se refrescará con clear_on_submit=True
+                # clear_on_submit solo vacía el formulario; hace falta rerun() para que
+                # la tarea nueva aparezca de inmediato en el widget de Cronometrar (sidebar).
+                st.rerun()
 
 # Para pruebas
 if __name__ == "__main__":

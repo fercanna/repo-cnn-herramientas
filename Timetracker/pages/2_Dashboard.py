@@ -4,9 +4,10 @@ import plotly.express as px
 import sqlite3
 import os
 from datetime import datetime, timedelta
+from database.config import get_db_folder
 
 # Ruta de la base de datos
-DB_FOLDER = 'data'
+DB_FOLDER = get_db_folder()
 DB_NAME = 'timetracker.db'
 DB_PATH = os.path.join(DB_FOLDER, DB_NAME)
 
@@ -45,6 +46,42 @@ def get_data_as_dataframe():
     finally:
         if conn:
             conn.close()
+
+def get_clients_as_dataframe():
+    """Obtiene la configuración de honorarios mensuales por cliente."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        clients_df = pd.read_sql_query("SELECT name, monthly_fee FROM clients", conn)
+        return clients_df
+    except sqlite3.Error as e:
+        st.error(f"Error al leer clientes: {e}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
+
+def calculate_cost_per_hour(df, clients_df, month_period):
+    """
+    Calcula, para un mes dado, las horas trabajadas por cliente y el costo
+    real por hora (honorario mensual / horas trabajadas ese mes).
+    """
+    if df.empty or clients_df.empty:
+        return pd.DataFrame()
+
+    df_month = df[df['start_time'].dt.to_period('M') == month_period]
+    if df_month.empty:
+        return pd.DataFrame()
+
+    hours_by_client = df_month.groupby('client')['duration_hours'].sum().reset_index()
+    merged = pd.merge(clients_df, hours_by_client, left_on='name', right_on='client', how='inner')
+    merged = merged.drop(columns=['client'])
+    merged['cost_per_hour'] = merged.apply(
+        lambda r: (r['monthly_fee'] / r['duration_hours']) if r['duration_hours'] > 0 else None,
+        axis=1
+    )
+    merged = merged.rename(columns={'name': 'client', 'duration_hours': 'hours_worked'})
+    return merged.sort_values('cost_per_hour', ascending=False)
 
 def calculate_daily_hours(df):
     """Calcula el total de horas trabajadas por día."""
@@ -162,6 +199,41 @@ def display_dashboard():
 
     else:
         st.info("No hay tareas etiquetadas como 'servicio' o 'producto' para calcular el ratio.")
+
+    st.header("Costo Real por Hora por Cliente")
+    st.caption(
+        "Honorario mensual del cliente ÷ horas que le dedicaste ese mes. "
+        "Configurá los honorarios en la página 'Clientes'."
+    )
+    clients_df = get_clients_as_dataframe()
+
+    if clients_df.empty:
+        st.info("Todavía no configuraste honorarios mensuales. Andá a la página 'Clientes' para cargarlos.")
+    else:
+        available_months = sorted(df['start_time'].dt.to_period('M').unique(), reverse=True)
+        month_labels = [str(m) for m in available_months]
+        selected_label = st.selectbox("Mes", month_labels, index=0)
+        selected_period = pd.Period(selected_label, freq='M')
+
+        cost_df = calculate_cost_per_hour(df, clients_df, selected_period)
+        if cost_df.empty:
+            st.info("No hay horas registradas ese mes para ningún cliente con honorario configurado.")
+        else:
+            display_df = cost_df.copy()
+            display_df['hours_worked'] = display_df['hours_worked'].round(2)
+            display_df['cost_per_hour'] = display_df['cost_per_hour'].round(2)
+            display_df = display_df.rename(columns={
+                'client': 'Cliente', 'monthly_fee': 'Honorario Mensual',
+                'hours_worked': 'Horas Trabajadas', 'cost_per_hour': 'Costo Real por Hora'
+            })
+            st.dataframe(display_df, use_container_width=True)
+
+            fig_cost = px.bar(
+                cost_df, x='client', y='cost_per_hour',
+                title=f'Costo Real por Hora ({selected_label})',
+                labels={'client': 'Cliente', 'cost_per_hour': 'Costo por Hora'}
+            )
+            st.plotly_chart(fig_cost)
 
 
 # Llamar a la función principal del dashboard si se ejecuta directamente

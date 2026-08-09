@@ -1,9 +1,10 @@
 import sqlite3
 import os
 from datetime import datetime
+from database.config import get_db_folder
 
 # --- DB Setup ---
-DB_FOLDER = 'data'
+DB_FOLDER = get_db_folder()
 DB_NAME = 'timetracker.db'
 DB_PATH = os.path.join(DB_FOLDER, DB_NAME)
 
@@ -45,7 +46,16 @@ def init_db():
         FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
     )
     """)
-    
+
+    # Table for monthly fee per client (used to compute real cost/hour)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        monthly_fee REAL DEFAULT 0
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -142,6 +152,47 @@ def delete_task(task_id):
     cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
     conn.close()
+
+def upsert_client(name, monthly_fee):
+    """Creates or updates the monthly fee for a client (matched by name)."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO clients (name, monthly_fee) VALUES (?, ?)
+    ON CONFLICT(name) DO UPDATE SET monthly_fee = excluded.monthly_fee
+    """, (name, monthly_fee))
+    conn.commit()
+    conn.close()
+
+def get_clients():
+    """Returns all clients with their configured monthly fee."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clients ORDER BY name")
+    clients = cursor.fetchall()
+    conn.close()
+    return clients
+
+def delete_client(client_id):
+    """Removes a client's monthly fee configuration (does not touch tasks)."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+    conn.commit()
+    conn.close()
+
+def get_distinct_task_clients():
+    """Returns the distinct client names that already appear in tasks."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT DISTINCT client FROM tasks
+    WHERE client IS NOT NULL AND TRIM(client) != ''
+    ORDER BY client
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [row['client'] for row in rows]
 
 if __name__ == '__main__':
     # Para pruebas y configuración inicial
