@@ -18,7 +18,12 @@ guardar el estado. Si se corrige un bug o se cambia el diseño acá, hay que
 volver a copiar los `.py` actualizados a la carpeta `20_Minutas` de cada
 cliente activo (por ahora: AnalyticsNOA, LACE).
 
-Ver la skill completa en `informe-semanal-trello-consultoria.md` (raíz de
-este repo).
+Ver la skill completa en `informe-semanal-trello-consultoria.md`, en esta
+misma carpeta.
+
+**Copia viva que usa Hermes:** el agente no lee la skill desde acá — lee de
+`repo-cnn-agente_LISTO\_agente\skills\informe_semanal_trello\`. Si editás
+la skill acá, copiala también ahí (mismo criterio que con los `.py`: esta
+carpeta es la fuente de verdad, pero no es la que se ejecuta sola).
 
 Migrado desde `Consultoria_cal` (deprecada) el 01/08/2026.

@@ -14,7 +14,7 @@ Clientes a procesar (recorré la lista completa, uno por uno, sin detenerte si u
 1. **AnalyticsNOA** — `G:\Mi unidad\CNN.AI - Clientes\AnalyticsNOA\20_Minutas\`
 2. **LACE** — `G:\Mi unidad\CNN.AI - Clientes\LACE\20_Minutas\`
 
-Tctech y Hormigones quedan fuera de esta skill por ahora (no son prioridad para Fer) — si en el futuro se vuelven a necesitar, se agregan copiando los 3 scripts + un `config.json` propio a la carpeta `20_Minutas` de ese cliente (ver `config.example.json` en la copia maestra del repo como plantilla).
+Tctech y Hormigones dejaron de usar Trello y quedan fuera de esta skill — si en el futuro alguno lo retoma, se agrega copiando los 3 scripts + un `config.json` propio a la carpeta `20_Minutas` de ese cliente (ver `config.example.json` en la copia maestra del repo como plantilla).
 
 Cada `20_Minutas` tiene su propio `config.json` con `nombre_laboratorio` y `normas` — no hace falta conocerlos de antemano, los scripts los leen solos.
 
