@@ -82,9 +82,10 @@ function onOpen() {
     .addItem('↩️ Cancelar Recepción',                 'mostrarFormularioCancelarRecepcion')
     .addSeparator()
     .addItem('↩️ Cancelar Baja de Consumo',           'mostrarFormularioCancelarBaja')
-    .addSeparator()
-    .addItem('🔴 Reset para producción',              'resetearParaProduccion')
     .addToUi();
+    // ✅ v2.7: se sacó "Reset para producción" — llamaba a resetearParaProduccion(),
+    // función que no existe en el código actual. Era una utilidad de las pruebas
+    // iniciales del proyecto; hoy un reset de este tipo sería peligroso en producción.
 }
 
 // ========================================
@@ -333,6 +334,13 @@ function getOrdenesPendientes() {
     const lastRow = sheetOrdenes.getLastRow();
     if (lastRow <= 1) return [];
 
+    // ✅ NUEVO (v2.7): mapa código→proveedor para saber si tienen email cargado
+    // (usado por ListaPendientes para habilitar/deshabilitar Revisar/Enviar)
+    const proveedoresMap = {};
+    getDatosSheet(CONFIG.SHEETS.PROVEEDORES).forEach(function(p) {
+      proveedoresMap[String(p.codigo_proveedor).trim()] = p;
+    });
+
     // Leer 10 columnas (incluye nombre_proveedor en col D y solicitado_por en col J)
     const dataOrdenes = sheetOrdenes.getRange(2, 1, lastRow - 1, 10).getValues();
     const dataDetalle = sheetDetalle.getDataRange().getValues();
@@ -382,6 +390,8 @@ function getOrdenesPendientes() {
           total_orden:             row[7],
           observaciones:           row[8],
           solicitado_por:          row[9],
+          // ✅ NUEVO (v2.7): true si el proveedor tiene al menos un email cargado
+          tiene_email:             getEmailsProveedor(proveedoresMap[String(row[2]).trim()]).length > 0,
           items_pendientes:        itemsPendientes
         };
       });

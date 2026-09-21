@@ -152,6 +152,7 @@
   <script>
     let itemsOrden  = [];
     let ordenActual = null;
+    let conversionesPendientes = {}; // ✅ NUEVO (v2.7): codigo_insumo → info de conversión sin confirmar
 
     window.onload = function() { cargarOrdenesManual(); };
 
@@ -183,6 +184,19 @@
     function mostrarDetalle(data) {
       ordenActual = data.orden;
       itemsOrden  = data.items;
+
+      // ✅ NUEVO (v2.7): aviso preventivo de conversión (punto 2.3)
+      conversionesPendientes = {};
+      const codigos = itemsOrden.map(it => it.codigo_insumo);
+      google.script.run
+        .withSuccessHandler(function(pendientes) {
+          pendientes.forEach(function(p) { conversionesPendientes[p.codigo] = p; });
+          pendientes.forEach(function(p) {
+            const badge = document.getElementById('conv-badge-' + p.codigo);
+            if (badge) badge.style.display = 'inline-block';
+          });
+        })
+        .getConversionesPendientesConfirmar(codigos);
 
       const esParcial = ordenActual.estado === 'Recepción Parcial';
 
@@ -232,7 +246,9 @@
         const div = document.createElement('div');
         div.className = 'item-row';
         div.innerHTML = `
-  <div class="item-header">${item.descripcion} (${item.codigo_insumo}) ${badgeHtml}</div>
+  <div class="item-header">${item.descripcion} (${item.codigo_insumo}) ${badgeHtml}
+    <span id="conv-badge-${item.codigo_insumo}" class="progreso-badge" style="display:none; background:#fff3cd; color:#856404;" title="Este insumo tiene una conversión configurada — se va a pedir confirmar la equivalencia al guardar">⚖️ Conversión sin confirmar</span>
+  </div>
   <div class="item-grid">
     <div><label>Pedido</label><input type="number" value="${solicitado}" disabled></div>
     <div><label>Pendiente</label><input type="number" value="${pendiente}" disabled style="font-weight:bold; color:#d93025;"></div>
@@ -304,12 +320,26 @@
       const recibidoPor = document.getElementById('recibidoPor').value;
       if (!recibidoPor) return alert('Debe seleccionar quién recibe los insumos.');
 
+      // ✅ NUEVO (v2.7): aviso preventivo de conversión (punto 2.3) — antes de guardar,
+      // confirmar la equivalencia de cada insumo con conversión sin confirmar.
+      const codigosAConfirmar = [];
+      for (const it of itemsEnviar) {
+        const conv = conversionesPendientes[it.codigo_insumo];
+        if (!conv) continue;
+        const equivalencia = it.cantidad_recibida + ' ' + (conv.unidad_compra || 'caja(s)') +
+          ' = ' + (it.cantidad_recibida * conv.factor) + ' ' + conv.unidad_destino;
+        const ok = confirm('El insumo "' + it.codigo_insumo + '" tiene una conversión configurada:\n\n' +
+          'Vas a ingresar ' + equivalencia + '.\n\n¿Confirmás la equivalencia?');
+        if (!ok) return; // se cancela todo el guardado, no se registra nada parcial
+        codigosAConfirmar.push(it.codigo_insumo);
+      }
+
       document.getElementById('recepcionForm').style.display = 'none';
       document.getElementById('loading').style.display = 'block';
 
-      google.script.run
-        .withSuccessHandler(function(resultado) {
-          document.getElementById('loading').style.display = 'none';
+      const continuarGuardado = function() {
+        google.script.run
+          .withSuccessHandler(function(resultado) {          document.getElementById('loading').style.display = 'none';
 
           let recId, estadoOrden;
           if (typeof resultado === 'object' && resultado !== null) {
@@ -337,19 +367,35 @@
             : 'Quedan ítems pendientes. La orden permanecerá activa para recepciones futuras.';
 
           document.getElementById('resultadoPanel').style.display = 'block';
-        })
-        .withFailureHandler(function(err) {
-          alert('Error: ' + err.message);
-          document.getElementById('loading').style.display = 'none';
-          document.getElementById('recepcionForm').style.display = 'block';
-        })
-        .registrarRecepcion({
-          numero_orden:  ordenActual.numero_orden,
-          observaciones: document.getElementById('observacionesRecepcion').value,
-          recibido_por:  recibidoPor,
-          items:         itemsEnviar
-        });
+          })
+          .withFailureHandler(function(err) {
+            alert('Error: ' + err.message);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('recepcionForm').style.display = 'block';
+          })
+          .registrarRecepcion({
+            numero_orden:  ordenActual.numero_orden,
+            observaciones: document.getElementById('observacionesRecepcion').value,
+            recibido_por:  recibidoPor,
+            items:         itemsEnviar
+          });
+      };
+
+      if (codigosAConfirmar.length > 0) {
+        google.script.run
+          .withSuccessHandler(continuarGuardado)
+          .withFailureHandler(function(err) {
+            alert('Error al registrar la confirmación de conversión: ' + err.message);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('recepcionForm').style.display = 'block';
+          })
+          .marcarConversionesConfirmadas(codigosAConfirmar);
+      } else {
+        continuarGuardado();
+      }
     }
+
+
   </script>
 </body>
 </html>

@@ -63,6 +63,8 @@ function _getTablaConversionesCompleta() {
   const idxActivo = headers.indexOf('activo');
   const idxCompra = headers.indexOf('unidad_de_compra');
   const idxObs    = headers.indexOf('observaciones');
+  // ✅ NUEVO (v2.7): columna de control del aviso preventivo de conversión (punto 2.3)
+  const idxConfirmada = headers.indexOf('confirmado_primera_recepcion');
 
   const tabla = {};
   for (let i = 2; i < data.length; i++) {
@@ -75,10 +77,29 @@ function _getTablaConversionesCompleta() {
       unidad_compra:  String(data[i][idxCompra] || '').trim(),
       activo:         data[i][idxActivo] === true ||
                       String(data[i][idxActivo]).toUpperCase() === 'TRUE',
-      observaciones:  String(data[i][idxObs] || '').trim()
+      observaciones:  String(data[i][idxObs] || ''),
+      confirmada:     idxConfirmada >= 0 &&
+                      (data[i][idxConfirmada] === true ||
+                       String(data[i][idxConfirmada]).toUpperCase() === 'TRUE')
     };
   }
   return tabla;
+}
+
+/**
+ * Devuelve (creándola si hace falta) la columna "confirmado_primera_recepcion"
+ * de Config_Conversiones — 1-indexed, lista para usar con sheet.getRange().
+ * No pisa filas existentes: si la hoja es vieja y no tiene esta columna,
+ * la agrega al final sin tocar el resto.
+ */
+function _asegurarColumnaConfirmada(sheet) {
+  const headers = sheet.getRange(2, 1, 1, sheet.getLastColumn()).getValues()[0];
+  let idx = headers.indexOf('confirmado_primera_recepcion');
+  if (idx >= 0) return idx + 1;
+
+  const col = sheet.getLastColumn() + 1;
+  sheet.getRange(2, col).setValue('confirmado_primera_recepcion');
+  return col;
 }
 
 /**
@@ -164,20 +185,38 @@ function guardarConversionInsumo(convData) {
     const tabla    = _getTablaConversionesCompleta();
     const existing = tabla[String(convData.codigo).trim()];
 
+    const factorNuevo  = Number(convData.factor) || 1;
+    const unidadNueva   = convData.unidad_destino || 'Unidad';
+
+    // ✅ NUEVO (v2.7): si es una conversión nueva, o si cambió el factor/unidad de
+    // destino de una existente, se resetea el aviso de "primera recepción" (punto 2.3)
+    // para que el equipo vuelva a confirmar la equivalencia la próxima vez que reciban
+    // este insumo. Si no cambió nada relevante, se conserva el estado de confirmación.
+    const esCambioDeEquivalencia = !existing ||
+      existing.factor !== factorNuevo ||
+      existing.unidad_destino !== unidadNueva;
+    const confirmada = esCambioDeEquivalencia ? false : existing.confirmada;
+
     const rowData = [
       convData.codigo,
       convData.descripcion,
       convData.unidad_compra  || 'CAJA',
-      Number(convData.factor) || 1,
-      convData.unidad_destino || 'Unidad',
+      factorNuevo,
+      unidadNueva,
       convData.activo === true || convData.activo === 'true',
-      convData.observaciones  || ''
+      convData.observaciones  || '',
+      confirmada
     ];
 
+    const colConfirmada = _asegurarColumnaConfirmada(sheet);
+
     if (existing) {
-      sheet.getRange(existing.fila, 1, 1, 7).setValues([rowData]);
+      sheet.getRange(existing.fila, 1, 1, 7).setValues([rowData.slice(0, 7)]);
+      sheet.getRange(existing.fila, colConfirmada).setValue(confirmada);
     } else {
-      sheet.appendRow(rowData);
+      const filaNueva = sheet.getLastRow() + 1;
+      sheet.getRange(filaNueva, 1, 1, 7).setValues([rowData.slice(0, 7)]);
+      sheet.getRange(filaNueva, colConfirmada).setValue(confirmada);
     }
 
     SpreadsheetApp.flush();
@@ -866,3 +905,51 @@ function ocultarHojasInternas() {
     ui.ButtonSet.OK
   );
 }
+
+// ========================================
+// AVISO PREVENTIVO DE CONVERSIÓN (punto 2.3, v2.7)
+// ========================================
+
+/**
+ * Dado un array de códigos de insumo (los que aparecen en una recepción a punto
+ * de guardarse), devuelve solo los que tienen una conversión activa (factor > 1)
+ * todavía NO confirmada por el equipo — o porque es la primera vez que se
+ * configuró, o porque cambió el factor/unidad después de haberse confirmado antes.
+ * Usada por FormularioRecepcion.html antes de guardar.
+ */
+function getConversionesPendientesConfirmar(codigosInsumo) {
+  const tabla = _getTablaConversionesCompleta();
+  const codigosUnicos = Array.from(new Set((codigosInsumo || []).map(function(c) {
+    return String(c).trim();
+  })));
+
+  return codigosUnicos
+    .map(function(cod) { return tabla[cod] ? Object.assign({ codigo: cod }, tabla[cod]) : null; })
+    .filter(function(conv) {
+      return conv && conv.activo && conv.factor > 1 && !conv.confirmada;
+    });
+}
+
+/**
+ * Marca como confirmadas (por el equipo, al momento de recepcionar) las
+ * conversiones de los códigos indicados, para no volver a preguntar por ellas
+ * hasta que el factor/unidad vuelva a cambiar. Se llama justo antes de
+ * registrarRecepcion(), una vez que el usuario confirmó cada equivalencia.
+ */
+function marcarConversionesConfirmadas(codigosInsumo) {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Config_Conversiones');
+  if (!sheet) return { ok: false, mensaje: 'No existe la hoja Config_Conversiones.' };
+
+  const tabla = _getTablaConversionesCompleta();
+  const colConfirmada = _asegurarColumnaConfirmada(sheet);
+
+  (codigosInsumo || []).forEach(function(cod) {
+    const conv = tabla[String(cod).trim()];
+    if (conv) sheet.getRange(conv.fila, colConfirmada).setValue(true);
+  });
+
+  SpreadsheetApp.flush();
+  return { ok: true };
+}
+

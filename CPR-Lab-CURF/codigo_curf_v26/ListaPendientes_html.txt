@@ -82,6 +82,16 @@
     .btn { padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px; transition: background 0.2s; }
     .btn-print { background: #4285f4; color: white; }
     .btn-copy { background: #e8f0fe; color: #1967d2; }
+
+    /* ✅ NUEVO (v2.7): acciones de envío por orden */
+    .btn-accion {
+      border: none; background: #f1f3f4; cursor: pointer;
+      padding: 5px 7px; border-radius: 4px; font-size: 13px; margin-right: 3px;
+    }
+    .btn-accion:hover { background: #e0e0e0; }
+    .btn-accion:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-enviar:not(:disabled) { background: #fce8e6; }
+    .sin-email-tag { font-size: 10px; color: #d93025; display: block; margin-top: 2px; }
     
     /* Filtros */
     .filtros { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
@@ -192,7 +202,7 @@
       
       // ✅ NUEVO: columna Entrega Estimada
       let html = '<table id="tablaDatos"><thead><tr>';
-      html += '<th>Orden</th><th>Proveedor</th><th>Emitida</th><th>Entrega Est.</th><th>Estado</th><th>Progreso</th><th>Items Pendientes</th>';
+      html += '<th>Orden</th><th>Proveedor</th><th>Emitida</th><th>Entrega Est.</th><th>Estado</th><th>Progreso</th><th>Items Pendientes</th><th>Acciones</th>';
       html += '</tr></thead><tbody>';
       
       ordenes.forEach((orden, idx) => {
@@ -228,6 +238,12 @@
             <div class="items-detalle" id="items-${idx}">
               ${dibujarItemsPendientes(orden.items_pendientes)}
             </div>
+          </td>
+          <td>
+            <button class="btn-accion" onclick="verPdf('${orden.numero_orden}')" title="Ver PDF">📄</button>
+            <button class="btn-accion" onclick="revisarPedido('${orden.numero_orden}')" title="Revisar pedido (borrador de mail)" ${orden.tiene_email ? '' : 'disabled'}>📧</button>
+            <button class="btn-accion btn-enviar" onclick="enviarMail('${orden.numero_orden}', '${orden.proveedor}')" title="Enviar mail al proveedor" ${orden.tiene_email ? '' : 'disabled'}>✉️</button>
+            ${orden.tiene_email ? '' : '<span class="sin-email-tag">Proveedor sin email</span>'}
           </td>
         </tr>`;
       });
@@ -301,6 +317,29 @@
       const msg = document.getElementById('mensajeCopia');
       msg.style.opacity = '1';
       setTimeout(() => { msg.style.opacity = '0'; }, 2000);
+    }
+
+    // ✅ NUEVO (v2.7): Ver PDF / Revisar pedido / Enviar mail
+    function verPdf(numeroOrden) {
+      google.script.run
+        .withFailureHandler(function(e) { alert('❌ Error al generar el PDF: ' + e.message); })
+        .mostrarPreviaPdfOrden(numeroOrden);
+    }
+
+    function revisarPedido(numeroOrden) {
+      google.script.run
+        .withSuccessHandler(function(res) { alert('✅ Borrador de mail creado (' + res.destinatario + ')'); })
+        .withFailureHandler(function(e) { alert('❌ ' + e.message); })
+        .revisarPedidoOC(numeroOrden);
+    }
+
+    function enviarMail(numeroOrden, proveedor) {
+      const ok = confirm('¿Confirmás el envío de la orden ' + numeroOrden + ' a ' + proveedor + '?\n\nEsta acción envía el mail directo al proveedor y no tiene vuelta atrás.');
+      if (!ok) return;
+      google.script.run
+        .withSuccessHandler(function(res) { alert('✅ Mail enviado (' + res.destinatario + ')'); })
+        .withFailureHandler(function(e) { alert('❌ ' + e.message); })
+        .enviarPedidoOC(numeroOrden);
     }
 
     function mostrarError(e) {

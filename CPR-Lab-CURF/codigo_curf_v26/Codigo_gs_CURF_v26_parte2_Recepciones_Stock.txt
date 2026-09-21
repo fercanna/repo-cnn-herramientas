@@ -407,7 +407,7 @@ function actualizarStockIncremental(itemsRecibidos, catalogoInsumos) {
 function mostrarListaPendientes() {
   try {
     const html = HtmlService.createHtmlOutputFromFile('ListaPendientes')
-      .setWidth(600).setHeight(450)
+      .setWidth(820).setHeight(560) // ✅ v2.7: ampliado para la columna de acciones (Ver PDF/Revisar/Enviar)
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     SpreadsheetApp.getUi().showModalDialog(html, '📋 Órdenes Pendientes de Recepción');
   } catch (e) {
