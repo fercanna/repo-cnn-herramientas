@@ -27,3 +27,18 @@ node_modules/
 
 # Documentos reales de clientes (instructivos, SGC) — nunca versionar
 flowchart_tool/Instructivo_*.pdf
+
+# Config por máquina (ruta local a la carpeta de datos sincronizada) — no versionar
+Timetracker/config.local.json
+
+# Documentos de clientes de auditoría (planillas, informes, FODA) — nunca versionar
+AuDit-Lab-AnalyticsNOA/*.xlsx
+AuDit-Lab-AnalyticsNOA/*.docx
+AuDit-Lab-AnalyticsNOA/_contexto9001/
+AuDit-Lab-AnalyticsNOA/_modelo/*.xlsx
+AuDit-Lab-AnalyticsNOA/_modelo/*.docx
+AuDit-Lab-AnalyticsNOA/_modelo/*.doc
+AuDit-Lab-AnalyticsNOA/_reuniones_auditoria/
+
+# Planillas reales de CURF (compras, lista de proveedores) — nunca versionar
+CPR-Lab-CURF/*.xlsx
