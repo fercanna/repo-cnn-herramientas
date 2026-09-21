@@ -1,0 +1,118 @@
+function generarInformeAuditoria() {
+  // Obtener la hoja activa
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName('Config');
+  const hallazgosSheet = ss.getSheetByName('Hallazgos');
+  const dashboardSheet = ss.getSheetByName('Dashboard');
+  
+  // Leer datos de configuración
+  const cliente = configSheet.getRange('B4').getValue();
+  const norma = configSheet.getRange('B5').getValue();
+  const rubro = configSheet.getRange('B6').getValue();
+  const fecha = configSheet.getRange('B7').getValue();
+  const codigo = configSheet.getRange('B8').getValue();
+  const auditor1 = configSheet.getRange('B12').getValue();
+  const auditor2 = configSheet.getRange('B13').getValue();
+  const auditor3 = configSheet.getRange('B14').getValue();
+  
+  // Leer hallazgos
+  const hallazgosData = hallazgosSheet.getDataRange().getValues();
+  
+  // Leer resumen del dashboard
+  const ncm = dashboardSheet.getRange('B5').getValue();
+  const ncMenor = dashboardSheet.getRange('B6').getValue();
+  const om = dashboardSheet.getRange('B7').getValue();
+  const fortalezas = dashboardSheet.getRange('B8').getValue();
+  
+  // Crear nuevo documento
+  const doc = DocumentApp.create('Informe Auditoría - ' + cliente + ' - ' + fecha);
+  const body = doc.getBody();
+  
+  // Encabezado
+  body.appendParagraph('INFORME DE AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING1).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(codigo).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+  body.appendParagraph(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy')).setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+  body.appendParagraph('Gestión de Auditorías Internas').setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  
+  body.appendParagraph(''); // Espacio
+  
+  // Datos generales
+  body.appendParagraph('DATOS DE LA AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  body.appendParagraph('FECHA: ' + fecha);
+  body.appendParagraph('CLIENTE: ' + cliente);
+  body.appendParagraph('NORMA: ' + norma);
+  body.appendParagraph('RUBRO: ' + rubro);
+  
+  body.appendParagraph(''); // Espacio
+  
+  // Detalle de hallazgos
+  body.appendParagraph('DETALLE DE HALLAZGOS DE LA AUDITORÍA (CONFIDENCIAL)').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  body.appendParagraph('Ref: F: Fortaleza, OM: Oportunidad de Mejora, NCm: No conformidad menor, NCM: No conformidad Mayor');
+  
+  body.appendParagraph(''); // Espacio
+  
+  // Tabla de hallazgos
+  const table = body.appendTable();
+  
+  // Encabezado de tabla
+  const headerRow = table.appendTableRow();
+  headerRow.appendTableCell('N°');
+  headerRow.appendTableCell('PROCESO');
+  headerRow.appendTableCell('REQ.');
+  headerRow.appendTableCell('TIPO');
+  headerRow.appendTableCell('DESCRIPCIÓN');
+  headerRow.appendTableCell('EVIDENCIA OBJETIVA');
+  
+  // Datos de hallazgos (empezar desde fila 2, saltar encabezado)
+  for (let i = 1; i < hallazgosData.length; i++) {
+    if (hallazgosData[i][0] !== '') { // Si hay número de hallazgo
+      const row = table.appendTableRow();
+      row.appendTableCell(String(hallazgosData[i][0])); // N°
+      row.appendTableCell(String(hallazgosData[i][1])); // Proceso
+      row.appendTableCell(String(hallazgosData[i][2])); // Cláusula
+      row.appendTableCell(String(hallazgosData[i][3])); // Tipo
+      row.appendTableCell(String(hallazgosData[i][4])); // Descripción
+      row.appendTableCell(String(hallazgosData[i][5])); // Evidencia
+    }
+  }
+  
+  body.appendParagraph(''); // Espacio
+  
+  // Resumen ejecutivo
+  body.appendParagraph('RESUMEN EJECUTIVO Y CONCLUSIONES').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  body.appendParagraph('Resumen Cuantitativo de Hallazgos:').setBold(true);
+  body.appendParagraph('No Conformidades Mayores: ' + ncm);
+  body.appendParagraph('No Conformidades Menores: ' + ncMenor);
+  body.appendParagraph('Oportunidades de Mejora: ' + om);
+  body.appendParagraph('Fortalezas: ' + fortalezas);
+  
+  body.appendParagraph(''); // Espacio
+  body.appendParagraph('Conclusión General:').setBold(true);
+  body.appendParagraph('[Completar manualmente después de generar el informe]');
+  
+  body.appendParagraph(''); // Espacio
+  
+  // Auditores
+  body.appendParagraph('AUDITORES').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  if (auditor1) body.appendParagraph('Auditor 1: ' + auditor1);
+  if (auditor2) body.appendParagraph('Auditor 2: ' + auditor2);
+  if (auditor3) body.appendParagraph('Auditor 3: ' + auditor3);
+  
+  // Guardar y abrir
+  doc.saveAndClose();
+  const url = doc.getUrl();
+  
+  // Crear diálogo HTML con link clickeable
+  const htmlOutput = HtmlService.createHtmlOutput(
+    '<h3>✅ Informe generado correctamente</h3>' +
+    '<p><a href="' + url + '" target="_blank" style="font-size: 16px; color: #1a73e8; text-decoration: none; font-weight: bold;">👉 Abrir informe en nueva pestaña</a></p>' +
+    '<p style="font-size: 12px; color: #666;">Podés cerrar esta ventana después de hacer clic en el link.</p>'
+  ).setWidth(400).setHeight(150);
+  
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Informe de Auditoría');
+  
+  Logger.log('Informe creado: ' + url);
+}
+
+
+

@@ -1,0 +1,458 @@
+/**
+ * GAI-RE-1 · Generación del Informe Final de Auditoría Interna – CURF
+ * -------------------------------------------------------------------
+ * Lee Config + Hallazgos + Dashboard de este mismo libro y genera un
+ * Google Doc con formato profesional (portada, datos de auditoría,
+ * equipo auditor, resumen cuantitativo, tabla de hallazgos clasificada
+ * por color y una conclusión redactada automáticamente a partir de los
+ * números reales).
+ *
+ * v7 — dos ajustes sobre el informe ya corregido:
+ *   1) La columna CLÁUSULA traía una fecha/hora en vez de "4.1", "8.4.2",
+ *      etc. Causa: algunas celdas de Checklist!B están internamente
+ *      guardadas como un valor Date (con un formato de visualización
+ *      personalizado que las hace VERSE como "4.1" en la planilla),
+ *      aunque muestran texto normal en pantalla. getValues() trae el
+ *      valor real (la fecha); ahora se usa getDisplayValues(), que trae
+ *      exactamente el texto tal como se ve en la celda, sin importar el
+ *      tipo de dato interno.
+ *   2) Se fusionan las columnas PROCESO y DESCRIPCIÓN de la tabla de
+ *      hallazgos en una sola celda (proceso en negrita arriba,
+ *      descripción debajo), liberando ancho para EVIDENCIA OBJETIVA.
+ *      La tabla de hallazgos queda en 6 columnas: N°, CLÁUSULA,
+ *      PROCESO / DESCRIPCIÓN, TIPO, EVIDENCIA OBJETIVA, AUDITOR.
+ *
+ * v6 — la hoja Hallazgos se arma con un FILTER() de Google Sheets que se
+ * "expande" automáticamente desde B2 hacia abajo. En algún momento se
+ * escribieron valores sueltos a mano en medio de ese rango (B12:G14):
+ * como el FILTER no puede expandirse sobre celdas que ya tienen
+ * contenido, se corta ahí y el resto de la hoja queda sin sentido (por
+ * eso el informe traía solo 3 hallazgos en vez de los reales). En vez de
+ * depender de esa hoja frágil, el generador ahora reconstruye Hallazgos
+ * como VALORES fijos (no fórmula) directamente desde Checklist —la
+ * fuente confiable, según confirmaste— cada vez que se genera el
+ * informe. Esto también deja los conteos del Dashboard correctos, ya
+ * que sus fórmulas leen de Hallazgos!D:D. Se agregó además un ítem de
+ * menú aparte para reconstruir Hallazgos sin tener que generar el
+ * informe.
+ *
+ * v5 — mismo error ("El índice secundario (0) debe ser menor que el
+ * número de elementos secundarios (0)") pero de una segunda causa: se
+ * llamaba table.setColumnWidth(...) justo después de body.appendTable(),
+ * ANTES de agregarle ninguna fila. Una tabla recién creada tiene 0 filas
+ * y 0 celdas, así que no existe todavía la "columna 0" a la que referirse
+ * y setColumnWidth(0, ...) tira ese mismo error. Ahora primero se agrega
+ * la fila (encabezado) y recién después se fija el ancho de columnas,
+ * en las 5 tablas del informe.
+ *
+ * v4 — corrigió el mismo mensaje pero por otra causa: crear celdas
+ * vacías con row.appendTableCell() (sin texto) y recién después intentar
+ * cell.setText(...); una celda creada sin argumento no tiene ningún
+ * párrafo interno todavía, así que setText() no tenía dónde escribir.
+ * Ahora cada celda se crea directamente CON su texto
+ * (row.appendTableCell(texto)) y el formato se aplica después sobre esa
+ * misma celda ya poblada.
+ *
+ * v3 — corrigió 3 problemas del primer informe generado:
+ *   1) Texto blanco sobre fondo blanco en las filas de datos: Google Docs
+ *      hereda el color de texto de la última celda formateada (el
+ *      encabezado, blanco sobre fondo oscuro) para todo el contenido que
+ *      se agrega después dentro de la misma tabla. Cada celda de datos
+ *      fija explícitamente su color de texto (negro) al escribirla.
+ *   2) Columnas desproporcionadas: cada tabla fija su ancho de columna
+ *      explícito (en puntos) acorde a lo que va en cada una.
+ *   3) Sin conclusión final: ahora arma un párrafo de conclusión
+ *      redactado automáticamente con los números reales.
+ *   Además: si alguna fila de Hallazgos viene con error de fórmula
+ *   (#REF!, #N/A, #VALUE!, #ERROR!) se excluye de la tabla y se avisa al
+ *   pie, en vez de imprimir el error en el informe.
+ */
+
+const CFG = {
+  SHEETS: { CONFIG: 'Config', CHECKLIST: 'Checklist', HALLAZGOS: 'Hallazgos', DASHBOARD: 'Dashboard' },
+  TIPOS_VALIDOS: ['F', 'OM', 'NCm', 'NCM'], // Checklist!D también puede tener "C" (Conforme), que no es un hallazgo
+  COLOR_TIPO: {
+    // texto oscuro en negrita sobre fondo pastel: se lee bien aunque el
+    // fondo no se renderice, nunca queda texto blanco invisible
+    'NCM':  { bg: '#FCE8E6', fg: '#B3261E', label: 'No Conformidad Mayor' },
+    'NCm':  { bg: '#FEF3D9', fg: '#8A6100', label: 'No Conformidad Menor' },
+    'OM':   { bg: '#E6F4EA', fg: '#0F7B34', label: 'Oportunidad de Mejora' },
+    'F':    { bg: '#E8F0FE', fg: '#1A4FBA', label: 'Fortaleza' },
+    'C':    { bg: '#F1F3F4', fg: '#3C4043', label: 'Conforme' },
+  },
+  ERRORES: ['#REF!', '#N/A', '#VALUE!', '#ERROR!', '#DIV/0!', '#NAME?', '#NULL!'],
+};
+
+const NEGRO = '#000000';
+const BLANCO = '#FFFFFF';
+const HEADER_BG = '#1a1a2e';
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Auditoría CURF')
+    .addItem('📄 Generar Informe Final de Auditoría', 'generarInformeAuditoria')
+    .addItem('🔄 Reconstruir Hallazgos desde Checklist', 'reconstruirHallazgosMenu')
+    .addToUi();
+}
+
+/**
+ * Reconstruye la hoja Hallazgos como VALORES fijos (no fórmula) a partir
+ * de Checklist!A:G, filtrando las filas cuyo Tipo (columna D) sea F, OM,
+ * NCm o NCM. Se usa antes de generar el informe, y también está
+ * disponible como ítem de menú aparte para dejar la hoja arreglada sin
+ * necesidad de generar el informe.
+ */
+function reconstruirHallazgosDesdeChecklist(ss) {
+  const checklistSheet = ss.getSheetByName(CFG.SHEETS.CHECKLIST);
+  const hallazgosSheet = ss.getSheetByName(CFG.SHEETS.HALLAZGOS);
+  if (!checklistSheet || !hallazgosSheet) {
+    throw new Error('No se encontraron las hojas Checklist / Hallazgos en este libro.');
+  }
+
+  const nFilas = Math.max(checklistSheet.getLastRow() - 1, 0);
+  // getDisplayValues() en vez de getValues(): trae el texto tal como se
+  // ve en la celda (p.ej. "4.1"), sin importar si por dentro Sheets lo
+  // guardó como un valor Date u otro tipo con formato de visualización
+  // personalizado — evita que una cláusula como "4.1" salga convertida
+  // en fecha en el informe.
+  const datos = nFilas > 0 ? checklistSheet.getRange(2, 1, nFilas, 7).getDisplayValues() : []; // A:G
+
+  const filas = [];
+  datos.forEach(function (r) {
+    const proceso = r[0], clausula = r[1], requisito = r[2], tipo = String(r[3] || '').trim(),
+      observaciones = r[5], auditor = r[6];
+    if (!proceso || CFG.TIPOS_VALIDOS.indexOf(tipo) === -1) return;
+    // Hallazgos: N°, Proceso, Cláusula, Tipo, Descripción (=Requisito), Evidencia Objetiva (=Observaciones), Auditor
+    filas.push([0, proceso, clausula, tipo, requisito, observaciones, auditor]);
+  });
+  filas.forEach(function (f, i) { f[0] = i + 1; });
+
+  // Limpiar TODO el contenido anterior de la hoja (rango generoso) y
+  // reescribir como valores planos: nada de fórmulas que puedan
+  // volver a romperse con una edición manual futura.
+  const ultimaFila = Math.max(hallazgosSheet.getLastRow(), 500);
+  if (ultimaFila > 1) {
+    hallazgosSheet.getRange(2, 1, ultimaFila - 1, 7).clearContent();
+  }
+  if (filas.length > 0) {
+    hallazgosSheet.getRange(2, 1, filas.length, 7).setValues(filas);
+  }
+  SpreadsheetApp.flush(); // asegurar que Dashboard (que cuenta sobre Hallazgos!D:D) recalcule antes de leerlo
+
+  return filas.length;
+}
+
+function reconstruirHallazgosMenu() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  try {
+    const n = reconstruirHallazgosDesdeChecklist(ss);
+    SpreadsheetApp.getUi().alert('Hallazgos reconstruido: ' + n + ' hallazgo(s) cargado(s) desde Checklist.');
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('Error al reconstruir Hallazgos: ' + e.message);
+  }
+}
+
+function generarInformeAuditoria() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet = ss.getSheetByName(CFG.SHEETS.CONFIG);
+  const hallazgosSheet = ss.getSheetByName(CFG.SHEETS.HALLAZGOS);
+  const dashboardSheet = ss.getSheetByName(CFG.SHEETS.DASHBOARD);
+
+  if (!configSheet || !hallazgosSheet || !dashboardSheet) {
+    SpreadsheetApp.getUi().alert('No se encontraron las hojas Config / Hallazgos / Dashboard en este libro.');
+    return;
+  }
+
+  // Reconstruir Hallazgos desde Checklist ANTES de leer nada: garantiza
+  // que el informe (y el Dashboard, que cuenta sobre Hallazgos!D:D) usen
+  // siempre datos consistentes, sin depender del FILTER() frágil.
+  reconstruirHallazgosDesdeChecklist(ss);
+
+  const tz = ss.getSpreadsheetTimeZone(); // usar el huso horario de LA PLANILLA, no el del script
+
+  // ---- Datos generales (Config B3:B7) ----
+  const cliente = configSheet.getRange('B3').getValue();
+  const norma   = configSheet.getRange('B4').getValue();
+  const rubro   = configSheet.getRange('B5').getValue();
+  const fecha   = configSheet.getRange('B6').getValue();
+  const codigo  = configSheet.getRange('B7').getValue();
+
+  const fechaTexto = fecha instanceof Date
+    ? Utilities.formatDate(fecha, tz, 'dd/MM/yyyy')
+    : String(fecha);
+
+  // ---- Procesos auditados (Config filas 9-21: col A proceso, B checkbox,
+  //      C fecha, D auditado/auditor) ----
+  const procesosData = configSheet.getRange('A9:D21').getValues();
+  const procesosAuditados = procesosData.filter(function (r) { return r[1] === true; });
+
+  // ---- Equipo auditor (Config filas 23-28: col A rol, B nombre, C área) ----
+  const equipoData = configSheet.getRange('A23:C28').getValues();
+  const equipo = equipoData.filter(function (r) { return r[1]; });
+
+  // ---- Hallazgos (encabezado en fila 1: N°, Proceso, Cláusula, Tipo, Descripción, Evidencia, Auditor) ----
+  const hallazgosRaw = hallazgosSheet.getDataRange().getValues();
+  const hallazgos = [];
+  let filasConError = 0;
+  for (let i = 1; i < hallazgosRaw.length; i++) {
+    const fila = hallazgosRaw[i];
+    if (fila[0] === '' || fila[0] === null) continue;
+    const tieneError = fila.some(function (v) { return CFG.ERRORES.indexOf(String(v)) !== -1; });
+    if (tieneError) { filasConError++; continue; }
+    hallazgos.push(fila);
+  }
+
+  // ---- Proceso con más hallazgos (para la conclusión) ----
+  const porProceso = {};
+  hallazgos.forEach(function (f) {
+    const p = String(f[1] || '').trim();
+    if (!p) return;
+    porProceso[p] = (porProceso[p] || 0) + 1;
+  });
+  let procesoTop = null, procesoTopCant = 0;
+  Object.keys(porProceso).forEach(function (p) {
+    if (porProceso[p] > procesoTopCant) { procesoTop = p; procesoTopCant = porProceso[p]; }
+  });
+
+  // ---- Resumen cuantitativo (Dashboard B5:B9) ----
+  const ncMayores = Number(dashboardSheet.getRange('B5').getValue()) || 0;
+  const ncMenores = Number(dashboardSheet.getRange('B6').getValue()) || 0;
+  const om = Number(dashboardSheet.getRange('B7').getValue()) || 0;
+  const fortalezas = Number(dashboardSheet.getRange('B8').getValue()) || 0;
+  const total = Number(dashboardSheet.getRange('B9').getValue()) || (ncMayores + ncMenores + om + fortalezas);
+
+  // ================= Construcción del documento =================
+  const doc = DocumentApp.create('Informe de Auditoría Interna - ' + cliente + ' - ' + fechaTexto);
+  const body = doc.getBody();
+  body.setMarginTop(50).setMarginBottom(50).setMarginLeft(60).setMarginRight(60);
+
+  // ---- Portada ----
+  const titulo = body.appendParagraph('INFORME DE AUDITORÍA INTERNA');
+  titulo.setHeading(DocumentApp.ParagraphHeading.TITLE).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(String(cliente)).setAlignment(DocumentApp.HorizontalAlignment.CENTER).setBold(true);
+  body.appendParagraph('Sistema de Gestión de Calidad — ' + String(norma)).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph('Código de informe: ' + String(codigo) + '   |   Fecha: ' + fechaTexto)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph('Documento confidencial — uso interno').setAlignment(DocumentApp.HorizontalAlignment.CENTER).setItalic(true);
+  body.appendPageBreak();
+
+  // ---- Datos de la auditoría ----
+  body.appendParagraph('1. DATOS DE LA AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const datosTable = body.appendTable();
+  [
+    ['Cliente', String(cliente)],
+    ['Norma aplicable', String(norma)],
+    ['Rubro / Sector', String(rubro)],
+    ['Fecha de auditoría', fechaTexto],
+    ['Código de informe', String(codigo)],
+  ].forEach(function (par) {
+    const row = datosTable.appendTableRow();
+    addCell(row, par[0], { bold: true, bg: '#f1f3f4', fg: NEGRO });
+    addCell(row, par[1], { fg: NEGRO });
+  });
+  setColumnWidths(datosTable, [150, 325]);
+
+  // ---- Procesos auditados ----
+  body.appendParagraph('2. PROCESOS AUDITADOS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  if (procesosAuditados.length > 0) {
+    const procTable = body.appendTable();
+    const hp = procTable.appendTableRow();
+    ['Proceso', 'Fecha', 'Auditado / Auditor'].forEach(function (t) {
+      addCell(hp, t, { bold: true, bg: HEADER_BG, fg: BLANCO });
+    });
+    procesosAuditados.forEach(function (r) {
+      const row = procTable.appendTableRow();
+      const fechaProc = r[2] instanceof Date ? Utilities.formatDate(r[2], tz, 'dd/MM/yyyy') : String(r[2] || '');
+      addCell(row, String(r[0] || ''), { fg: NEGRO });
+      addCell(row, fechaProc, { fg: NEGRO });
+      addCell(row, String(r[3] || ''), { fg: NEGRO });
+    });
+    setColumnWidths(procTable, [140, 65, 270]);
+  } else {
+    body.appendParagraph('No se registraron procesos auditados en Config.');
+  }
+
+  // ---- Equipo auditor ----
+  body.appendParagraph('3. EQUIPO AUDITOR').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  if (equipo.length > 0) {
+    const eqTable = body.appendTable();
+    const he = eqTable.appendTableRow();
+    ['Rol', 'Nombre', 'Área asignada'].forEach(function (t) {
+      addCell(he, t, { bold: true, bg: HEADER_BG, fg: BLANCO });
+    });
+    equipo.forEach(function (r) {
+      const row = eqTable.appendTableRow();
+      addCell(row, String(r[0] || ''), { fg: NEGRO });
+      addCell(row, String(r[1] || ''), { fg: NEGRO });
+      addCell(row, String(r[2] || ''), { fg: NEGRO });
+    });
+    setColumnWidths(eqTable, [160, 150, 165]);
+  }
+
+  // ---- Resumen cuantitativo ----
+  body.appendParagraph('4. RESUMEN CUANTITATIVO DE HALLAZGOS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const resTable = body.appendTable();
+  const hr = resTable.appendTableRow();
+  ['Clasificación', 'Cantidad'].forEach(function (t) {
+    addCell(hr, t, { bold: true, bg: HEADER_BG, fg: BLANCO });
+  });
+  [
+    ['No Conformidades Mayores (NCM)', ncMayores],
+    ['No Conformidades Menores (NCm)', ncMenores],
+    ['Oportunidades de Mejora (OM)', om],
+    ['Fortalezas (F)', fortalezas],
+  ].forEach(function (par) {
+    const row = resTable.appendTableRow();
+    addCell(row, par[0], { fg: NEGRO });
+    addCell(row, String(par[1]), { fg: NEGRO });
+  });
+  const totalRow = resTable.appendTableRow();
+  addCell(totalRow, 'TOTAL DE HALLAZGOS', { bold: true, bg: '#e8eaed', fg: NEGRO });
+  addCell(totalRow, String(total), { bold: true, bg: '#e8eaed', fg: NEGRO });
+  setColumnWidths(resTable, [350, 125]);
+
+  // ---- Detalle de hallazgos ----
+  body.appendPageBreak();
+  body.appendParagraph('5. DETALLE DE HALLAZGOS DE LA AUDITORÍA (CONFIDENCIAL)').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const leyenda = body.appendParagraph('Referencia de clasificación: ' +
+    Object.keys(CFG.COLOR_TIPO).map(function (t) { return t + ' = ' + CFG.COLOR_TIPO[t].label; }).join('   ·   '));
+  leyenda.setItalic(true).setFontSize(9);
+
+  const table = body.appendTable();
+  const headerRow = table.appendTableRow();
+  ['N°', 'CLÁUSULA', 'PROCESO / DESCRIPCIÓN', 'TIPO', 'EVIDENCIA OBJETIVA', 'AUDITOR']
+    .forEach(function (t) { addCell(headerRow, t, { bold: true, bg: HEADER_BG, fg: BLANCO }); });
+
+  hallazgos.forEach(function (fila) {
+    // fila: [N°, Proceso, Cláusula, Tipo, Descripción, Evidencia, Auditor]
+    const tipo = String(fila[3] || '').trim();
+    const colorInfo = CFG.COLOR_TIPO[tipo];
+    const row = table.appendTableRow();
+    addCell(row, String(fila[0]), { fg: NEGRO });
+    addCell(row, String(fila[2] || ''), { fg: NEGRO });
+    addCellDouble(row, String(fila[1] || ''), String(fila[4] || ''), { fg: NEGRO });
+    addCell(row, tipo, colorInfo ? { bold: true, bg: colorInfo.bg, fg: colorInfo.fg } : { fg: NEGRO });
+    addCell(row, String(fila[5] || ''), { fg: NEGRO });
+    addCell(row, String(fila[6] || ''), { fg: NEGRO });
+  });
+  setColumnWidths(table, [20, 38, 170, 32, 180, 35]);
+
+  if (hallazgos.length === 0) {
+    body.appendParagraph('No hay hallazgos cargados en la hoja Hallazgos al momento de generar este informe.');
+  }
+  if (filasConError > 0) {
+    body.appendParagraph('⚠ Se excluyeron ' + filasConError + ' fila(s) de Hallazgos con error de fórmula ' +
+      '(revisar la hoja Hallazgos: probablemente la fórmula FILTER perdió su rango de expansión).')
+      .setItalic(true).setFontSize(9);
+  }
+
+  // ---- Conclusiones ----
+  body.appendPageBreak();
+  body.appendParagraph('6. RESUMEN EJECUTIVO Y CONCLUSIONES').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('Síntesis de resultados:').setBold(true);
+
+  let sintesis = 'De un total de ' + total + ' hallazgo(s) registrados durante la auditoría del ' + fechaTexto +
+    ', se identificaron ' + ncMayores + ' No Conformidad(es) Mayor(es), ' + ncMenores + ' No Conformidad(es) Menor(es), ' +
+    om + ' Oportunidad(es) de Mejora y ' + fortalezas + ' Fortaleza(s).';
+  if (procesoTop) {
+    sintesis += ' El proceso con mayor cantidad de hallazgos fue "' + procesoTop + '" (' + procesoTopCant + ' hallazgo(s)).';
+  }
+  if (ncMayores > 0) {
+    sintesis += ' Las No Conformidades Mayores requieren un plan de acción con responsable y fecha, y verificación de eficacia antes del cierre de la auditoría, dando prioridad a su tratamiento en el proceso de Gestión de Mejora (GME).';
+  } else if (ncMenores > 0) {
+    sintesis += ' No se registraron No Conformidades Mayores; las No Conformidades Menores deben incorporarse igualmente al plan de mejora con responsable y fecha de cierre.';
+  } else {
+    sintesis += ' No se registraron No Conformidades en esta auditoría.';
+  }
+  body.appendParagraph(sintesis);
+
+  body.appendParagraph('');
+  body.appendParagraph('Valoración final del equipo auditor:').setBold(true);
+  body.appendParagraph('[A completar por el equipo auditor: conformidad general del SGC respecto a la norma, eficacia de las acciones tomadas desde la auditoría anterior, y recomendación sobre el mantenimiento/ampliación de la certificación]');
+
+  // ---- Firmas ----
+  body.appendParagraph('7. FIRMAS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const firmantes = equipo.filter(function (r) { return /l[ií]der|externo/i.test(String(r[0])); });
+  const listaFirmas = firmantes.length > 0 ? firmantes : equipo;
+  listaFirmas.forEach(function (r) {
+    body.appendParagraph('');
+    body.appendParagraph('_______________________________');
+    body.appendParagraph(String(r[1] || '') + ' — ' + String(r[0] || ''));
+  });
+
+  body.appendParagraph('');
+  body.appendParagraph('Informe generado automáticamente el ' +
+    Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy HH:mm') +
+    ' a partir del registro GAI-RE-1.').setItalic(true).setFontSize(9);
+
+  doc.saveAndClose();
+  const url = doc.getUrl();
+
+  const htmlOutput = HtmlService.createHtmlOutput(
+    '<h3>✅ Informe generado correctamente</h3>' +
+    '<p><a href="' + url + '" target="_blank" style="font-size: 16px; color: #1a73e8; text-decoration: none; font-weight: bold;">👉 Abrir informe en nueva pestaña</a></p>' +
+    '<p style="font-size: 12px; color: #666;">Podés cerrar esta ventana después de hacer clic en el link.</p>'
+  ).setWidth(420).setHeight(160);
+
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Informe de Auditoría');
+  Logger.log('Informe creado: ' + url);
+}
+
+// ================= Helpers de formato =================
+
+/**
+ * Crea una celda en `row` con su texto ya incluido en el momento de la
+ * creación (row.appendTableCell(texto)) y recién después le aplica
+ * formato. Importante: NO crear la celda vacía (row.appendTableCell())
+ * y escribirle el texto en un paso aparte — una celda recién creada sin
+ * argumento no tiene ningún párrafo interno todavía, y un setText()
+ * posterior sobre ella tira "child index 0 must be less than the number
+ * of child elements 0".
+ */
+function addCell(row, text, opts) {
+  opts = opts || {};
+  const cell = row.appendTableCell(String(text === undefined || text === null ? '' : text));
+  if (opts.bg) cell.setBackgroundColor(opts.bg);
+  const t = cell.editAsText();
+  if (t.getText().length > 0) {
+    t.setForegroundColor(opts.fg || NEGRO);
+    t.setBold(!!opts.bold);
+  }
+  cell.setPaddingTop(3).setPaddingBottom(3).setPaddingLeft(4).setPaddingRight(4);
+  return cell;
+}
+
+/**
+ * Igual que addCell(), pero para una celda con dos contenidos apilados:
+ * una primera línea en negrita (p.ej. el Proceso) y una segunda línea
+ * normal debajo (p.ej. la Descripción). Se usa para fusionar dos
+ * columnas en una sin perder la distinción visual entre ambas.
+ */
+function addCellDouble(row, lineaNegrita, lineaNormal, opts) {
+  opts = opts || {};
+  const negrita = String(lineaNegrita || '');
+  const normal = String(lineaNormal || '');
+  const texto = normal ? (negrita + '\n' + normal) : negrita;
+  const cell = row.appendTableCell(texto || ' ');
+  if (opts.bg) cell.setBackgroundColor(opts.bg);
+  const t = cell.editAsText();
+  const total = t.getText().length;
+  if (total > 0) {
+    t.setForegroundColor(0, total - 1, opts.fg || NEGRO);
+    if (negrita.length > 0) {
+      const finNegrita = Math.min(negrita.length, total) - 1;
+      if (finNegrita >= 0) t.setBold(0, finNegrita, true);
+    }
+    if (negrita.length < total) {
+      t.setBold(negrita.length, total - 1, false);
+    }
+  }
+  cell.setPaddingTop(3).setPaddingBottom(3).setPaddingLeft(4).setPaddingRight(4);
+  return cell;
+}
+
+function setColumnWidths(table, widthsPt) {
+  widthsPt.forEach(function (w, i) {
+    table.setColumnWidth(i, w);
+  });
+}

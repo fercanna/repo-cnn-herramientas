@@ -1,0 +1,653 @@
+/**
+ * SISTEMA DE AUDITORÍA INTERNA  |  CURF – Laboratorio de Microbiología
+ * ISO 9001:2015
+ * Adaptado de: scriptAuditoria_NOA_v01 (Analytics NOA, Agosto 2026)
+ * v01 (Septiembre 2026) — adaptación para CURF:
+ *   - CONFIG.AMBITOS pasa de un único ámbito genérico (NOA) a 6 ámbitos reales
+ *     de CURF: General/Institucional, Preanalítico (común), Bacteriología,
+ *     Virología, Parasitología, Micología.
+ *   - El Checklist deja de ser una sola hoja: ahora son TRES —
+ *     Checklist_ISO9001 (general/institucional), Checklist_8_Bacteriologia y
+ *     Checklist_8_Virologia (punto 8 desdoblado por sección) — y
+ *     "Generar Hallazgos desde Checklist" recorre las tres.
+ *   - Layout de Config actualizado a las filas reales de la planilla CURF:
+ *     Cliente B4, Norma B5, Rubro B6, Código B7, Fecha B8, Hora inicio B9,
+ *     Hora fin B10; Ámbitos/Secciones filas 13-26 (nombre en A, checkbox en
+ *     B); Equipo auditor filas 29-33 (nombre en B, área en C).
+ *   - El informe (Generar Informe Completo) ahora incluye un desglose de
+ *     hallazgos por ámbito (Bacteriología, Virología, etc.), no solo por
+ *     tipo, ya que en CURF sí importa distinguir la sección.
+ *   - Se agregó el ámbito de cada hallazgo migrado/nuevo según de qué hoja
+ *     de checklist proviene (o el que elija el auditor en "Nuevo Hallazgo").
+ */
+
+// ============================================
+// CONFIGURACIÓN GLOBAL
+// ============================================
+const CONFIG = {
+  SHEETS: {
+    CONFIG: 'Config',
+    AGENDA: 'Agenda',
+    REGISTRO: 'Registro_Hallazgos',
+    DASHBOARD: 'Dashboard',
+    CHECKLIST_GENERAL: 'Checklist_ISO9001',
+    CHECKLIST_BACTERIOLOGIA: 'Checklist_8_Bacteriologia',
+    CHECKLIST_VIROLOGIA: 'Checklist_8_Virologia',
+    HALLAZGOS_LEGACY: 'Hallazgos'
+  },
+  COLORES: {
+    NCMa: '#ea4335',
+    NCme: '#fbbc04',
+    OM:   '#34a853',
+    F:    '#4285f4',
+    C:    '#e8eaed'
+  },
+  // Ámbitos/secciones reales de CURF (a diferencia de NOA, acá SÍ importa
+  // distinguir por sección, sobre todo Bacteriología y Virología).
+  AMBITOS: [
+    'General/Institucional',
+    'Preanalítico (común)',
+    'Bacteriología',
+    'Virología',
+    'Parasitología',
+    'Micología'
+  ],
+  PROCESOS: [
+    'DIR – Dirección',
+    'REV – Revisión por la Dirección',
+    'GID – Gestión de Información Documentada',
+    'GRH – Gestión de Recursos Humanos',
+    'GEQ – Gestión de Equipos e Infraestructura',
+    'COM – Comunicaciones',
+    'CPR – Compras',
+    'GOP – Preanalítico',
+    'GOP – Analítico – Bacteriología',
+    'GOP – Analítico – Virología',
+    'GOP – Analítico – Parasitología',
+    'GOP – Analítico – Micología',
+    'GOP – Postanalítico',
+    'GME – Gestión de Mejora',
+    'GAI – Gestión de Auditoría'
+  ],
+  // Checklists a recorrer para "Generar Hallazgos desde Checklist", con el
+  // ámbito por defecto que le corresponde a cada hoja. En Checklist_ISO9001
+  // el ámbito se decide fila por fila (ver ambitoParaFilaGeneral).
+  CHECKLISTS: [
+    { sheet: 'Checklist_ISO9001', ambitoFijo: null },
+    { sheet: 'Checklist_8_Bacteriologia', ambitoFijo: 'Bacteriología' },
+    { sheet: 'Checklist_8_Virologia', ambitoFijo: 'Virología' }
+  ]
+};
+
+// ============================================
+// MENÚ PRINCIPAL
+// ============================================
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🔍 Auditoría ISO')
+    .addItem('📋 Nuevo Hallazgo', 'nuevoHallazgo')
+    .addItem('📊 Generar Hallazgos desde Checklists', 'generarHallazgosDesdeChecklistSimplificado')
+    .addSeparator()
+    .addItem('📄 Generar Informe Completo', 'generarInformeCompleto')
+    .addSeparator()
+    .addItem('🔄 Migrar desde formato anterior (Hallazgos)', 'migrarHallazgosLegacy')
+    .addItem('🧹 Limpiar Registro de Hallazgos', 'limpiarRegistro')
+    .addSeparator()
+    .addItem('ℹ️ Ayuda', 'mostrarAyuda')
+    .addToUi();
+}
+
+// ============================================
+// FUNCIÓN: NUEVO HALLAZGO (Formulario)
+// ============================================
+function nuevoHallazgo() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!registroSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'No se encontró la pestaña "Registro_Hallazgos"', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const ambitoOptions = CONFIG.AMBITOS.map(a => `<option value="${a}">${a}</option>`).join('\n');
+  const procesoOptions = CONFIG.PROCESOS.map(p => `<option value="${p}">${p}</option>`).join('\n');
+
+  const html = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; font-size: 13px; }
+          .form-group { margin-bottom: 14px; }
+          label { display: block; font-weight: bold; margin-bottom: 4px; color: #1F4E79; }
+          input, select, textarea { width: 100%; padding: 7px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+          textarea { min-height: 70px; resize: vertical; }
+          .norma-badge { font-size: 10px; color: #888; font-weight: normal; }
+          .btn { background: #2E75B6; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; font-size: 13px; }
+          .btn:hover { background: #1F4E79; }
+        </style>
+      </head>
+      <body>
+        <h3 style="color:#1F4E79;">📋 Registrar Nuevo Hallazgo — CURF</h3>
+        <p style="font-size:11px;color:#666;">ISO 9001:2015 — Laboratorio de Microbiología</p>
+        <form id="hallazgoForm">
+
+          <div class="form-group">
+            <label>Ámbito / Sección:</label>
+            <select id="ambito" required>
+              <option value="">-- Seleccionar --</option>
+              ${ambitoOptions}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Proceso:</label>
+            <select id="proceso" required>
+              <option value="">-- Seleccionar --</option>
+              ${procesoOptions}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Cláusula <span class="norma-badge">(ej: 8.5.1, 4.1, 9.2)</span>:</label>
+            <input type="text" id="clausula" placeholder="Ej: 8.5.1" required>
+          </div>
+
+          <div class="form-group">
+            <label>Requisito (breve):</label>
+            <input type="text" id="requisito" placeholder="Ej: Control de la producción">
+          </div>
+
+          <div class="form-group">
+            <label>Tipo de Hallazgo:</label>
+            <select id="tipo" required>
+              <option value="">-- Seleccionar --</option>
+              <option value="F">F – Fortaleza</option>
+              <option value="OM">OM – Oportunidad de Mejora</option>
+              <option value="NCme">NCme – No Conformidad Menor</option>
+              <option value="NCMa">NCMa – No Conformidad Mayor</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Descripción del Hallazgo:</label>
+            <textarea id="descripcion" required placeholder="Describir el hallazgo con evidencia objetiva concreta..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Evidencia:</label>
+            <textarea id="evidencia" placeholder="Documentos, registros o hechos observados que sustentan el hallazgo..."></textarea>
+          </div>
+
+          <button type="submit" class="btn">💾 Guardar Hallazgo</button>
+        </form>
+
+        <script>
+          document.getElementById('hallazgoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const data = {
+              ambito:      document.getElementById('ambito').value,
+              proceso:     document.getElementById('proceso').value,
+              clausula:    document.getElementById('clausula').value,
+              requisito:   document.getElementById('requisito').value,
+              tipo:        document.getElementById('tipo').value,
+              descripcion: document.getElementById('descripcion').value,
+              evidencia:   document.getElementById('evidencia').value
+            };
+            google.script.run
+              .withSuccessHandler(function() {
+                alert('✅ Hallazgo guardado correctamente');
+                google.script.host.close();
+              })
+              .withFailureHandler(function(error) {
+                alert('❌ Error al guardar: ' + error);
+              })
+              .guardarHallazgo(data);
+          });
+        </script>
+      </body>
+    </html>
+  `).setWidth(520).setHeight(680);
+
+  SpreadsheetApp.getUi().showModalDialog(html, 'Nuevo Hallazgo – CURF');
+}
+
+// ============================================
+// FUNCIÓN: GUARDAR HALLAZGO
+// ============================================
+function guardarHallazgo(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  const numero = lastRow > 2 ? lastRow - 1 : 1;
+  const estado = data.tipo === 'F' ? '-' : 'Abierto';
+
+  registroSheet.appendRow([
+    numero,
+    data.ambito,
+    data.proceso,
+    data.clausula,
+    data.requisito,
+    data.tipo,
+    data.descripcion,
+    data.evidencia,
+    estado,
+    '' // Acción / Trello
+  ]);
+
+  const newRow = registroSheet.getLastRow();
+  aplicarFormatoHallazgo(registroSheet, newRow, data.tipo);
+  renumerarHallazgos();
+}
+
+// ============================================
+// FUNCIÓN: APLICAR FORMATO A HALLAZGO (columna F = Tipo)
+// ============================================
+function aplicarFormatoHallazgo(sheet, row, tipo) {
+  const celdaTipo = sheet.getRange(row, 6);
+  let color, fontColor;
+
+  switch (tipo) {
+    case 'NCMa': color = CONFIG.COLORES.NCMa; fontColor = '#ffffff'; break;
+    case 'NCme': color = CONFIG.COLORES.NCme; fontColor = '#000000'; break;
+    case 'OM':   color = CONFIG.COLORES.OM;   fontColor = '#ffffff'; break;
+    case 'F':    color = CONFIG.COLORES.F;    fontColor = '#ffffff'; break;
+    case 'C':    color = CONFIG.COLORES.C;    fontColor = '#000000'; break;
+    default:     color = '#ffffff';           fontColor = '#000000';
+  }
+
+  celdaTipo.setBackground(color).setFontColor(fontColor).setFontWeight('bold');
+}
+
+// ============================================
+// FUNCIÓN: RENUMERAR HALLAZGOS (fila 1 = título, fila 2 = encabezado, datos desde fila 3)
+// ============================================
+function renumerarHallazgos() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  if (lastRow <= 2) return;
+  for (let i = 3; i <= lastRow; i++) {
+    registroSheet.getRange(i, 1).setValue(i - 2);
+  }
+}
+
+// ============================================
+// FUNCIÓN: LIMPIAR REGISTRO
+// ============================================
+function limpiarRegistro() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert('⚠️ Confirmar', '¿Estás seguro de que querés eliminar TODOS los hallazgos registrados?', ui.ButtonSet.YES_NO);
+  if (response !== ui.Button.YES) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const lastRow = registroSheet.getLastRow();
+  if (lastRow > 2) registroSheet.deleteRows(3, lastRow - 2);
+  ui.alert('✅ Registro limpiado', 'Todos los hallazgos fueron eliminados.', ui.ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: MIGRAR HALLAZGOS LEGACY (por si queda una hoja "Hallazgos" vieja)
+// ============================================
+function migrarHallazgosLegacy() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const legacySheet  = ss.getSheetByName(CONFIG.SHEETS.HALLAZGOS_LEGACY);
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!legacySheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Sin datos para migrar', 'No se encontró la pestaña "Hallazgos". Si ya migraste a Registro_Hallazgos manualmente, no hace falta usar esta función.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const legacyData = legacySheet.getDataRange().getValues();
+  let migrados = 0;
+
+  for (let i = 1; i < legacyData.length; i++) {
+    if (!legacyData[i][0]) continue;
+    // Formato legacy no tenía columna de ámbito -> se migra como General/Institucional
+    // y el auditor la reclasifica manualmente si corresponde a una sección.
+    registroSheet.appendRow([
+      0, 'General/Institucional', legacyData[i][1], legacyData[i][2], legacyData[i][3],
+      legacyData[i][4], legacyData[i][5], legacyData[i][6],
+      legacyData[i][7] || (legacyData[i][4] === 'F' ? '-' : 'Abierto'), ''
+    ]);
+    aplicarFormatoHallazgo(registroSheet, registroSheet.getLastRow(), legacyData[i][4]);
+    migrados++;
+  }
+
+  renumerarHallazgos();
+  SpreadsheetApp.getUi().alert('✅ Migración completada', `Se migraron ${migrados} hallazgos como "General/Institucional".\n\nRevisá y reclasificá el ámbito de cada uno (Bacteriología, Virología, etc.) donde corresponda.`, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: AMBITO POR DEFECTO PARA UNA FILA DEL CHECKLIST GENERAL
+// (el checklist general mezcla varios procesos institucionales + Preanalítico)
+// ============================================
+function ambitoParaFilaGeneral(proceso) {
+  const p = String(proceso || '');
+  if (p.indexOf('Preanalítico') !== -1) return 'Preanalítico (común)';
+  if (p.indexOf('Postanalítico') !== -1) return 'Preanalítico (común)'; // etapa común, ver nota en Ayuda
+  return 'General/Institucional';
+}
+
+// ============================================
+// FUNCIÓN: GENERAR HALLAZGOS DESDE CHECKLISTS (recorre las 3 hojas)
+// ============================================
+function generarHallazgosDesdeChecklistSimplificado() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+
+  if (!registroSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'No se encontró la pestaña Registro_Hallazgos.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const ui = SpreadsheetApp.getUi();
+  const resp = ui.alert('🔄 Generar Hallazgos', '¿Limpiar el Registro_Hallazgos antes de generar?\n\n• SÍ: Borra existentes y genera desde cero (desde las 3 hojas de checklist)\n• NO: Agrega solo lo nuevo al final', ui.ButtonSet.YES_NO);
+  if (resp === ui.Button.YES) {
+    const lastRow = registroSheet.getLastRow();
+    if (lastRow > 2) registroSheet.deleteRows(3, lastRow - 2);
+  }
+
+  const hallazgos = [];
+
+  CONFIG.CHECKLISTS.forEach(cfg => {
+    const sheet = ss.getSheetByName(cfg.sheet);
+    if (!sheet) return; // hoja opcional (ej. si todavía no existe Checklist_8_Parasitologia)
+    // Fila 1 = título fusionado, fila 2 = encabezado real -> se descartan ambas.
+    const data = sheet.getDataRange().getValues().slice(2);
+
+    data.forEach(row => {
+      const proceso    = row[0];
+      const clausula   = row[1];
+      const requisito  = row[2];
+      const estado     = row[3];
+      const evidencia  = row[4];
+      const observ     = row[5];
+      const auditor    = row[6];
+
+      if (!estado || ['NCme', 'NCMa', 'OM', 'F'].indexOf(String(estado).trim()) === -1) return;
+
+      const ambito = cfg.ambitoFijo || ambitoParaFilaGeneral(proceso);
+      hallazgos.push([
+        0, ambito, proceso || '', clausula || '', requisito || '',
+        String(estado).trim(), observ || '', evidencia || '',
+        estado === 'F' ? '-' : 'Abierto', ''
+      ]);
+    });
+  });
+
+  if (hallazgos.length === 0) {
+    ui.alert('ℹ️ Sin hallazgos', 'No se encontraron hallazgos en ninguno de los checklists.\nVerificá que la columna D (Estado) tenga valores: NCme, NCMa, OM o F.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const primeraFila = registroSheet.getLastRow() + 1;
+  registroSheet.getRange(primeraFila, 1, hallazgos.length, 10).setValues(hallazgos);
+  hallazgos.forEach((h, i) => aplicarFormatoHallazgo(registroSheet, primeraFila + i, h[5]));
+  renumerarHallazgos();
+
+  ui.alert('✅ Hallazgos generados', `Se generaron ${hallazgos.length} hallazgos desde los 3 checklists.\n\nRevisá la solapa Registro_Hallazgos.`, ui.ButtonSet.OK);
+}
+
+// ============================================
+// FUNCIÓN: GENERAR INFORME COMPLETO
+// ============================================
+function generarInformeCompleto() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configSheet   = ss.getSheetByName(CONFIG.SHEETS.CONFIG);
+  const registroSheet = ss.getSheetByName(CONFIG.SHEETS.REGISTRO);
+  const agendaSheet   = ss.getSheetByName(CONFIG.SHEETS.AGENDA);
+
+  if (!configSheet || !registroSheet) {
+    SpreadsheetApp.getUi().alert('⚠️ Error', 'Faltan pestañas: Config o Registro_Hallazgos.', SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  // ── Leer Config (layout real de la planilla CURF) ───────────────────────
+  const cliente = configSheet.getRange('B4').getValue();
+  const norma   = configSheet.getRange('B5').getValue();
+  const rubro   = configSheet.getRange('B6').getValue();
+  const codigo  = configSheet.getRange('B7').getValue();
+  const fechaCrono = configSheet.getRange('B8').getValue();
+  const horaInicio = configSheet.getRange('B9').getValue();
+  const horaFin    = configSheet.getRange('B10').getValue();
+
+  // Ámbitos/secciones activas: nombre en columna A, checkbox en columna B,
+  // filas 13 a 26.
+  const ambitosActivos = [];
+  for (let r = 13; r <= 26; r++) {
+    if (configSheet.getRange(r, 2).getValue() === true) {
+      ambitosActivos.push(configSheet.getRange(r, 1).getValue());
+    }
+  }
+
+  // Auditores — nombre en columna B, área en columna C, filas 29 a 33.
+  const auditores = [];
+  for (let r = 29; r <= 33; r++) {
+    const nombre = configSheet.getRange(r, 2).getValue();
+    const area   = configSheet.getRange(r, 3).getValue();
+    if (nombre && !/^n\.?\/?a\.?$/i.test(String(nombre).trim())) {
+      auditores.push(area ? `${nombre} (${area})` : String(nombre));
+    }
+  }
+
+  // ── Leer Hallazgos ─────────────────────────────────────────────────────
+  const hallazgosData = registroSheet.getDataRange().getValues().slice(2); // sin título ni encabezado
+
+  // ── Formatear fechas ───────────────────────────────────────────────────
+  const fmtDate = v => v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd/MM/yyyy') : String(v || '');
+  const fmtHour = v => v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm') : String(v || '');
+
+  // ── Tally por tipo y por ámbito ──────────────────────────────────────────
+  let totalNCMa = 0, totalNCme = 0, totalOM = 0, totalF = 0;
+  const porAmbito = {};
+  CONFIG.AMBITOS.forEach(a => porAmbito[a] = { NCMa: 0, NCme: 0, OM: 0, F: 0 });
+
+  hallazgosData.forEach(h => {
+    if (!h[0]) return;
+    const ambito = h[1] || 'General/Institucional';
+    const tipo = h[5];
+    if (!porAmbito[ambito]) porAmbito[ambito] = { NCMa: 0, NCme: 0, OM: 0, F: 0 };
+    if      (tipo === 'NCMa') { totalNCMa++; porAmbito[ambito].NCMa++; }
+    else if (tipo === 'NCme') { totalNCme++; porAmbito[ambito].NCme++; }
+    else if (tipo === 'OM')   { totalOM++;   porAmbito[ambito].OM++; }
+    else if (tipo === 'F')    { totalF++;    porAmbito[ambito].F++; }
+  });
+  const totalHallazgos = totalNCMa + totalNCme + totalOM + totalF;
+
+  // ── Crear documento ────────────────────────────────────────────────────
+  const doc  = DocumentApp.create(`Informe Auditoría Interna ${codigo} – CURF`);
+  const body = doc.getBody();
+  body.clear();
+
+  body.appendParagraph('INFORME DE AUDITORÍA INTERNA')
+    .setHeading(DocumentApp.ParagraphHeading.TITLE)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(codigo).setAlignment(DocumentApp.HorizontalAlignment.CENTER).setBold(true);
+  body.appendParagraph(fmtDate(new Date())).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(`Sistema de Gestión  |  ${norma}`)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER).setItalic(true);
+  body.appendParagraph('');
+
+  // 1. Datos de la auditoría
+  body.appendParagraph('1. DATOS DE LA AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  const tDatos = body.appendTable();
+  const rowsDatos = [
+    ['Laboratorio:', String(cliente)],
+    ['Norma de referencia:', String(norma)],
+    ['Rubro / Sector:', String(rubro)],
+    ['Código de informe:', String(codigo)],
+    ['Fecha de auditoría:', fmtDate(fechaCrono)],
+    ['Horario:', `${fmtHour(horaInicio)} – ${fmtHour(horaFin)}`],
+    ['Alcance (ámbitos auditados):', ambitosActivos.map(a => '• ' + a).join('\n')],
+    ['Equipo auditor:', auditores.join('\n')],
+  ];
+  rowsDatos.forEach(([k, v]) => {
+    const row = tDatos.appendTableRow();
+    row.appendTableCell(k).getChild(0).asParagraph().setBold(true);
+    row.appendTableCell(v);
+  });
+  body.appendParagraph('');
+
+  // 1.1. Agenda
+  if (agendaSheet) {
+    body.appendParagraph('1.1. Agenda de Auditoría').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const agendaData = agendaSheet.getDataRange().getValues().slice(1); // saca la fila de título
+    if (agendaData.length > 1) {
+      const tAg = body.appendTable();
+      const hAg = tAg.appendTableRow();
+      agendaData[0].forEach(h => hAg.appendTableCell(String(h)).getChild(0).asParagraph().setBold(true));
+      const idxFecha = agendaData[0].length - 1; // última columna = Fecha
+      for (let i = 1; i < agendaData.length; i++) {
+        if (!agendaData[i][0]) continue;
+        const row = tAg.appendTableRow();
+        agendaData[i].forEach((v, c) => {
+          let text;
+          if (c === 0) text = fmtHour(v);
+          else if (c === idxFecha) text = fmtDate(v);
+          else text = String(v || '');
+          row.appendTableCell(text);
+        });
+      }
+    }
+    body.appendParagraph('');
+  }
+
+  // 2. Resumen ejecutivo
+  body.appendParagraph('2. RESUMEN EJECUTIVO DE HALLAZGOS').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+  body.appendParagraph('2.1. Resumen cuantitativo por tipo').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  const tRes = body.appendTable();
+  const hRes = tRes.appendTableRow();
+  ['Tipo de hallazgo', 'Cantidad'].forEach(h => hRes.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+  const filasResumen = [
+    ['No Conformidad Mayor (NCMa)', totalNCMa],
+    ['No Conformidad Menor (NCme)', totalNCme],
+    ['Oportunidad de Mejora (OM)', totalOM],
+    ['Fortaleza (F)', totalF],
+    ['TOTAL', totalHallazgos],
+  ];
+  filasResumen.forEach(([k, v], i) => {
+    const row = tRes.appendTableRow();
+    row.appendTableCell(k).getChild(0).asParagraph().setBold(i === filasResumen.length - 1);
+    row.appendTableCell(String(v)).getChild(0).asParagraph().setBold(i === filasResumen.length - 1);
+  });
+  body.appendParagraph('');
+
+  body.appendParagraph('2.2. Resumen por ámbito / sección').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  const tAmb = body.appendTable();
+  const hAmb = tAmb.appendTableRow();
+  ['Ámbito', 'NCMa', 'NCme', 'OM', 'F', 'Total'].forEach(h => hAmb.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+  CONFIG.AMBITOS.forEach(a => {
+    const c = porAmbito[a] || { NCMa: 0, NCme: 0, OM: 0, F: 0 };
+    const totalA = c.NCMa + c.NCme + c.OM + c.F;
+    const row = tAmb.appendTableRow();
+    [a, c.NCMa, c.NCme, c.OM, c.F, totalA].forEach(v => row.appendTableCell(String(v)));
+  });
+  body.appendParagraph('');
+
+  // 3. Hallazgos de la auditoría
+  body.appendParagraph('3. HALLAZGOS DE LA AUDITORÍA').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  body.appendParagraph('Referencias: F=Fortaleza  |  OM=Oportunidad de Mejora  |  NCme=NC Menor  |  NCMa=NC Mayor').setFontSize(9).setItalic(true);
+  body.appendParagraph('');
+
+  const hallazgosOrdenados = hallazgosData.filter(h => h[0]);
+  if (hallazgosOrdenados.length > 0) {
+    const tH = body.appendTable();
+    const hH = tH.appendTableRow();
+    ['N°', 'Ámbito', 'Proceso', 'Cláusula', 'Tipo', 'Descripción', 'Evidencia'].forEach(h => hH.appendTableCell(h).getChild(0).asParagraph().setBold(true));
+    hallazgosOrdenados.forEach(h => {
+      const row = tH.appendTableRow();
+      [h[0], h[1], h[2], h[3], h[5], h[6], h[7]].forEach(v => row.appendTableCell(String(v || '')));
+    });
+  } else {
+    body.appendParagraph('No se registraron hallazgos.').setItalic(true);
+  }
+  body.appendParagraph('');
+
+  // 4. Conclusiones
+  body.appendParagraph('4. CONCLUSIONES Y RECOMENDACIONES').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+  body.appendParagraph('4.1. Conclusión general:').setBold(true);
+  const conclusionGeneral = `La auditoría interna al Laboratorio de Microbiología CURF, realizada con referencia a los requisitos de la norma ${norma}, arrojó un total de ${totalHallazgos} hallazgos: ${totalNCMa} No Conformidad(es) Mayor(es), ${totalNCme} No Conformidad(es) Menor(es), ${totalOM} Oportunidad(es) de Mejora y ${totalF} Fortaleza(s). ${totalNCMa + totalNCme === 0 ? 'No se identificaron no conformidades que comprometan el sistema de gestión ni la competencia técnica del laboratorio.' : 'Se requiere la implementación de acciones correctivas para las no conformidades identificadas dentro de los plazos acordados.'}`;
+  body.appendParagraph(conclusionGeneral);
+  body.appendParagraph('');
+
+  body.appendParagraph('4.2. Recomendaciones:').setBold(true);
+  const reco = totalNCMa + totalNCme === 0
+    ? 'El SGC del laboratorio se encuentra en condiciones conformes con los requisitos normativos auditados. Se recomienda implementar las oportunidades de mejora identificadas para fortalecer el desempeño de cada sección (Bacteriología, Virología, Parasitología, Micología).'
+    : 'Se recomienda priorizar la implementación de acciones correctivas para las no conformidades identificadas, definiendo responsables y plazos de implementación y verificación de eficacia. Las oportunidades de mejora deben ser evaluadas en la próxima Revisión por la Dirección.';
+  body.appendParagraph(reco);
+  body.appendParagraph('');
+
+  // 5. Equipo Auditor y firmas
+  body.appendParagraph('5. EQUIPO AUDITOR').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  auditores.forEach((aud, i) => body.appendParagraph(`• ${i === 0 ? 'Auditor Líder' : 'Auditor'}: ${aud}`));
+  body.appendParagraph('');
+  body.appendParagraph('');
+
+  const tFirmas = body.appendTable();
+  const rFirmas = tFirmas.appendTableRow();
+  rFirmas.appendTableCell('_________________________________\nFirma Auditor Líder\n\nAclaración:');
+  rFirmas.appendTableCell('_________________________________\nFirma Director Técnico / Representante del Lab.\n\nAclaración:');
+
+  // ── Guardar y abrir ────────────────────────────────────────────────────
+  doc.saveAndClose();
+  const url = doc.getUrl();
+  const htmlOut = HtmlService.createHtmlOutput(
+    '<h3 style="color:#1F4E79;">✅ Informe generado correctamente</h3>' +
+    '<p><a href="' + url + '" target="_blank" style="font-size:16px;color:#2E75B6;font-weight:bold;">👉 Abrir informe en nueva pestaña</a></p>' +
+    '<p style="font-size:11px;color:#666;">Revisá las secciones de Conclusiones y completá los datos que lo requieran.</p>'
+  ).setWidth(460).setHeight(160);
+  SpreadsheetApp.getUi().showModalDialog(htmlOut, 'Informe generado – CURF');
+  Logger.log('Informe: ' + url);
+}
+
+// ============================================
+// FUNCIÓN: AYUDA
+// ============================================
+function mostrarAyuda() {
+  const htmlOutput = HtmlService.createHtmlOutput(`
+    <div style="font-family:Arial,sans-serif;padding:20px;font-size:12px;">
+      <h3 style="color:#1F4E79;">🔍 Sistema de Auditoría Interna – CURF</h3>
+      <p style="color:#666;">ISO 9001:2015 — Laboratorio de Microbiología</p>
+
+      <h4>📋 Estructura del sistema:</h4>
+      <ul>
+        <li><strong>Config:</strong> Datos del laboratorio, cronograma, ámbitos/secciones a auditar y equipo auditor</li>
+        <li><strong>Agenda:</strong> Planificación horaria de la auditoría por proceso</li>
+        <li><strong>Checklist_ISO9001:</strong> Cláusulas generales/institucionales (4,5,6,7,9,10 + comunicación + compras)</li>
+        <li><strong>Checklist_8_Bacteriologia / Checklist_8_Virologia:</strong> Punto 8 (Operación) con las particularidades de cada sección</li>
+        <li><strong>Registro_Hallazgos:</strong> Registro vertical de todos los hallazgos, con columna de Ámbito/Sección</li>
+        <li><strong>Dashboard:</strong> Resumen cuantitativo por tipo y por ámbito</li>
+        <li><strong>Base_ISO9001:</strong> Base normativa de referencia para auditores</li>
+      </ul>
+
+      <h4>🔄 Flujo de trabajo recomendado:</h4>
+      <ol>
+        <li>Completar <strong>Config</strong> (fecha, hora, ámbitos activos, auditores)</li>
+        <li>Revisar/completar la <strong>Agenda</strong></li>
+        <li>Durante la auditoría: completar la columna D (Estado) y F (Observaciones) en los TRES checklists — Bacteriología y Virología incluidas</li>
+        <li>Menú &gt; <em>Generar Hallazgos desde Checklists</em> → pasa automáticamente los hallazgos de las 3 hojas al <strong>Registro_Hallazgos</strong>, con su ámbito</li>
+        <li>Revisar el <strong>Dashboard</strong> para el resumen por tipo y por ámbito</li>
+        <li>Menú &gt; <em>Generar Informe Completo</em> → genera un Google Doc con el informe de cierre de la auditoría</li>
+      </ol>
+
+      <h4>📊 Tipos de hallazgo:</h4>
+      <ul>
+        <li><strong style="color:#4285f4;">F:</strong> Fortaleza</li>
+        <li><strong style="color:#34a853;">OM:</strong> Oportunidad de Mejora</li>
+        <li><strong style="color:#fbbc04;">NCme:</strong> No Conformidad Menor</li>
+        <li><strong style="color:#ea4335;">NCMa:</strong> No Conformidad Mayor</li>
+        <li>C: Conforme (sin hallazgo, no pasa al Registro)</li>
+      </ul>
+
+      <p style="font-size:10px;color:#888;margin-top:20px;border-top:1px solid #ddd;padding-top:10px;">
+        Sistema adaptado para CURF a partir del sistema de Analytics NOA  |  Fernando Canna M.P. 4281  |  v01 – Septiembre 2026
+      </p>
+    </div>
+  `).setWidth(600).setHeight(620);
+  SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Ayuda – Sistema de Auditoría CURF');
+}
