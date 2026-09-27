@@ -29,7 +29,8 @@ const CONFIG = {
     DASHBOARD:           'Dashboard',
     CONVERSIONES:        'Config_Conversiones',
     HIST_PRECIOS:        'Historial_Precios',
-    STOCK_PROV:          'Stock_por_Proveedor'
+    STOCK_PROV:          'Stock_por_Proveedor',
+    DEVOLUCIONES:        'Devoluciones_Proveedor' // ✅ NUEVO (v2.8)
   },
   ESTADOS: {
     ORDEN: {
@@ -59,6 +60,7 @@ function onOpen() {
     .addSeparator()
     .addItem('📋 Ver Pendientes',                     'mostrarListaPendientes')
     .addItem('📦 Recepcionar Pedido',                 'mostrarFormularioRecepcion')
+    .addItem('↩️ Devoluciones a Proveedores',         'mostrarDevoluciones') // ✅ NUEVO (v2.8)
     .addSeparator()
     .addItem('🔧 Ajuste de Stock',                    'mostrarFormularioAjusteStock')
     .addSeparator()
@@ -341,6 +343,13 @@ function getOrdenesPendientes() {
       proveedoresMap[String(p.codigo_proveedor).trim()] = p;
     });
 
+    // ✅ NUEVO (v2.8): set de órdenes con devoluciones pendientes (para el aviso
+    // "↩️ Devolución pendiente" en ListaPendientes — ver Devoluciones_Proveedor)
+    const ordenesConDevolucionPendiente = {};
+    getDevolucionesPendientes().forEach(function(d) {
+      ordenesConDevolucionPendiente[String(d.numero_orden).trim()] = true;
+    });
+
     // Leer 10 columnas (incluye nombre_proveedor en col D y solicitado_por en col J)
     const dataOrdenes = sheetOrdenes.getRange(2, 1, lastRow - 1, 10).getValues();
     const dataDetalle = sheetDetalle.getDataRange().getValues();
@@ -392,6 +401,8 @@ function getOrdenesPendientes() {
           solicitado_por:          row[9],
           // ✅ NUEVO (v2.7): true si el proveedor tiene al menos un email cargado
           tiene_email:             getEmailsProveedor(proveedoresMap[String(row[2]).trim()]).length > 0,
+          // ✅ NUEVO (v2.8): true si esta OC tiene algún ítem rechazado esperando devolución
+          tiene_devolucion_pendiente: !!ordenesConDevolucionPendiente[String(numeroOrden).trim()],
           items_pendientes:        itemsPendientes
         };
       });

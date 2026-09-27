@@ -42,3 +42,5 @@ AuDit-Lab-AnalyticsNOA/_reuniones_auditoria/
 
 # Planillas reales de CURF (compras, lista de proveedores) — nunca versionar
 CPR-Lab-CURF/*.xlsx
+# Capturas y documentos reales de prueba con el cliente — nunca versionar
+CPR-Lab-CURF/_prueba/

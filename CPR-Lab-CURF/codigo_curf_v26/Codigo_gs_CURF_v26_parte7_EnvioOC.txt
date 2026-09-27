@@ -105,10 +105,37 @@ function previsualizarPdfOrden(numeroOrden) {
 function mostrarPreviaPdfOrden(numeroOrden) {
   try {
     const base64 = previsualizarPdfOrden(numeroOrden);
+    // ✅ v2.8.1: Chrome bloquea la navegación directa de un <iframe> a una URL
+    // "data:application/pdf;..." (la trata como una descarga potencialmente
+    // insegura y la corta con "This page has been blocked by Chrome"). La forma
+    // que sí funciona es armar el PDF como Blob del lado del cliente (con
+    // atob + Uint8Array) y apuntar el iframe a un blob: URL generado con
+    // URL.createObjectURL — eso Chrome sí lo permite.
     const html = HtmlService.createHtmlOutput(
-      '<iframe src="data:application/pdf;base64,' + base64 + '" ' +
-      'style="width:100%;height:100%;border:none;position:absolute;top:0;left:0;"></iframe>'
-    ).setWidth(720).setHeight(640);
+      '<!DOCTYPE html><html><head><meta charset="utf-8"></head>' +
+      '<body style="margin:0;padding:0;font-family:Arial,sans-serif;">' +
+      '<div id="msg" style="padding:20px;color:#666;">⏳ Cargando PDF…</div>' +
+      '<iframe id="pdfFrame" style="width:100%;height:100vh;border:none;display:none;"></iframe>' +
+      '<script>' +
+      '(function() {' +
+      '  var base64 = "' + base64 + '";' +
+      '  try {' +
+      '    var byteChars = atob(base64);' +
+      '    var byteNumbers = new Array(byteChars.length);' +
+      '    for (var i = 0; i < byteChars.length; i++) { byteNumbers[i] = byteChars.charCodeAt(i); }' +
+      '    var byteArray = new Uint8Array(byteNumbers);' +
+      '    var blob = new Blob([byteArray], { type: "application/pdf" });' +
+      '    var url = URL.createObjectURL(blob);' +
+      '    var frame = document.getElementById("pdfFrame");' +
+      '    frame.onload = function() { document.getElementById("msg").style.display = "none"; frame.style.display = "block"; };' +
+      '    frame.src = url;' +
+      '  } catch (e) {' +
+      '    document.getElementById("msg").textContent = "❌ Error al mostrar el PDF: " + e.message;' +
+      '  }' +
+      '})();' +
+      '</script>' +
+      '</body></html>'
+    ).setWidth(780).setHeight(680);
     SpreadsheetApp.getUi().showModalDialog(html, '📄 Vista previa — ' + numeroOrden);
   } catch (e) {
     SpreadsheetApp.getUi().alert('Error al generar la vista previa: ' + e.message);

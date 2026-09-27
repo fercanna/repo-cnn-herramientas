@@ -64,6 +64,7 @@ function registrarRecepcion(recepcionData) {
     const filasDetalle  = [];
     const filasMovs     = [];
     const itemsConvInfo = [];
+    const itemsRechazados = []; // ✅ NUEVO (v2.8): ítems "No Conforme" — no van a stock, van a Devoluciones_Proveedor
 
     recepcionData.items.forEach(function(item) {
       const infoInsumo      = catalogoInsumos.find(function(ins) {
@@ -102,31 +103,43 @@ function registrarRecepcion(recepcionData) {
         notaConversion
       ]);
 
-      // Fila Movimientos_Inventario
-      filasMovs.push([
-        'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
-        fechaRecepcion,
-        'Ingreso',
-        item.codigo_insumo,
-        nombreInsumo,
-        conv.cantidad_stock,
-        numeroRecepcion,
-        usuario,
-        'Rec. Orden ' + recepcionData.numero_orden +
-          (notaConversion ? ' | ' + notaConversion : ''),
-        item.lote        || 'SIN LOTE',
-        item.vencimiento || '',
-        categoriaInsumo
-      ]);
+      // ✅ NUEVO (v2.8): un ítem "No Conforme" no suma a stock ni a Movimientos_Inventario
+      // — queda afuera y se registra en Devoluciones_Proveedor (ver más abajo).
+      if (item.estado_conformidad === 'No Conforme') {
+        itemsRechazados.push({
+          codigo_insumo: item.codigo_insumo,
+          descripcion:   nombreInsumo,
+          cantidad:      item.cantidad_recibida,
+          lote:          item.lote || 'SIN LOTE',
+          motivo:        item.observaciones || ''
+        });
+      } else {
+        // Fila Movimientos_Inventario
+        filasMovs.push([
+          'MOV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+          fechaRecepcion,
+          'Ingreso',
+          item.codigo_insumo,
+          nombreInsumo,
+          conv.cantidad_stock,
+          numeroRecepcion,
+          usuario,
+          'Rec. Orden ' + recepcionData.numero_orden +
+            (notaConversion ? ' | ' + notaConversion : ''),
+          item.lote        || 'SIN LOTE',
+          item.vencimiento || '',
+          categoriaInsumo
+        ]);
 
-      itemsConvInfo.push({
-        codigo_insumo:  item.codigo_insumo,
-        lote:           item.lote        || 'SIN LOTE',
-        vencimiento:    item.vencimiento || '',
-        cantidad_stock: conv.cantidad_stock,
-        descripcion:    nombreInsumo,
-        infoInsumo
-      });
+        itemsConvInfo.push({
+          codigo_insumo:  item.codigo_insumo,
+          lote:           item.lote        || 'SIN LOTE',
+          vencimiento:    item.vencimiento || '',
+          cantidad_stock: conv.cantidad_stock,
+          descripcion:    nombreInsumo,
+          infoInsumo
+        });
+      }
 
       // Historial de precios si el formulario trae precio de recepción
       if (item.precio_recepcion && item.precio_recepcion > 0) {
@@ -147,16 +160,44 @@ function registrarRecepcion(recepcionData) {
       .getRange(lastDetalle + 1, 1, filasDetalle.length, filasDetalle[0].length)
       .setValues(filasDetalle);
 
-    const lastMovs = sheetMovimientos.getLastRow();
-    sheetMovimientos
-      .getRange(lastMovs + 1, 1, filasMovs.length, filasMovs[0].length)
-      .setValues(filasMovs);
+    // ✅ NUEVO (v2.8): filasMovs puede venir vacío si TODOS los ítems de esta
+    // recepción fueron "No Conforme" — evitar escribir un rango de 0 filas.
+    if (filasMovs.length > 0) {
+      const lastMovs = sheetMovimientos.getLastRow();
+      sheetMovimientos
+        .getRange(lastMovs + 1, 1, filasMovs.length, filasMovs[0].length)
+        .setValues(filasMovs);
+    }
 
-    // ── Actualizar cantidades en la OC y su estado ─────────────────
-    actualizarCantidadesEnOrden(recepcionData);
+    // ── Actualizar cantidades en la OC y su estado ──────────────────
+    // ✅ v2.8: solo los ítems aceptados (No Conforme no cuenta como recepcionado —
+    // la cantidad pedida sigue pendiente hasta que el proveedor reponga/acredite).
+    const itemsAceptados = recepcionData.items.filter(function(it) {
+      return it.estado_conformidad !== 'No Conforme';
+    });
+    if (itemsAceptados.length > 0) {
+      actualizarCantidadesEnOrden(Object.assign({}, recepcionData, { items: itemsAceptados }));
+    } else {
+      // Ningún ítem aceptado en esta recepción — igual hay que recalcular el
+      // estado de la orden por si otra recepción anterior ya la había avanzado.
+      actualizarEstadoOrden(recepcionData.numero_orden);
+    }
 
-    // ── Stock incremental (solo los lotes afectados) ───────────────
-    actualizarStockIncremental(itemsConvInfo, catalogoInsumos);
+    // ── Stock incremental (solo los lotes afectados, ya excluye No Conforme) ──
+    if (itemsConvInfo.length > 0) {
+      actualizarStockIncremental(itemsConvInfo, catalogoInsumos);
+    }
+
+    // ── Devoluciones a proveedor (ítems No Conforme) ────────────────
+    if (itemsRechazados.length > 0) {
+      const proveedorOrden = getProveedor(
+        (getDatosSheet(CONFIG.SHEETS.ORDENES).find(function(o) {
+          return o.numero_orden === recepcionData.numero_orden;
+        }) || {}).proveedor
+      );
+      const nombreProveedor = (proveedorOrden && proveedorOrden.razon_social) || recepcionData.numero_orden;
+      registrarDevolucionProveedor(itemsRechazados, recepcionData.numero_orden, nombreProveedor, usuario, fechaRecepcion);
+    }
 
     return numeroRecepcion;
 
@@ -407,7 +448,7 @@ function actualizarStockIncremental(itemsRecibidos, catalogoInsumos) {
 function mostrarListaPendientes() {
   try {
     const html = HtmlService.createHtmlOutputFromFile('ListaPendientes')
-      .setWidth(820).setHeight(560) // ✅ v2.7: ampliado para la columna de acciones (Ver PDF/Revisar/Enviar)
+      .setWidth(1050).setHeight(680) // ✅ v2.8.1: más ancho — 820 quedaba muy ajustado para 8 columnas + acciones
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     SpreadsheetApp.getUi().showModalDialog(html, '📋 Órdenes Pendientes de Recepción');
   } catch (e) {

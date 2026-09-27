@@ -1,0 +1,166 @@
+/**
+ * CPR-CURF — Sistema de Gestión de Compras e Inventario
+ * Parte 8 — Devoluciones a Proveedores (v2.8)
+ *
+ * Origen: un ítem recepcionado con estado_conformidad = "No Conforme" (ver Parte 2,
+ * registrarRecepcion) no se suma a Stock_Actual ni a cantidad_recepcionada — queda
+ * afuera del circuito normal y se registra acá, en la hoja Devoluciones_Proveedor,
+ * como pendiente de resolución con el proveedor (devolución, reemplazo o nota de
+ * crédito). Antes de esta versión ese dato quedaba enterrado en Detalle_Recepciones
+ * sin ningún lugar visible para hacerle seguimiento — este archivo resuelve eso.
+ */
+
+const CONFIG_DEVOLUCIONES = {
+  ESTADOS: {
+    PENDIENTE:    'Pendiente devolución',
+    DEVUELTO:     'Devuelto',
+    REEMPLAZADO:  'Reemplazado',
+    NOTA_CREDITO: 'Nota de crédito'
+  }
+};
+
+// ========================================
+// HOJA Devoluciones_Proveedor (auto-creación)
+// ========================================
+
+function getOrCrearHojaDevoluciones() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CONFIG.SHEETS.DEVOLUCIONES);
+  if (sheet) return sheet;
+
+  sheet = ss.insertSheet(CONFIG.SHEETS.DEVOLUCIONES);
+  const headers = [
+    'fecha', 'numero_orden', 'proveedor', 'codigo_insumo', 'descripcion',
+    'cantidad', 'lote', 'motivo', 'usuario', 'estado',
+    'fecha_resolucion', 'observaciones_resolucion'
+  ];
+  sheet.appendRow(headers);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+
+  // Validación de datos en la columna "estado" (columna J = 10)
+  const opciones = Object.values(CONFIG_DEVOLUCIONES.ESTADOS);
+  const regla = SpreadsheetApp.newDataValidation()
+    .requireValueInList(opciones, true)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, 10, 500, 1).setDataValidation(regla);
+
+  return sheet;
+}
+
+// ========================================
+// REGISTRO (llamado desde registrarRecepcion, Parte 2)
+// ========================================
+
+/**
+ * @param {Array}  itemsRechazados — [{ codigo_insumo, descripcion, cantidad, lote, motivo }]
+ * @param {string} numeroOrden
+ * @param {string} nombreProveedor
+ * @param {string} usuario
+ * @param {Date}   fecha
+ */
+function registrarDevolucionProveedor(itemsRechazados, numeroOrden, nombreProveedor, usuario, fecha) {
+  const sheet = getOrCrearHojaDevoluciones();
+  const filas = itemsRechazados.map(function(item) {
+    return [
+      fecha,
+      numeroOrden,
+      nombreProveedor,
+      item.codigo_insumo,
+      item.descripcion,
+      item.cantidad,
+      item.lote || 'SIN LOTE',
+      item.motivo || '',
+      usuario,
+      CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE,
+      '',   // fecha_resolucion
+      ''    // observaciones_resolucion
+    ];
+  });
+  const lastRow = sheet.getLastRow();
+  sheet.getRange(lastRow + 1, 1, filas.length, filas[0].length).setValues(filas);
+}
+
+// ========================================
+// CONSULTA Y RESOLUCIÓN (usadas por el diálogo Devoluciones + ListaPendientes)
+// ========================================
+
+/** Devuelve todas las devoluciones con estado = Pendiente devolución. */
+function getDevolucionesPendientes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.DEVOLUCIONES);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const idxEstado = headers.indexOf('estado');
+
+  return data.slice(1)
+    .map(function(row, i) {
+      const obj = {};
+      headers.forEach(function(h, j) { obj[h] = row[j]; });
+      obj.fila = i + 2; // 1-indexed, +1 por encabezado
+      return obj;
+    })
+    .filter(function(d) { return d.estado === CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE; });
+}
+
+/** Devuelve todas las devoluciones (pendientes y resueltas) para el diálogo. */
+function getTodasLasDevoluciones() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.DEVOLUCIONES);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  return data.slice(1).map(function(row, i) {
+    const obj = {};
+    headers.forEach(function(h, j) { obj[h] = row[j]; });
+    obj.fila = i + 2;
+    obj.fecha = formatearFecha(obj.fecha);
+    obj.fecha_resolucion = obj.fecha_resolucion ? formatearFecha(obj.fecha_resolucion) : '';
+    return obj;
+  }).sort(function(a, b) {
+    // Pendientes primero, después por fecha descendente
+    if (a.estado === CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE && b.estado !== CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE) return -1;
+    if (a.estado !== CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE && b.estado === CONFIG_DEVOLUCIONES.ESTADOS.PENDIENTE) return 1;
+    return b.fila - a.fila;
+  });
+}
+
+/** Marca una devolución como resuelta (Devuelto / Reemplazado / Nota de crédito). */
+function marcarDevolucionResuelta(fila, nuevoEstado, observaciones) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.DEVOLUCIONES);
+  if (!sheet) throw new Error('No existe la hoja Devoluciones_Proveedor.');
+
+  const estadosValidos = [
+    CONFIG_DEVOLUCIONES.ESTADOS.DEVUELTO,
+    CONFIG_DEVOLUCIONES.ESTADOS.REEMPLAZADO,
+    CONFIG_DEVOLUCIONES.ESTADOS.NOTA_CREDITO
+  ];
+  if (estadosValidos.indexOf(nuevoEstado) === -1) {
+    throw new Error('Estado inválido: ' + nuevoEstado);
+  }
+
+  // Columnas: J=estado(10), K=fecha_resolucion(11), L=observaciones_resolucion(12)
+  sheet.getRange(fila, 10, 1, 3).setValues([[nuevoEstado, new Date(), observaciones || '']]);
+  return { ok: true };
+}
+
+// ========================================
+// DIÁLOGO
+// ========================================
+
+function mostrarDevoluciones() {
+  try {
+    const html = HtmlService.createHtmlOutputFromFile('DevolucionesProveedor')
+      .setWidth(780).setHeight(560)
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    SpreadsheetApp.getUi().showModalDialog(html, '↩️ Devoluciones a Proveedores');
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('Error al abrir devoluciones: ' + e.message);
+  }
+}
