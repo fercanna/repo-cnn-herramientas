@@ -1,0 +1,30 @@
+# Secretos reales — nunca versionar (usar los .example como plantilla)
+config/credentials.json
+config/settings.json
+
+# Datos de pacientes / exports del LIS — nunca versionar (Ley 25.326)
+data/
+logs/
+_archivo/
+_salida/
+outputs/
+
+# Contraseñas de sucursales del LIS y reportes con DNI reales de pacientes —
+# nunca versionar (ver auditoría sep-2026)
+Suc_LIS_*.txt
+reporte_prueba_*.txt
+
+# Planillas de trabajo con datos reales — no versionar
+*.xlsx
+
+# Python — generado al ejecutar
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / Claude
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db

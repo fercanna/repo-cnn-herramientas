@@ -1,0 +1,339 @@
+Ayuda en línea > Módulo 5. - Registros Federales > Módulo 5.2. - Registros Federales asociados al ciudadano > Capítulo 5.2.16. - SNVS. Sistema Nacional de Vigilancia de la Salud > Servicios Web y APIs
+WS400
+Alta de evento nominal
+El Servicio WS400 está destinado a realizar alta de eventos a pacientes en forma nominal. Funciona de forma casi análoga a la función de Alta de Evento Nominal del SISA.
+
+En abril de 2021 se desarrolló una versión extendida del Servicio, la VERSIÓN 2.0.
+
+Aquellos usuarios que fueron dados de alta con anterioridad a dicha fecha seguirán disponiendo de la VERSIÓN 1.0 sin inconvenientes. No obstante, aquellos que deseen migrar al nuevo formato, pueden solicitar credenciales, vía mail a interoperabilidadsnvs@gmail.com y soporte@sisa.msal.gov.ar.
+
+El circuito para efectuar altas en el SNVS que permite completar el esquema de registro de información está compuesto por los siguientes servicios:
+
+
+WS400 - Alta de eventos nominal (V1 o V2).
+API 75 - Muestra laboratorio
+API 76 - Determinaciones laboratorio
+Información general (Versión 2):
+Parámetros de entrada
+Codificación SISA
+Código JSON	Descripción
+Ciudadano	
+Apellido	Apellido del ciudadano.
+Texto: hasta 100 caracteres.
+Nombre	Nombre del ciudadano.
+Texto: hasta 100 caracteres.
+tipoDocumento	ID que identifica el tipo de documento.
+Numérico.
+numeroDocumento	Número de documento del ciudadano.
+Alfanumérico de hasta 15 caracteres.
+fechaNacimiento	Fecha de nacimiento.
+Formato válido “DD-MM-AAAA”.
+Sexo	Sexo del ciudadano.
+Valores aceptados: “F”, “M”, “A”, “X”.
+paisEmisionTipoDocumento	ID que identifica al país.
+Numérico.
+seDeclaraPuebloIndigena	Indica si se declara pueblo indígena.
+Valores aceptados: “No” & “Sí”.
+Domicilio	Campos obligatorios cuando sea necesario cargar datos del domicilio.
+calle	Calle y altura de residencia.
+Alfanumérico de hasta 200 caracteres.
+idDepartamento	ID del departamento.
+Numérico.
+idLocalidad	ID de la localidad.
+Numérico.
+idPais	ID del país.
+Numérico.
+idProvincia	ID de la provincia.
+Numérico.
+personaACargo	Campos obligatorios cuando el ciudadano sea Menor de un año.
+tipoDocumento	ID que identifica el tipo de documento.
+Numérico.
+numeroDocumento	Número de documento de la persona a cargo.
+Alfanumérico de hasta 15 caracteres.
+vinculo	ID del vínculo entre ellos.
+eventoCasoNominal	
+fechaPapel	Fecha en la que el caso fue registrado por la institución física.
+Formato válido: “DD-MM-AAAA”.
+idGrupoEvento	ID del grupo de evento.
+Numérico.
+idEvento	ID del Evento.
+Numérico.
+idClasificacionManualCaso	ID de la Clasificación manual.
+Numérico.
+idEstablecimientoCarga	Código REFES del Establecimiento.
+Numérico de 14 dígitos.
+Para ciertos parámetros de entrada, se deben utilizar Codificaciones auxiliares del SNVS.
+Ver referencias más adelante.
+
+
+
+
+Construcción de un llamado REST para el entorno PRODUCTIVO
+EndPoint/URL: https://apisalud.msal.gob.ar/snvsCasoNominal/v2/snvsCasoNominal
+Método: POST.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: usuario_3SCALE
+APP_KEY: clave_3SCALE
+El Código viaja en Raw, como JSON.
+
+Construcción de un llamado REST para el entorno de PRUEBAS
+EndPoint/URL: https://ws400-qa.sisa.msal.gov.ar/snvsCasoNominal/v2/snvsCasoNominal
+Método: POST.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: PruebasWSQA_SNVS_ID
+APP_KEY: PruebasWSQA_SNVS_KEY
+El Código viaja en Raw, como JSON.
+
+Ejemplo de construcción del body para realizar el llamado:
+
+{
+    "ciudadano": {
+        "apellido": "APELLIDO",
+        "nombre": "NOMBRE COMPLETO",
+        "tipoDocumento": 1,
+        "numeroDocumento": "34000000",
+        "sexo": "F",
+        "fechaNacimiento": "01-01-2000",
+        "paisEmisionTipoDocumento": null,
+        "seDeclaraPuebloIndigena": "No",
+        "domicilio": {
+            "calle": "Calle número 8000",
+            "idDepartamento": 74014000,
+            "idLocalidad": 69,
+            "idProvincia": 1,
+            "idPais": 200
+        },
+        "telefono": "011-4224-0099",
+        "mail": "mail_mail@dominio.com",
+        "personaACargo": {
+            "tipoDocumento": null,
+            "numeroDocumento": null,
+            "vinculo": null
+        }
+    },
+    "eventoCasoNominal": {
+        "idGrupoEvento": 999,
+        "idEvento": 999,
+        "idClasificacionManualCaso": 999,
+        "fechaPapel": "01-01-2000",
+        "idEstablecimientoCarga": "10064902100000"
+    }
+}
+	
+EndPoint de consulta para Codificaciones auxiliares específicas del registro (entorno PRODUCTIVO)
+EndPoint o URL: https://apisalud.msal.gob.ar/snvsCasoNominal/v2/snvsCasoNominal/codificacionAuxiliar/evento/grupo/clasificacionmanual
+Método: GET.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+Usuario: “usuario_3SCALE”
+Clave: “clave_3SCALE”
+
+EndPoint de consulta para Codificaciones auxiliares específicas del registro (entorno de PRUEBAS)
+EndPoint o URL: https://ws400-qa.sisa.msal.gov.ar/snvsCasoNominal/v2/snvsCasoNominal/codificacionAuxiliar/evento/grupo/clasificacionmanual
+Método: GET.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+Usuario: “PruebasWSQA_SNVS_ID”
+Clave: “PruebasWSQA_SNVS_KEY”
+
+Ejemplo de respuesta:
+
+{
+    "grupoEvento": "Accidente por Animal Ponzoñoso - Lepidópteros - Lonomía",
+    "evento": "Araneísmo sin especificar especie",
+    "idEvento": 295,
+    "idGrupoEvento": 183,
+    "idClasificacionManual": 73,
+    "clasificacionManual": "Caso sospechoso"
+}
+	
+Listado de posibles respuestas del servicio:
+Body de las respuestas:
+
+{
+    "status": Código alfabético tabulado del estado del llamado. Ej: “BAD_REQUEST”.,
+    "timestamp": "Fecha y hora exacta del llamado, sea exitoso o no.",
+    "resultado": Código alfabético tabulado del resultado. Ej: “ERROR_DATOS",
+    "id_caso": cuando la carga es exitosa, este campo muestra el ‘id_caso’ generado,
+    "description": "Una descripción concatenada, en String, con la descripción de un eventual error al momento de hacer un llamado",
+    "errors": {
+        "Listado detallado de todos los campos que contienen error.”
+    }
+}
+
+Ejemplo de carga Exitosa:
+
+{
+    "status": "OK",
+    "timestamp": "17-06-2021 12:50:04",
+    "resultado": "OK",
+    "id_caso": 2106719
+}
+
+Cuando el alta se realizó correctamente; el “id_caso” es el número de identificación del caso, el cual debe ser usado posteriormente en la API75 Muestra Laboratorio - SNVS 2.0.
+
+Resultados obtenidos al enviar datos erróneamente:
+
+{
+    "status": "UNAUTHORIZED",
+    "timestamp": "17-06-2021 12:51:22",
+    "resultado": null,
+    "id_caso": null,
+    "description": "{ERROR_AUTENTICACION […] }",
+    "errors": {
+        "ERROR_AUTENTICACION": "El usuario 3Scale no se encuentra habilitado o bien la clave es incorrecta."
+    }
+}
+
+“Usuario” y/o “clave” incorrecta.
+
+Al momento de confeccionar el request, siempre que un campo tenga que viajar vacío, debe completarse lisa y llanamente como null.
+
+
+{
+	"errors": {
+        "fechaApertura": "Ya existe en el sistema un caso cargado para ese evento y ciudadano. Incorpore su información ingresando al mismo. ID_SNVS_EVENTO_CASO: 2106723"
+    }
+}
+
+Existen casos en los cuales no se puede dar de alta un evento, porque el paciente ya tiene uno cargado (por unicidad temporal, por ejemplo; o porque se debe agregar información al evento previamente cargado, y no crear uno nuevo). Cuando es así, se muestra el ID_EVENTO_CASO en cuestión.
+
+
+"errors": {
+        "ciudadano.sexo": "Debe estar contenido en los valores  M|F|A|X"
+}
+
+El campo “sexo” fue completado con un valor NO válido.
+
+
+"errors": {
+        "ciudadano.apellido": "El apellido debe tener, como mínimo 2 caracteres, y 100 como máximo. ",
+        "ciudadano.nombre": "El nombre debe tener, como mínimo 2 caracteres, y 100 como máximo. "
+}
+
+Los campos “apellido” & “nombre” deben tener un mínimo de 2 caracteres y un máximo de 100.
+
+
+"errors": {
+        ".ciudadano.fechaNacimiento": "Debe utilizar un formato de fecha soportado por SISA (dd-MM-yyyy / yyyy-MM-dd)"
+}
+
+El campo “fechaNacimiento” no se completó con el formato de fecha correcto. Esto aplica de igual forma para el campo “fechaPapel”.
+
+
+"errors": {
+        "ciudadano.numeroDocumento": "Debe ser un formato alfanumérico válido de hasta 15 digitos. "
+}
+
+El campo “numeroDocumento” puede ser alfanumérico de hasta 15 caracteres. Ej: “M20555666”.
+
+
+"errors": {
+        "ciudadano.mail": "Debe informar un valor entre 5 y 100 caracteres. ",
+        "ciudadano.telefono": "Valor válido: mínimo 7 caracteres; máximo 50 caracteres.",  
+}
+
+El campo “mail” debe tener un formato de mail válido (entre 5 y 10 caracteres y cumplir con la siguiente lógica: “mail_ejemplo@dominio.com”; el campo “telefono” es alfanumérico y debe tener un mínimo de 7 caracteres y un máximo de 50; admite guiones.
+
+
+"errors": {
+        "ciudadano.paisEmisionTipoDocumento": "Debe indicar un valor entre 0 y 999. "
+}
+
+Los campos “paisEmisionTipoDocumento” debe ser un valor numérico válido. Las codificaciones auxiliares geográficas, se pueden consultar en el apartado de Reportes de SISA (REPORTES/ Codificaciones auxiliares/ Codificaciones compartidas/ ).
+
+
+"errors": {
+        "ciudadano.tipoDocumento": "Debe indicar un valor entre 0 y 9. "
+}
+
+El parámetro “idTipoDoc” debe ser numérico, estar habilitado y estar comprendido dentro de la siguiente tabla de codificaciones auxiliares (aplica tanto para los datos del ciudadano principal, como para el responsable a cargo):
+
+idTipoDoc	Nombre	Comentario
+1	DNI	Documento Nacional de Identidad
+5	DE	Documento extranjero o pasaporte
+9	IND	Indocumentado
+
+"errors": {
+        "ciudadano": "Ciudadano Indocumentado. Nro. de Documento no informado. El/Los siguientes atributos son obnligatorios: Persona a Cargo: persona.personaACargo.tipoDocumento, persona.personaACargo.numeroDocumento,persona.personaACargo.vinculo,.persona.domicilio.idProvincia, "
+}
+
+Para dar de alta a un recién nacido (ciudadano menor de un año):
+
+El campo “numeroDocumento” debe viajar como null.
+El campo “tipoDocumento” debe ser = ‘9’ (IND).
+El campo “idProvincia” es obligatorio. Las codificaciones auxiliares geográficas, se pueden consultar en el apartado de Reportes de SISA (REPORTES/ Codificaciones auxiliares/ Codificaciones compartidas/ ).
+Los 3 campos del apartado “personaACargo” pasan a ser obligatorios (“tipoDocumento”, “numeroDocumento” & “vinculo”).
+
+El campo “vinculo” está sujeto a las siguientes codificaciones auxiliares:
+Vinculo	Descripción
+1	Padre
+2	Madre
+3	Tutor o encargado
+4	Hermano/a
+5	Otro familiar
+6	Otro parentesco
+7	Hijo/a
+8	Abuelo/a
+9	Hermano/a
+10	Tío/a
+11	Primo/a
+12	Nieto/a
+13	Conyuge
+14	Conviviente
+15	Padre biológico
+16	Madre biológica
+
+"errors": {
+        "eventoCasoNominal.idEvento": "idEvento invalido o inhabilitado",
+        "eventoCasoNominal": "El parámetro IdClasificacionManualCaso que se quiere dar de alta no está habilitado o no corresponde al Evento ingresado.",
+        "eventoCasoNominal.idGrupoEvento": "idGrupoEvento invalido o inhabilitado"
+}
+
+Los campos “idGrupoEvento”, “idEvento” & “idClasificacionManualCaso” deben ser numéricos, estar habilitados y tener una relación/dependencia entre sí.
+
+El campo “IdClasificacionManualCaso” es dependiente del “idEvento”. Al mismo tiempo, éste último lo es del “idGrupoEvento”.
+Cuando hay más de un dato que se está enviando en forma errónea, el JSON de respuesta concatena todas las leyendas en una sola.
+Las codificaciones auxiliares específicas del registro ('idGrupoEvento', 'idEvento', 'IdClasificacionManualCaso??'), se pueden consultar con el endpoint de consulta GET mencionado arriba.
+
+"errors": {
+        "eventoCasoNominal.idEstablecimientoCarga": "Debe ser un código REFES válido existente en la tabla ORIGEN; numérico de 14 dígitos."
+    }
+
+El campo “idEstablecimientoCarga” debe ser numérico, y existir en la tabla ORIGEN.
+Este número corresponde al CÓDIGO REFES del establecimiento; el mismo se puede obtener consultando en el SISA , en la sección “Agenda Sanitaria REFES REFEPS” (ubicada en el carrusel móvil del sitio).
+
+
+"errors": {
+        "fechaPapel": "La fecha de recoleccion en papel no puede ser mayor que la fecha del día",
+    }
+
+El campo “fechaPapel” debe seguir una lógica: no puede ser mayor que la fecha del día - FECHA_APERTURA.
+
+
+{
+    "status": "BAD_REQUEST",
+    "timestamp": "17-06-2021 03:28:30",
+    "resultado": "ERROR_DATOS",
+    "id_caso": null,
+    "description": "el departamento no corresponde a la provincia, la localidad no corresponde al departamento,",
+    "errors": {
+        "departamento": "EL DEPARTAMENTO NO CORRESPONDE A LA PROVINCIA",
+        "localidad": "LA LOCALIDAD NO CORRESPONDE AL DEPARTAMENTO"
+    }
+}
+
+Para los campos con referencia geográfica, existe una dependencia entre sí. Las codificaciones auxiliares geográficas, se pueden consultar en el apartado de Reportes del SISA (REPORTES/ Codificaciones auxiliares/ Codificaciones compartidas/ ).
+
+
+{
+    "status": "BAD_REQUEST",
+    "timestamp": "17-06-2021 03:11:56",
+    "resultado": "CIUDADANO_NO_ENCONTRADO",
+    "id_caso": null,
+    "description": {…}
+    "errors": {}
+}
+
+Para los casos donde haya inconsistencias con el ciudadano como tal, se sugiere:
+
+Consultar nominalmente por el ciudadano, con el WS042 - Consulta general de ciudadano. De no disponer dicho permiso, solicitarlo a soporte@sisa.msal.gov.ar
+De no tener éxito, consultar vía mail a interoperabilidadsnvs@gmail.com.

@@ -1,0 +1,127 @@
+
+AnteriorSiguiente
+Ayuda en línea > Módulo 5. - Registros Federales > Módulo 5.2. - Registros Federales asociados al ciudadano > Capítulo 5.2.16. - SNVS. Sistema Nacional de Vigilancia de la Salud > Servicios Web y APIs
+API 81
+Modificación de clasificación manual SNVS
+La API 81, está destinada a realizar modificaciones de datos relacionados a la clasificación manual de un EVENTO_CASO previamente cargado en el SISA.
+
+El uso de este servicio requiere autenticación con usuario & contraseña (APP_ID & APP_KEY, respectivamente). Para solicitar credenciales, hacerlo vía mail a soporte@sisa.msal.gov.ar.
+
+Consideraciones del servicio
+
+Sólo REST; no dispone de versión SOAP.
+No maneja concepto de quotas ni franjas horarias de uso.
+Consideraciones del registro:
+Para tener éxito en el llamado, el usuario debe contar las siguientes condiciones:
+
+Tener asignado a su perfil de Usuario SISA, el evento al cual pertenece la clasificación manual que se pretende modificar.
+Ser el usuario que previamente cargó el EVENTO_CASO o, en su defecto, tener asignado el permiso “Evaluación de la investigación epidemiológica”.
+Otras validaciones:
+Para tener éxito en el llamado, el usuario debe contar las siguientes condiciones:
+
+La Clasificación Manual que se envía en el llamado, debe estar debidamente habilitada.
+Para tener éxito en la modificación, la VALIDACIÓN DEL CASO (cargada previamente) no debe figurar ni como “Caso cerrado”, “Caso validado completo” o “Caso NO válido”.
+Información general para construcción de llamado (Versión 1.0):
+URL de entorno productivo: https://apisalud.msal.gob.ar/snvsClasificacionManual/v1/eventoCaso
+Autenticación: vía HEADERS.
+APP_ID: usuario
+APP_KEY: contraseña
+Estas credenciales son ficticias y sirven sólo a modo ilustrativo.
+
+Método: PUT
+Código viaja en BODY, como JSON.
+
+Parámetros de entrada
+Codificación SISA
+Código JSON	Descripción
+idEventoCaso	ID que identifica el Evento/caso al cual se quiere modificar la clasificación manual. (Numérico) (1)
+idClasificacionManual	ID de la clasificación manual que se va a modificar. (Numérico) (2)
+(1) Campos obligatorios
+(2) Codificaciones específicas del servicio.
+
+
+
+
+Ejemplo de request:
+
+{
+    "idEventoCaso": 932536,
+    "idClasificacionManual": 174
+}
+
+Ejemplo de respuesta exitosa (200_OK):
+
+// Ejemplo 1:
+{
+    "id": 9072204,
+    "idEvento": 307,
+    "idInterpretacionUsuario": 999
+}
+
+// Ejemplo 2:
+{
+    "id": 2073104,
+    "idEvento": 307,
+    "fechaNexoEpidemiologico": "2022-01-31",
+    "nexoEpidemiologico": "SI",
+    "idInterpretacionUsuario": 801,
+    "algoritmoSuccess": true
+}
+
+Construcción de un llamado para pruebas en entorno bajo [QA]:
+EndPoint o URL: https://api81-qa.sisa.msal.gov.ar/snvsClasificacionManual/v1/eventoCaso
+Método: PUT.
+
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: TEST
+APP_KEY: TEST
+
+Consulta de Codificaciones Auxiliares:
+La API81 cuenta con un Endpoint para consultar las Codificaciones auxiliares de las clasificaciones manuales pertinentes para el uso del servicio.
+
+EndPoint/URL (Producción): https://apisalud.msal.gob.ar/snvsClasificacionManual/v1/clasificacionManual
+Método: GET.
+
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: usuario
+APP_KEY: contraseña
+Estas credenciales son ficticias y sirven sólo a modo ilustrativo.
+
+Body: no requiere.
+
+Ejemplo de respuesta exitosa (200_OK):
+
+[
+    {
+        "idClasificacionManual": 32,
+        "clasificacionManual": "Caso sospechoso",
+        "idGrupoEvento": 124,
+        "grupoEvento": "Leishmaniasis",
+        "idEvento": 148,
+        "evento": "Leishmaniasis cutánea"
+    },
+    {
+        "idClasificacionManual": 33,
+        "clasificacionManual": "Caso confirmado",
+        "idGrupoEvento": 124,
+        "grupoEvento": "Leishmaniasis",
+        "idEvento": 148,
+        "evento": "Leishmaniasis cutánea"
+    },
+    {
+        "idClasificacionManual": 36,
+        "clasificacionManual": "Caso sospechoso",
+        "idGrupoEvento": 107,
+        "grupoEvento": "Sindrome Febril Agudo Inespecífico (SFAI)",
+        "idEvento": 155,
+        "evento": "Fiebre Hemorrágica Argentina (FHA)"
+    }
+]
+
+EndPoint/URL (Entorno QA): https://api81-qa.sisa.msal.gov.ar/snvsClasificacionManual/v1/clasificacionManual
+Método: GET.
+
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: TEST
+APP_KEY: TEST
+Body: no requiere.

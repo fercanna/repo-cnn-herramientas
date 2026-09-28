@@ -1,0 +1,1718 @@
+{
+  "_descripcion": "Mapeo SUCURSAL del LIS → establecimiento oficial SISA. Cada caso del TXT tiene un SUCURSAL (cod) y SUCURSALDESCRIPCION; esto se usa para resolver el ESTABLECIMIENTO DERIVANTE: idEstablecimientoCarga (WS400) e idEstablecimientoToma (API75). El ESTABLECIMIENTO DE DIAGNÓSTICO (idEstablecimiento, API76) siempre es el Lab Central de Virología, definido en config/settings.json.",
+  "campos": {
+    "sucursal_lis": "Código de SUCURSAL del TXT. null si la entrada se anticipó pero aún no apareció en un TXT.",
+    "descripcion_lis": "SUCURSALDESCRIPCION del LIS, tal cual se exporta.",
+    "tipo": "\"asistencial\" (atiende pacientes ambulatorios) o \"banco_sangre\" (donantes — el evento clínico cambia).",
+    "refes": "Código REFES de 14 dígitos. Va en idEstablecimientoCarga (WS400).",
+    "sisa_corto": "Código Interno SISA (~6 dígitos). Va en idEstablecimientoToma (API75).",
+    "nombre_oficial_sisa": "Nombre del establecimiento como figura en el listado nacional REFES.",
+    "sucursal_principal": "Solo para tipo=banco_sangre. SUCURSAL del LIS del hospital madre. Comparten REFES y sisa_corto, pero la dimensión clínica cambia."
+  },
+  "convenciones_lis": {
+    "banco_sangre": "Los bancos de sangre tienen SUCURSALDESCRIPCION con prefijo \".\" y \":\" en el medio (ej. \".ALTA GRACIA: H. ARTURO ILLIA\"). Comparten establecimiento físico con el hospital asistencial pero el evento SISA es distinto (ej. Sífilis en Banco de Sangre vs Sífilis No Gestante). El parser debe detectar el patrón y rutear al evento correcto en clinico.json."
+  },
+  "fuente_catalogo_oficial": "mapeos/catalogos/establecimientos_cordoba_oficial.json",
+  "establecimientos": [
+    {
+      "sucursal_lis": "5",
+      "descripcion_lis": "ALTA GRACIA",
+      "tipo": "asistencial",
+      "refes": "10141472131165",
+      "sisa_corto": "14688",
+      "nombre_oficial_sisa": "HOSPITAL DR. ARTURO ILLIA DE ALTA GRACIA"
+    },
+    {
+      "sucursal_lis": "7",
+      "descripcion_lis": "CORDOBA",
+      "tipo": "asistencial",
+      "refes": "10140142131160",
+      "sisa_corto": "14063",
+      "nombre_oficial_sisa": "HOSPITAL CORDOBA"
+    },
+    {
+      "sucursal_lis": "8",
+      "descripcion_lis": "DE NINOS",
+      "tipo": "asistencial",
+      "refes": "11140142131336",
+      "sisa_corto": "96238",
+      "nombre_oficial_sisa": "HOSPITAL DE NIÑOS DE LA SANTISIMA TRINIDAD"
+    },
+    {
+      "sucursal_lis": "12",
+      "descripcion_lis": "MISERICORDIA",
+      "tipo": "asistencial",
+      "refes": "10140142131240",
+      "sisa_corto": "14072",
+      "nombre_oficial_sisa": "HOSPITAL NUESTRA SEÑORA DE LA MISERICORDIA"
+    },
+    {
+      "sucursal_lis": "15",
+      "descripcion_lis": "PEDIATRICO",
+      "tipo": "asistencial",
+      "refes": "11140142131338",
+      "sisa_corto": "96147",
+      "nombre_oficial_sisa": "HOSPITAL PEDIATRICO DEL NIÑO JESUS"
+    },
+    {
+      "sucursal_lis": "16",
+      "descripcion_lis": "RAWSON",
+      "tipo": "asistencial",
+      "refes": "10140142131245",
+      "sisa_corto": "14074",
+      "nombre_oficial_sisa": "HOSPITAL RAWSON"
+    },
+    {
+      "sucursal_lis": "23",
+      "descripcion_lis": "VILLA SANTA ROSA",
+      "tipo": "asistencial",
+      "refes": "10141052131258",
+      "sisa_corto": "14989",
+      "nombre_oficial_sisa": "HOSPITAL SANTA ROSA DE RIO PRIMERO - DR. RAMON B. MESTRE"
+    },
+    {
+      "sucursal_lis": "24",
+      "descripcion_lis": "TRANSITO C. DE ALLENDE (H)",
+      "tipo": "asistencial",
+      "refes": "10140142131259",
+      "sisa_corto": "14076",
+      "nombre_oficial_sisa": "HOSPITAL TRANSITO CACERES DE ALLENDE"
+    },
+    {
+      "sucursal_lis": "25",
+      "descripcion_lis": "UNQUILLO",
+      "tipo": "asistencial",
+      "refes": "10140212231168",
+      "sisa_corto": "96375",
+      "nombre_oficial_sisa": "HOSPITAL JOSE URRUTIA DE UNQUILLO"
+    },
+    {
+      "sucursal_lis": "28",
+      "descripcion_lis": "VILLA MARIA",
+      "tipo": "asistencial",
+      "refes": "10140422131251",
+      "sisa_corto": "14242",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL LUIS PASTEUR"
+    },
+    {
+      "sucursal_lis": "32",
+      "descripcion_lis": "MATERNIDAD PROVINCIAL",
+      "tipo": "asistencial",
+      "refes": "12140142136946",
+      "sisa_corto": "237562",
+      "nombre_oficial_sisa": "NUEVA MATERNIDAD PROVINCIAL BRIGADIER JUAN BAUTISTA BUSTOS"
+    },
+    {
+      "sucursal_lis": "80",
+      "descripcion_lis": "ALTA GRACIA MUNICIPAL",
+      "tipo": "asistencial",
+      "refes": "50141472231787",
+      "sisa_corto": "100177",
+      "nombre_oficial_sisa": "DISPENSARIO Nº 3 DR. RAMON CARRILLO"
+    },
+    {
+      "sucursal_lis": "60",
+      "descripcion_lis": "SAN ROQUE (NUEVO)",
+      "tipo": "asistencial",
+      "refes": "10140142131256",
+      "sisa_corto": "14075",
+      "nombre_oficial_sisa": "HOSPITAL SAN ROQUE"
+    },
+    {
+      "sucursal_lis": "113",
+      "descripcion_lis": "CAPS B CIUDAD DE MIS SUENOS",
+      "tipo": "asistencial",
+      "refes": "50140142131386",
+      "sisa_corto": "25056",
+      "nombre_oficial_sisa": "CAPS CIUDAD DE MIS SUENOS"
+    },
+    {
+      "sucursal_lis": "710",
+      "descripcion_lis": ".ALTA GRACIA: H. ARTURO ILLIA",
+      "tipo": "banco_sangre",
+      "refes": "10141472131165",
+      "sisa_corto": "14688",
+      "nombre_oficial_sisa": "HOSPITAL DR. ARTURO ILLIA DE ALTA GRACIA",
+      "sucursal_principal": "5"
+    },
+    {
+      "sucursal_lis": "74",
+      "descripcion_lis": "BELL VILLE",
+      "tipo": "asistencial",
+      "refes": "10141822131149",
+      "sisa_corto": "14798",
+      "nombre_oficial_sisa": "HOSPITAL DR. JOSE A. CEBALLOS"
+    },
+    {
+      "sucursal_lis": null,
+      "descripcion_lis": "JESUS MARIA (MUNICIPAL)",
+      "tipo": "asistencial",
+      "refes": "50140212232519",
+      "sisa_corto": "100754",
+      "nombre_oficial_sisa": "DISPENSARIO LATINOAMERICA"
+    },
+    {
+      "sucursal_lis": "196",
+      "descripcion_lis": "VILLA DOLORES",
+      "tipo": "asistencial",
+      "refes": "10141332131254",
+      "sisa_corto": "14595",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL VILLA DOLORES"
+    },
+    {
+      "sucursal_lis": null,
+      "descripcion_lis": "FLORENCIO DIAZ",
+      "tipo": "asistencial",
+      "refes": "10140142133413",
+      "sisa_corto": "106459",
+      "nombre_oficial_sisa": "HOSPITAL FLORENCIO DIAZ"
+    },
+    {
+      "sucursal_lis": null,
+      "descripcion_lis": "ARROYITO",
+      "tipo": "asistencial",
+      "refes": "10141402231175",
+      "sisa_corto": "14609",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL CARLOS JULIO RODRIGUEZ DE ARROYITO"
+    },
+    {
+      "sucursal_lis": "209",
+      "descripcion_lis": "MORTEROS",
+      "tipo": "asistencial",
+      "refes": "10141402231193",
+      "sisa_corto": "24883",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. JOSE SAURET MORTEROS"
+    },
+    {
+      "sucursal_lis": null,
+      "descripcion_lis": "CAPS PARQUE DE LAS ROSAS",
+      "tipo": "asistencial",
+      "refes": "50140142131411",
+      "sisa_corto": "25054",
+      "nombre_oficial_sisa": "CAPS PARQUE LAS ROSAS"
+    },
+    {
+      "sucursal_lis": "119",
+      "descripcion_lis": "CARLOS PAZ",
+      "tipo": "asistencial",
+      "refes": "10140912231191",
+      "sisa_corto": "14423",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. GUMERSINDO SAYAGO"
+    },
+    {
+      "sucursal_lis": "17",
+      "descripcion_lis": "RIO CUARTO (H)",
+      "tipo": "asistencial",
+      "refes": "10140982131255",
+      "sisa_corto": "96362",
+      "nombre_oficial_sisa": "HOSPITAL SAN ANTONIO DE PADUA DE RIO CUARTO"
+    },
+    {
+      "sucursal_lis": "37",
+      "descripcion_lis": "UNIDAD CARCELARIA",
+      "tipo": "asistencial",
+      "refes": "10140142135177",
+      "sisa_corto": "138207",
+      "nombre_oficial_sisa": "CENTRO MEDICO COMPLEJO CARCELARIO N°1 REVERENDO PADRE LUCHESSE"
+    },
+    {
+      "sucursal_lis": "110",
+      "descripcion_lis": "CAPILLA DEL MONTE",
+      "tipo": "asistencial",
+      "refes": "10140912231199",
+      "sisa_corto": "14388",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. OSCAR AMERICO LUQUI"
+    },
+    {
+      "sucursal_lis": "160",
+      "descripcion_lis": "CRUZ DEL EJE",
+      "tipo": "asistencial",
+      "refes": "10140282131157",
+      "sisa_corto": "14167",
+      "nombre_oficial_sisa": "HOSPITAL AURELIO CRESPO"
+    },
+    {
+      "sucursal_lis": "183",
+      "descripcion_lis": "DOMINGO FUNES",
+      "tipo": "asistencial",
+      "refes": "10140912131247",
+      "sisa_corto": "14416",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL DOMINGO FUNES - VILLA CAEIRO"
+    },
+    {
+      "sucursal_lis": "194",
+      "descripcion_lis": "MINA CLAVERO",
+      "tipo": "asistencial",
+      "refes": "10141262231217",
+      "sisa_corto": "14576",
+      "nombre_oficial_sisa": "HOSPITAL LUIS MARIA BELLODI MINA CLAVERO"
+    },
+    {
+      "sucursal_lis": "235",
+      "descripcion_lis": "PARASITOLOGIA",
+      "tipo": "asistencial",
+      "refes": "51140142133784",
+      "sisa_corto": "108202",
+      "nombre_oficial_sisa": "LABORATORIO CENTRAL DE LA PROVINCIA DE CORDOBA",
+      "_nota": "Servicio interno del Lab Central que atiende pacientes directamente. Excepción legítima: Lab Central es a la vez establecimiento de carga, toma y diagnóstico."
+    },
+    {
+      "sucursal_lis": "293",
+      "descripcion_lis": "VILLA NUEVA",
+      "tipo": "asistencial",
+      "refes": "10140422231159",
+      "sisa_corto": "14248",
+      "nombre_oficial_sisa": "HOSPITAL COMUNITARIO VILLA NUEVA"
+    },
+    {
+      "sucursal_lis": "10",
+      "descripcion_lis": "JESUS MARIA",
+      "tipo": "asistencial",
+      "refes": "10140212131253",
+      "sisa_corto": "14133",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL VICENTE AGUERO"
+    },
+    {
+      "sucursal_lis": "19",
+      "descripcion_lis": "RIO TERCERO (H)",
+      "tipo": "asistencial",
+      "refes": "10141612131269",
+      "sisa_corto": "14758",
+      "nombre_oficial_sisa": "NUEVO HOSPITAL PROVINCIAL RIO TERCERO BRIGADIER GENERAL JUAN BAUTISTA BUSTOS"
+    },
+    {
+      "sucursal_lis": "21",
+      "descripcion_lis": "SAN FRANCISCO",
+      "tipo": "asistencial",
+      "refes": "10141402131250",
+      "sisa_corto": "14668",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL JOSE BERNARDO ITURRASPE"
+    },
+    {
+      "sucursal_lis": "33",
+      "descripcion_lis": "MEDICINA PREVENTIVA",
+      "tipo": "asistencial",
+      "refes": "50140142235197",
+      "sisa_corto": "139917",
+      "nombre_oficial_sisa": "DIRECCION DE MEDICINA PREVENTIVA MUNICIPAL CORDOBA"
+    },
+    {
+      "sucursal_lis": "63",
+      "descripcion_lis": "CIRCUITO DE LABORATORIO",
+      "tipo": "interno",
+      "refes": null,
+      "sisa_corto": null,
+      "nombre_oficial_sisa": null,
+      "_nota": "Trafico interno del Lab Central (sin DERIVANTEID en la maestra LIS). NO se notifica a SISA."
+    },
+    {
+      "sucursal_lis": "105",
+      "descripcion_lis": "ASIST. PUBLICA VILLA MARIA",
+      "tipo": "asistencial",
+      "refes": "50140422232365",
+      "sisa_corto": "100673",
+      "nombre_oficial_sisa": "ASISTENCIA PUBLICA MUNICIPAL - DR. JOSE CORIGLIANO"
+    },
+    {
+      "sucursal_lis": "180",
+      "descripcion_lis": "CENTRO DE SALUD MUNICIPAL RIO IV",
+      "tipo": "asistencial",
+      "refes": "50140982231704",
+      "sisa_corto": "100110",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MUNICIPAL DE RIO CUARTO"
+    },
+    {
+      "sucursal_lis": "758",
+      "descripcion_lis": ".BANCO DE SANGRE 2019",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "759",
+      "descripcion_lis": ".BANCO DE SANGRE 2020",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "760",
+      "descripcion_lis": ".BANCO DE SANGRE 2021",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "761",
+      "descripcion_lis": ".BANCO DE SANGRE 2022",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "762",
+      "descripcion_lis": ".BANCO DE SANGRE 2023",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "763",
+      "descripcion_lis": ".BANCO DE SANGRE 2024",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "765",
+      "descripcion_lis": ".BANCO DE SANGRE 2025",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "766",
+      "descripcion_lis": ".BANCO DE SANGRE 2026",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "793",
+      "descripcion_lis": ".BANCO DE SANGRE MUNICIPAL",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "729",
+      "descripcion_lis": ".BELL VILLE: H.JOSE A. CEBALLOS",
+      "tipo": "banco_sangre",
+      "refes": "10141822131149",
+      "sisa_corto": "14798",
+      "nombre_oficial_sisa": "HOSPITAL DR. JOSE A. CEBALLOS",
+      "sucursal_principal": "74"
+    },
+    {
+      "sucursal_lis": "713",
+      "descripcion_lis": ".CRUZ DEL EJE: H. AURELIO CRESPO",
+      "tipo": "banco_sangre",
+      "refes": "10140282131157",
+      "sisa_corto": "14167",
+      "nombre_oficial_sisa": "HOSPITAL AURELIO CRESPO",
+      "sucursal_principal": "160"
+    },
+    {
+      "sucursal_lis": "714",
+      "descripcion_lis": ".DEAN FUNES: H. ERNESTO ROMAGOSA",
+      "tipo": "banco_sangre",
+      "refes": "10140492131248",
+      "sisa_corto": "14271",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL DR. ERNESTO ROMAGOSA"
+    },
+    {
+      "sucursal_lis": "708",
+      "descripcion_lis": ".HOSPITAL CORDOBA",
+      "tipo": "banco_sangre",
+      "refes": "10140142131160",
+      "sisa_corto": "14063",
+      "nombre_oficial_sisa": "HOSPITAL CORDOBA",
+      "sucursal_principal": "7"
+    },
+    {
+      "sucursal_lis": "703",
+      "descripcion_lis": ".HOSPITAL DE NINOS",
+      "tipo": "banco_sangre",
+      "refes": "11140142131336",
+      "sisa_corto": "96238",
+      "nombre_oficial_sisa": "HOSPITAL DE NIÑOS DE LA SANTISIMA TRINIDAD",
+      "sucursal_principal": "8"
+    },
+    {
+      "sucursal_lis": "707",
+      "descripcion_lis": ".HOSPITAL MATERNO NEONATAL",
+      "tipo": "banco_sangre",
+      "refes": "12140142131345",
+      "sisa_corto": "96091",
+      "nombre_oficial_sisa": "HOSPITAL MATERNO NEONATAL"
+    },
+    {
+      "sucursal_lis": "796",
+      "descripcion_lis": ".HOSPITAL PEDIATRICO",
+      "tipo": "banco_sangre",
+      "refes": "11140142131338",
+      "sisa_corto": "96147",
+      "nombre_oficial_sisa": "HOSPITAL PEDIATRICO DEL NIÑO JESUS",
+      "sucursal_principal": "15"
+    },
+    {
+      "sucursal_lis": "702",
+      "descripcion_lis": ".HOSPITAL RAWSON",
+      "tipo": "banco_sangre",
+      "refes": "10140142131245",
+      "sisa_corto": "14074",
+      "nombre_oficial_sisa": "HOSPITAL RAWSON",
+      "sucursal_principal": "16"
+    },
+    {
+      "sucursal_lis": "706",
+      "descripcion_lis": ".HOSPITAL SAN ROQUE",
+      "tipo": "banco_sangre",
+      "refes": "10140142131256",
+      "sisa_corto": "14075",
+      "nombre_oficial_sisa": "HOSPITAL SAN ROQUE",
+      "sucursal_principal": "60"
+    },
+    {
+      "sucursal_lis": "733",
+      "descripcion_lis": ".HUINCA RENANCO:H DR RENE FAVALORO \"IN MEMORIAM\"",
+      "tipo": "banco_sangre",
+      "refes": "10140352135185",
+      "sisa_corto": "139383",
+      "nombre_oficial_sisa": "HOSPITAL DR. RENE FAVALORO"
+    },
+    {
+      "sucursal_lis": "716",
+      "descripcion_lis": ".JESUS MARIA: H. VICENTE AGUERO",
+      "tipo": "banco_sangre",
+      "refes": "10140212131253",
+      "sisa_corto": "14133",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL VICENTE AGUERO",
+      "sucursal_principal": "10"
+    },
+    {
+      "sucursal_lis": "718",
+      "descripcion_lis": ".LA CARLOTA: H. SAN ANTONIO",
+      "tipo": "banco_sangre",
+      "refes": "10140562131270",
+      "sisa_corto": "14288",
+      "nombre_oficial_sisa": "HOSPITAL SAN ANTONIO DE LA CARLOTA"
+    },
+    {
+      "sucursal_lis": "717",
+      "descripcion_lis": ".LABOULAYE: H. RAMON CARCANO",
+      "tipo": "banco_sangre",
+      "refes": "10140842131252",
+      "sisa_corto": "14375",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL RAMON JOSE CARCANO"
+    },
+    {
+      "sucursal_lis": "719",
+      "descripcion_lis": ".MARCOS JUAREZ: H. ABEL AYERZA",
+      "tipo": "banco_sangre",
+      "refes": "10140632131162",
+      "sisa_corto": "14341",
+      "nombre_oficial_sisa": "HOSPITAL DR. ABEL AYERZA"
+    },
+    {
+      "sucursal_lis": "722",
+      "descripcion_lis": ".RIO CUARTO: H. SAN A. DE PADUA",
+      "tipo": "banco_sangre",
+      "refes": "10140982131255",
+      "sisa_corto": "96362",
+      "nombre_oficial_sisa": "HOSPITAL SAN ANTONIO DE PADUA DE RIO CUARTO",
+      "sucursal_principal": "17"
+    },
+    {
+      "sucursal_lis": "730",
+      "descripcion_lis": ".SANTA ROSA DE CALAMUCHITA: H. EVA PERON",
+      "tipo": "banco_sangre",
+      "refes": "10140072131249",
+      "sisa_corto": "14844",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL EVA PERON DE SANTA ROSA DE CALAMUCHITA"
+    },
+    {
+      "sucursal_lis": "731",
+      "descripcion_lis": ".VILLA DOLORES: H. REGIONAL",
+      "tipo": "banco_sangre",
+      "refes": "10141332131254",
+      "sisa_corto": "14595",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL VILLA DOLORES",
+      "sucursal_principal": "196"
+    },
+    {
+      "sucursal_lis": "728",
+      "descripcion_lis": ".VILLA MARIA: H. PASTEUR",
+      "tipo": "banco_sangre",
+      "refes": "10140422131251",
+      "sisa_corto": "14242",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL LUIS PASTEUR",
+      "sucursal_principal": "28"
+    },
+    {
+      "sucursal_lis": "226",
+      "descripcion_lis": "BANCO DE SANGRE",
+      "tipo": "banco_sangre",
+      "refes": "53140142134291",
+      "sisa_corto": "124308",
+      "nombre_oficial_sisa": "BANCO CENTRAL DE SANGRE DE LA PROVINCIA DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "712",
+      "descripcion_lis": ".CORRAL DE BUSTOS",
+      "tipo": "banco_sangre",
+      "refes": "10140632131167",
+      "sisa_corto": "14311",
+      "nombre_oficial_sisa": "HOSPITAL DR. PEDRO VELLA",
+      "sucursal_principal": "158"
+    },
+    {
+      "sucursal_lis": "715",
+      "descripcion_lis": ".DOMINGO FUNES",
+      "tipo": "banco_sangre",
+      "refes": "10140912131247",
+      "sisa_corto": "14416",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL DOMINGO FUNES - VILLA CAEIRO",
+      "sucursal_principal": "715"
+    },
+    {
+      "sucursal_lis": "798",
+      "descripcion_lis": ".HEMOCENTRO MUNICIPAL",
+      "tipo": "banco_sangre",
+      "refes": "53140142234289",
+      "sisa_corto": "124292",
+      "nombre_oficial_sisa": "HEMOCENTRO DE LA MUNICIPALIDAD DE CORDOBA",
+      "sucursal_principal": "190"
+    },
+    {
+      "sucursal_lis": "732",
+      "descripcion_lis": ".HOSP REGIONAL SAN JOSE DE LA DORMIDA",
+      "tipo": "banco_sangre",
+      "refes": "10141752131263",
+      "sisa_corto": "14787",
+      "nombre_oficial_sisa": "HOSPITAL VECINAL SAN JOSE DE LA DORMIDA",
+      "sucursal_principal": "246"
+    },
+    {
+      "sucursal_lis": "709",
+      "descripcion_lis": ".HOSPITAL MISERICORDIA",
+      "tipo": "banco_sangre",
+      "refes": "10140142131240",
+      "sisa_corto": "14072",
+      "nombre_oficial_sisa": "HOSPITAL NUESTRA SEÑORA DE LA MISERICORDIA"
+    },
+    {
+      "sucursal_lis": "704",
+      "descripcion_lis": ".HOSPITAL T.C. DE ALLENDE",
+      "tipo": "banco_sangre",
+      "refes": "10140142131259",
+      "sisa_corto": "14076",
+      "nombre_oficial_sisa": "HOSPITAL TRANSITO CACERES DE ALLENDE"
+    },
+    {
+      "sucursal_lis": "705",
+      "descripcion_lis": ".MATERNIDAD PROVINCIAL",
+      "tipo": "banco_sangre",
+      "refes": "12140142136946",
+      "sisa_corto": "237562",
+      "nombre_oficial_sisa": "NUEVA MATERNIDAD PROVINCIAL BRIGADIER JUAN BAUTISTA BUSTOS",
+      "sucursal_principal": "35"
+    },
+    {
+      "sucursal_lis": "721",
+      "descripcion_lis": ".RIO TERCERO: H. REGIONAL",
+      "tipo": "banco_sangre",
+      "refes": "10141612131269",
+      "sisa_corto": "14758",
+      "nombre_oficial_sisa": "NUEVO HOSPITAL PROVINCIAL RIO TERCERO BRIGADIER GENERAL JUAN BAUTISTA BUSTOS"
+    },
+    {
+      "sucursal_lis": "723",
+      "descripcion_lis": ".SAN FRANCISCO: H. J.B. ITURRASPE",
+      "tipo": "banco_sangre",
+      "refes": "10141402131250",
+      "sisa_corto": "14668",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL JOSE BERNARDO ITURRASPE"
+    },
+    {
+      "sucursal_lis": "720",
+      "descripcion_lis": ".SANTA ROSA RIO I",
+      "tipo": "banco_sangre",
+      "refes": "10141052131258",
+      "sisa_corto": "14989",
+      "nombre_oficial_sisa": "HOSPITAL SANTA ROSA DE RIO PRIMERO - DR. RAMON B. MESTRE",
+      "sucursal_principal": "720"
+    },
+    {
+      "sucursal_lis": "725",
+      "descripcion_lis": ".VILLA CARLOS PAZ: GUMERCINDO SALLAGO",
+      "tipo": "banco_sangre",
+      "refes": "10140912231191",
+      "sisa_corto": "14423",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. GUMERSINDO SAYAGO"
+    },
+    {
+      "sucursal_lis": "726",
+      "descripcion_lis": ".VILLA DEL ROSARIO: H. SAN V. DE PAUL",
+      "tipo": "banco_sangre",
+      "refes": "10141192131257",
+      "sisa_corto": "14571",
+      "nombre_oficial_sisa": "HOSPITAL SAN VICENTE DE PAUL"
+    },
+    {
+      "sucursal_lis": "101",
+      "descripcion_lis": "ADELIA MARIA",
+      "tipo": "asistencial",
+      "refes": "10140982231153",
+      "sisa_corto": "14432",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DE AUTOGESTION ADELIA MARIA"
+    },
+    {
+      "sucursal_lis": "227",
+      "descripcion_lis": "AGUA DE ORO",
+      "tipo": "asistencial",
+      "refes": "50140212232507",
+      "sisa_corto": "100748",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL AGUA DE ORO"
+    },
+    {
+      "sucursal_lis": "102",
+      "descripcion_lis": "ALCIRA GIGENA",
+      "tipo": "asistencial",
+      "refes": "10140982231176",
+      "sisa_corto": "24803",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DE ALCIRA"
+    },
+    {
+      "sucursal_lis": "103",
+      "descripcion_lis": "ALEJANDRO ROCA",
+      "tipo": "asistencial",
+      "refes": "10140562231262",
+      "sisa_corto": "24804",
+      "nombre_oficial_sisa": "HOSPITAL VECINAL MUNICIPAL DE ALEJANDRO ROCA"
+    },
+    {
+      "sucursal_lis": "395",
+      "descripcion_lis": "ALTOS DE CHIPION",
+      "tipo": "asistencial",
+      "refes": "50141402231550",
+      "sisa_corto": "30062",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPALIDAD DE ALTOS DE CHIPION"
+    },
+    {
+      "sucursal_lis": "68",
+      "descripcion_lis": "ANISACATE",
+      "tipo": "asistencial",
+      "refes": "50141472232226",
+      "sisa_corto": "100598",
+      "nombre_oficial_sisa": "DISPENSARIO Nº 2 DE ANISACATE"
+    },
+    {
+      "sucursal_lis": "6",
+      "descripcion_lis": "ARROYITO",
+      "tipo": "asistencial",
+      "refes": "10141402231175",
+      "sisa_corto": "14609",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL CARLOS JULIO RODRIGUEZ DE ARROYITO"
+    },
+    {
+      "sucursal_lis": "104",
+      "descripcion_lis": "ASIST. PCA MUNICIPAL SAN FCO",
+      "tipo": "asistencial",
+      "refes": "50141402231801",
+      "sisa_corto": "100207",
+      "nombre_oficial_sisa": "ASISTENCIA PUBLICA MUNICIPAL DE SAN FRANCISCO"
+    },
+    {
+      "sucursal_lis": "212",
+      "descripcion_lis": "ASOCIACION CIVIL HOSPITAL DE ARIAS",
+      "tipo": "asistencial",
+      "refes": "50140632232124",
+      "sisa_corto": "100521",
+      "nombre_oficial_sisa": "ASOCIACION CIVIL HOSPITAL PARA LA COMUNIDAD DE ARIAS DR .JUAN P. CABRINI"
+    },
+    {
+      "sucursal_lis": "3",
+      "descripcion_lis": "BALNEARIA",
+      "tipo": "asistencial",
+      "refes": "10141402231226",
+      "sisa_corto": "14612",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN JOSE"
+    },
+    {
+      "sucursal_lis": "109",
+      "descripcion_lis": "CANALS",
+      "tipo": "asistencial",
+      "refes": "10141822231227",
+      "sisa_corto": "14808",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN JUAN DE DIOS DE CANALS"
+    },
+    {
+      "sucursal_lis": "111",
+      "descripcion_lis": "CAPS B AMPLIACION CABILDO",
+      "tipo": "asistencial",
+      "refes": "50140142131390",
+      "sisa_corto": "25049",
+      "nombre_oficial_sisa": "CAPS CUIDAD AMPLIACION CABILDO"
+    },
+    {
+      "sucursal_lis": "127",
+      "descripcion_lis": "CAPS B AMPLIACION FERREYRA",
+      "tipo": "asistencial",
+      "refes": "50140142131383",
+      "sisa_corto": "25050",
+      "nombre_oficial_sisa": "CAPS CIUDAD AMPLIACION FERREYRA"
+    },
+    {
+      "sucursal_lis": "145",
+      "descripcion_lis": "CAPS B ANGELELLI",
+      "tipo": "asistencial",
+      "refes": "50140142131387",
+      "sisa_corto": "25051",
+      "nombre_oficial_sisa": "CAPS CIUDAD OBISPO ANGELELLI"
+    },
+    {
+      "sucursal_lis": "142",
+      "descripcion_lis": "CAPS B CIUDAD DE LOS CUARTETOS",
+      "tipo": "asistencial",
+      "refes": "50140142131384",
+      "sisa_corto": "25052",
+      "nombre_oficial_sisa": "CAPS CIUDAD DE LOS CUARTETOS"
+    },
+    {
+      "sucursal_lis": "143",
+      "descripcion_lis": "CAPS B CIUDAD DE LOS NINOS",
+      "tipo": "asistencial",
+      "refes": "50140142131385",
+      "sisa_corto": "25055",
+      "nombre_oficial_sisa": "CAPS CIUDAD DE LOS NIÑOS"
+    },
+    {
+      "sucursal_lis": "124",
+      "descripcion_lis": "CAPS B CIUDAD EVITA",
+      "tipo": "asistencial",
+      "refes": "50140142131434",
+      "sisa_corto": "25053",
+      "nombre_oficial_sisa": "CAPS CIUDAD EVITA"
+    },
+    {
+      "sucursal_lis": "114",
+      "descripcion_lis": "CAPS B CIUDAD ZEPA",
+      "tipo": "asistencial",
+      "refes": "50140142131417",
+      "sisa_corto": "25017",
+      "nombre_oficial_sisa": "CAPS ZEPA A"
+    },
+    {
+      "sucursal_lis": "115",
+      "descripcion_lis": "CAPS B EL CHINGOLO III",
+      "tipo": "asistencial",
+      "refes": "50140142131396",
+      "sisa_corto": "25059",
+      "nombre_oficial_sisa": "CAPS EL CHINGOLO"
+    },
+    {
+      "sucursal_lis": "128",
+      "descripcion_lis": "CAPS B GENERAL SAVIO",
+      "tipo": "asistencial",
+      "refes": "50140142133241",
+      "sisa_corto": "104885",
+      "nombre_oficial_sisa": "CAPS GENERAL SAVIO"
+    },
+    {
+      "sucursal_lis": "144",
+      "descripcion_lis": "CAPS B VILLA RETIRO",
+      "tipo": "asistencial",
+      "refes": "50140142131388",
+      "sisa_corto": "25067",
+      "nombre_oficial_sisa": "CAPS CIUDAD VILLA RETIRO"
+    },
+    {
+      "sucursal_lis": "112",
+      "descripcion_lis": "CAPS B° SOL NACIENTE",
+      "tipo": "asistencial",
+      "refes": "50140142131414",
+      "sisa_corto": "25065",
+      "nombre_oficial_sisa": "CAPS SOL NACIENTE"
+    },
+    {
+      "sucursal_lis": "116",
+      "descripcion_lis": "CAPS CIUDAD DE MI ESPERANZA",
+      "tipo": "asistencial",
+      "refes": "50140142131405",
+      "sisa_corto": "25060",
+      "nombre_oficial_sisa": "CAPS MI ESPERANZA"
+    },
+    {
+      "sucursal_lis": "117",
+      "descripcion_lis": "CAPS JUAN PABLO II",
+      "tipo": "asistencial",
+      "refes": "50140142131399",
+      "sisa_corto": "25057",
+      "nombre_oficial_sisa": "CAPS JUAN PABLO II"
+    },
+    {
+      "sucursal_lis": "118",
+      "descripcion_lis": "CAPS PARQUE DE LAS ROSAS",
+      "tipo": "asistencial",
+      "refes": "50140142131411",
+      "sisa_corto": "25054",
+      "nombre_oficial_sisa": "CAPS PARQUE LAS ROSAS"
+    },
+    {
+      "sucursal_lis": "200",
+      "descripcion_lis": "CAPS VILLA BOEDO",
+      "tipo": "asistencial",
+      "refes": "50140142131415",
+      "sisa_corto": "25066",
+      "nombre_oficial_sisa": "CAPS VILLA BOEDO"
+    },
+    {
+      "sucursal_lis": "237",
+      "descripcion_lis": "CENTRO DE SALUD MUNICIPAL DE LUQUE",
+      "tipo": "asistencial",
+      "refes": "50141682232096",
+      "sisa_corto": "100501",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL CAÑADA DE LUQUE"
+    },
+    {
+      "sucursal_lis": "130",
+      "descripcion_lis": "CLINICA CHUTRO",
+      "tipo": "asistencial",
+      "refes": "10140142331030",
+      "sisa_corto": "14895",
+      "nombre_oficial_sisa": "CLINICA CHUTRO S.R.L."
+    },
+    {
+      "sucursal_lis": "134",
+      "descripcion_lis": "CLINICA DEL SOL",
+      "tipo": "asistencial",
+      "refes": "50140632336217",
+      "sisa_corto": "153234",
+      "nombre_oficial_sisa": "CENTRO MEDICO DE LA CLINICA DEL SOL PRIVADA S.R.L."
+    },
+    {
+      "sucursal_lis": "155",
+      "descripcion_lis": "CLINICA PRIVADA VELEZ SARSFIELD",
+      "tipo": "asistencial",
+      "refes": "50140142335037",
+      "sisa_corto": "134415",
+      "nombre_oficial_sisa": "CENTRO MEDICO DE LA CLINICA PRIVADA VELEZ SARSFIELD"
+    },
+    {
+      "sucursal_lis": "147",
+      "descripcion_lis": "CLINICA REINA FABIOLA",
+      "tipo": "asistencial",
+      "refes": "50140142335044",
+      "sisa_corto": "134524",
+      "nombre_oficial_sisa": "CENTRO MEDICO DE LA CLINICA REINA FABIOLA"
+    },
+    {
+      "sucursal_lis": "148",
+      "descripcion_lis": "CLINICA ROMAGOSA",
+      "tipo": "asistencial",
+      "refes": "10140142331096",
+      "sisa_corto": "14914",
+      "nombre_oficial_sisa": "CLINICA ROMAGOSA S.A."
+    },
+    {
+      "sucursal_lis": "150",
+      "descripcion_lis": "CLINICA SAN MARTIN",
+      "tipo": "asistencial",
+      "refes": "10140422331112",
+      "sisa_corto": "14231",
+      "nombre_oficial_sisa": "CLINICA SAN MARTIN"
+    },
+    {
+      "sucursal_lis": "151",
+      "descripcion_lis": "CLINICA SANAGEC",
+      "tipo": "asistencial",
+      "refes": "51140142331595",
+      "sisa_corto": "24575",
+      "nombre_oficial_sisa": "CLINICA PRIVADA SANAGEC"
+    },
+    {
+      "sucursal_lis": "157",
+      "descripcion_lis": "COLONIA CAROYA",
+      "tipo": "asistencial",
+      "refes": "10140212331309",
+      "sisa_corto": "14122",
+      "nombre_oficial_sisa": "SANATORIO PRIVADO CAROYA S.R.L"
+    },
+    {
+      "sucursal_lis": "260",
+      "descripcion_lis": "COLONIA SANTA MARIA",
+      "tipo": "asistencial",
+      "refes": "13140912131359",
+      "sisa_corto": "14415",
+      "nombre_oficial_sisa": "HOSPITAL COLONIA SANTA MARIA"
+    },
+    {
+      "sucursal_lis": "22",
+      "descripcion_lis": "COMPLEJO ESPERANZA",
+      "tipo": "asistencial",
+      "refes": "52140142134548",
+      "sisa_corto": "128578",
+      "nombre_oficial_sisa": "CENTRO DE SALUD DEL COMPLEJO ESPERANZA"
+    },
+    {
+      "sucursal_lis": "44",
+      "descripcion_lis": "CORDOBA ALTO RENDIMIENTO",
+      "tipo": "asistencial",
+      "refes": "50140142133516",
+      "sisa_corto": "107180",
+      "nombre_oficial_sisa": "CORDOBA ALTO RENDIMIENTO ( C.A.R - CENARD)"
+    },
+    {
+      "sucursal_lis": "158",
+      "descripcion_lis": "CORRAL DE BUSTOS",
+      "tipo": "asistencial",
+      "refes": "10140632131167",
+      "sisa_corto": "14311",
+      "nombre_oficial_sisa": "HOSPITAL DR. PEDRO VELLA"
+    },
+    {
+      "sucursal_lis": "159",
+      "descripcion_lis": "COSQUIN MUNICIPAL HOSP A CIMA",
+      "tipo": "asistencial",
+      "refes": "10140912231163",
+      "sisa_corto": "14397",
+      "nombre_oficial_sisa": "CENTRO DE ATENCION PRIMARIA DE LA SALUD DR. ARMANDO CIMA"
+    },
+    {
+      "sucursal_lis": "283",
+      "descripcion_lis": "CRUZ DEL EJE MUNICIPAL",
+      "tipo": "asistencial",
+      "refes": "50140212235167",
+      "sisa_corto": "137015",
+      "nombre_oficial_sisa": "CENTRO DE ATENCION PRIMARIA DE LA SALUD DEL CIC"
+    },
+    {
+      "sucursal_lis": "9",
+      "descripcion_lis": "DEAN FUNES",
+      "tipo": "asistencial",
+      "refes": "10140492131248",
+      "sisa_corto": "14271",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL DR. ERNESTO ROMAGOSA"
+    },
+    {
+      "sucursal_lis": "178",
+      "descripcion_lis": "DEM NORTE",
+      "tipo": "asistencial",
+      "refes": "50140142233693",
+      "sisa_corto": "107544",
+      "nombre_oficial_sisa": "DIRECCION DE ESPECIALIDADES MEDICAS - DEM NORTE"
+    },
+    {
+      "sucursal_lis": "179",
+      "descripcion_lis": "DEM OESTE",
+      "tipo": "asistencial",
+      "refes": "50140142133191",
+      "sisa_corto": "103822",
+      "nombre_oficial_sisa": "CENTRO DE SALUD N° 17 - BARRIO VILLA AZALAIS OESTE"
+    },
+    {
+      "sucursal_lis": "45",
+      "descripcion_lis": "DESPENADEROS",
+      "tipo": "asistencial",
+      "refes": "10141472231184",
+      "sisa_corto": "24806",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DESPEÑADEROS"
+    },
+    {
+      "sucursal_lis": "177",
+      "descripcion_lis": "DIRECCIÓN DE ESPECIALIDADES MÉDICAS",
+      "tipo": "asistencial",
+      "refes": "50140142234643",
+      "sisa_corto": "129588",
+      "nombre_oficial_sisa": "DIRECCION DE ESPECIALIDADES MEDICAS ZONA CENTRO"
+    },
+    {
+      "sucursal_lis": "174",
+      "descripcion_lis": "DISPENSARIO MI GRANJA",
+      "tipo": "asistencial",
+      "refes": "50140212231464",
+      "sisa_corto": "30035",
+      "nombre_oficial_sisa": "CENTRO DE SALUD RAMON CARRILLO MI GRANJA"
+    },
+    {
+      "sucursal_lis": "187",
+      "descripcion_lis": "FLORENCIO DIAZ",
+      "tipo": "asistencial",
+      "refes": "10140142133413",
+      "sisa_corto": "106459",
+      "nombre_oficial_sisa": "HOSPITAL FLORENCIO DIAZ"
+    },
+    {
+      "sucursal_lis": "190",
+      "descripcion_lis": "HEMOCENTRO MUNICIPAL",
+      "tipo": "asistencial",
+      "refes": "53140142234289",
+      "sisa_corto": "124292",
+      "nombre_oficial_sisa": "HEMOCENTRO DE LA MUNICIPALIDAD DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "14",
+      "descripcion_lis": "HERNANDO",
+      "tipo": "asistencial",
+      "refes": "10141612231201",
+      "sisa_corto": "14728",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. PASCUAL A. TIRRO"
+    },
+    {
+      "sucursal_lis": "279",
+      "descripcion_lis": "HOPS DR R FAVALORO BERROTARAN",
+      "tipo": "asistencial",
+      "refes": "10140982231174",
+      "sisa_corto": "14436",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL BERROTARAN"
+    },
+    {
+      "sucursal_lis": "296",
+      "descripcion_lis": "HOSP DE PRONTA ATENCION MADRE TERESA DE CALCUTA",
+      "tipo": "asistencial",
+      "refes": "10140142236950",
+      "sisa_corto": "237539",
+      "nombre_oficial_sisa": "HOSPITAL DE PRONTA ATENCION MADRE TERESA DE CALCUTA"
+    },
+    {
+      "sucursal_lis": "191",
+      "descripcion_lis": "HOSPITAL ABEL AYERZA MARCOS JUAREZ",
+      "tipo": "asistencial",
+      "refes": "10140632131162",
+      "sisa_corto": "14341",
+      "nombre_oficial_sisa": "HOSPITAL DR. ABEL AYERZA"
+    },
+    {
+      "sucursal_lis": "197",
+      "descripcion_lis": "HOSPITAL AERONAUTICO",
+      "tipo": "asistencial",
+      "refes": "10140142431156",
+      "sisa_corto": "15000",
+      "nombre_oficial_sisa": "HOSPITAL AERONAUTICO CORDOBA"
+    },
+    {
+      "sucursal_lis": "88",
+      "descripcion_lis": "HOSPITAL ARIAS",
+      "tipo": "asistencial",
+      "refes": "50140632232124",
+      "sisa_corto": "100521",
+      "nombre_oficial_sisa": "ASOCIACION CIVIL HOSPITAL PARA LA COMUNIDAD DE ARIAS DR .JUAN P. CABRINI"
+    },
+    {
+      "sucursal_lis": "146",
+      "descripcion_lis": "HOSPITAL COMIPAZ",
+      "tipo": "asistencial",
+      "refes": "10140142236949",
+      "sisa_corto": "237590",
+      "nombre_oficial_sisa": "HOAPITAL DE PRONTA ATENCION COMIPAZ"
+    },
+    {
+      "sucursal_lis": "73",
+      "descripcion_lis": "HOSPITAL DE CLINICAS",
+      "tipo": "asistencial",
+      "refes": "10140142031239",
+      "sisa_corto": "14070",
+      "nombre_oficial_sisa": "HOSPITAL NACIONAL DE CLINICAS"
+    },
+    {
+      "sucursal_lis": "278",
+      "descripcion_lis": "HOSPITAL DE PRONTA ATENCIÓN CURA BROCHERO",
+      "tipo": "asistencial",
+      "refes": "10140142236999",
+      "sisa_corto": "239005",
+      "nombre_oficial_sisa": "HOSPITAL DE PRONTA ATENCION CURA BROCHERO"
+    },
+    {
+      "sucursal_lis": "280",
+      "descripcion_lis": "HOSPITAL DE PRONTA ATENCIÓN SAN JORGE",
+      "tipo": "asistencial",
+      "refes": "10140142236930",
+      "sisa_corto": "236444",
+      "nombre_oficial_sisa": "HOSPITAL PRONTA ATENCION CURA BROCHERO"
+    },
+    {
+      "sucursal_lis": "65",
+      "descripcion_lis": "HOSPITAL DE URGENCIAS",
+      "tipo": "asistencial",
+      "refes": "10140142231181",
+      "sisa_corto": "14068",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DE URGENCIAS"
+    },
+    {
+      "sucursal_lis": "126",
+      "descripcion_lis": "HOSPITAL ELPIDIO TORRES",
+      "tipo": "asistencial",
+      "refes": "10140142135270",
+      "sisa_corto": "141239",
+      "nombre_oficial_sisa": "HOSPITAL ELPIDIO TORRES"
+    },
+    {
+      "sucursal_lis": "273",
+      "descripcion_lis": "HOSPITAL EVA PERON",
+      "tipo": "asistencial",
+      "refes": "10140142136748",
+      "sisa_corto": "232201",
+      "nombre_oficial_sisa": "HOSPITAL EVA PERON (B° LOS FILTROS)"
+    },
+    {
+      "sucursal_lis": "199",
+      "descripcion_lis": "HOSPITAL FERREYRA",
+      "tipo": "asistencial",
+      "refes": "10140142333468",
+      "sisa_corto": "106730",
+      "nombre_oficial_sisa": "UNIDAD SANATORIAL APROSS - HOSPITAL RAUL ANGEL FERREYRA"
+    },
+    {
+      "sucursal_lis": "38",
+      "descripcion_lis": "HOSPITAL GENERAL LEVALLE",
+      "tipo": "asistencial",
+      "refes": "10140842231001",
+      "sisa_corto": "24808",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. LUIS V. RODRIGUEZ"
+    },
+    {
+      "sucursal_lis": "211",
+      "descripcion_lis": "HOSPITAL GRAL. DEHEZA",
+      "tipo": "asistencial",
+      "refes": "10140562231151",
+      "sisa_corto": "14284",
+      "nombre_oficial_sisa": "HOSPITAL DE LA COMUNIDAD DR. RINALDO J. A. MAINO DE GENERAL DEHEZA"
+    },
+    {
+      "sucursal_lis": "201",
+      "descripcion_lis": "HOSPITAL INFANTIL",
+      "tipo": "asistencial",
+      "refes": "11140142231337",
+      "sisa_corto": "96148",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL INFANTIL"
+    },
+    {
+      "sucursal_lis": "202",
+      "descripcion_lis": "HOSPITAL ITALIANO",
+      "tipo": "asistencial",
+      "refes": "10140142331332",
+      "sisa_corto": "15001",
+      "nombre_oficial_sisa": "SOCIEDAD DE BENEFICENCIA HOSPITAL ITALIANO"
+    },
+    {
+      "sucursal_lis": "204",
+      "descripcion_lis": "HOSPITAL MILITAR",
+      "tipo": "asistencial",
+      "refes": "10140142431169",
+      "sisa_corto": "15003",
+      "nombre_oficial_sisa": "HOSPITAL MILITAR REGIONAL CORDOBA"
+    },
+    {
+      "sucursal_lis": "195",
+      "descripcion_lis": "HOSPITAL MUNICIPAL DE MONTE MAIZ",
+      "tipo": "asistencial",
+      "refes": "15141822332782",
+      "sisa_corto": "101922",
+      "nombre_oficial_sisa": "HOGAR DE ANCIANOS MONTE MAIZ"
+    },
+    {
+      "sucursal_lis": "225",
+      "descripcion_lis": "HOSPITAL MUNICIPAL JOVITA",
+      "tipo": "asistencial",
+      "refes": "10140352231197",
+      "sisa_corto": "24812",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. LUIS O. RIVERO DE JOVITA"
+    },
+    {
+      "sucursal_lis": "198",
+      "descripcion_lis": "HOSPITAL MUNICIPAL LABORDE",
+      "tipo": "asistencial",
+      "refes": "10141822231215",
+      "sisa_corto": "14819",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL LABORDE"
+    },
+    {
+      "sucursal_lis": "215",
+      "descripcion_lis": "HOSPITAL MUNICIPAL LAGUNA LARGA",
+      "tipo": "asistencial",
+      "refes": "50141192233743",
+      "sisa_corto": "108074",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL LAGUNA LARGA"
+    },
+    {
+      "sucursal_lis": "240",
+      "descripcion_lis": "HOSPITAL MUNICIPAL MALAGUEnO",
+      "tipo": "asistencial",
+      "refes": "50141472333294",
+      "sisa_corto": "105584",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MALAGUEÑO"
+    },
+    {
+      "sucursal_lis": "205",
+      "descripcion_lis": "HOSPITAL MUNICIPAL PRINCIPE DE ASTURIAS",
+      "tipo": "asistencial",
+      "refes": "10140142233079",
+      "sisa_corto": "103588",
+      "nombre_oficial_sisa": "HOSPITAL DEL SUR PRINCIPE DE ASTURIAS"
+    },
+    {
+      "sucursal_lis": "49",
+      "descripcion_lis": "HOSPITAL MUNICIPAL TANCACHA",
+      "tipo": "asistencial",
+      "refes": "10141612231234",
+      "sisa_corto": "14762",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL TANCACHA"
+    },
+    {
+      "sucursal_lis": "206",
+      "descripcion_lis": "HOSPITAL PRIVADO",
+      "tipo": "asistencial",
+      "refes": "10140142331243",
+      "sisa_corto": "15006",
+      "nombre_oficial_sisa": "HOSPITAL PRIVADO UNIVERSITARIO DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "57",
+      "descripcion_lis": "HOSPITAL VIDAL ABAL OLIVA",
+      "tipo": "asistencial",
+      "refes": "13141612131358",
+      "sisa_corto": "14742",
+      "nombre_oficial_sisa": "HOSPITAL COLONIA DR. EMILIO VIDAL ABAL"
+    },
+    {
+      "sucursal_lis": "219",
+      "descripcion_lis": "HUINCA RENANCO",
+      "tipo": "asistencial",
+      "refes": "10140352135185",
+      "sisa_corto": "139383",
+      "nombre_oficial_sisa": "HOSPITAL DR. RENE FAVALORO"
+    },
+    {
+      "sucursal_lis": "271",
+      "descripcion_lis": "ICHO CRUZ DISPENSARIO",
+      "tipo": "asistencial",
+      "refes": "50140912231505",
+      "sisa_corto": "96408",
+      "nombre_oficial_sisa": "DISPENSARIO DE VILLA RIO ICHO CRUZ"
+    },
+    {
+      "sucursal_lis": "90",
+      "descripcion_lis": "INSTITUTO MODELO DE CARDIOLOGIA",
+      "tipo": "asistencial",
+      "refes": "10140142331272",
+      "sisa_corto": "15010",
+      "nombre_oficial_sisa": "INSTITUTO MODELO DE CARDIOLOGIA PRIVADO SRL"
+    },
+    {
+      "sucursal_lis": "265",
+      "descripcion_lis": "INSTITUTO ONCOLOGICO",
+      "tipo": "asistencial",
+      "refes": "50141262234384",
+      "sisa_corto": "125615",
+      "nombre_oficial_sisa": "CENTRO ONCOLOGICO MUNICIPAL"
+    },
+    {
+      "sucursal_lis": "189",
+      "descripcion_lis": "JESUS MARIA (MUNICIPAL)",
+      "tipo": "asistencial",
+      "refes": "50140212232519",
+      "sisa_corto": "100754",
+      "nombre_oficial_sisa": "DISPENSARIO LATINOAMERICA"
+    },
+    {
+      "sucursal_lis": "46",
+      "descripcion_lis": "JUAREZ CELMAN",
+      "tipo": "asistencial",
+      "refes": "50140212232565",
+      "sisa_corto": "100777",
+      "nombre_oficial_sisa": "DISPENSARIO OSCAR CORVALAN LOZANO"
+    },
+    {
+      "sucursal_lis": "282",
+      "descripcion_lis": "JUSTINIANO POSSE",
+      "tipo": "asistencial",
+      "refes": "10141822231229",
+      "sisa_corto": "14816",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN ROQUE"
+    },
+    {
+      "sucursal_lis": "42",
+      "descripcion_lis": "LA CALERA",
+      "tipo": "asistencial",
+      "refes": "50140212232547",
+      "sisa_corto": "100768",
+      "nombre_oficial_sisa": "HOSPITAL ILLIA"
+    },
+    {
+      "sucursal_lis": "69",
+      "descripcion_lis": "LA CARLOTA",
+      "tipo": "asistencial",
+      "refes": "10140562131270",
+      "sisa_corto": "14288",
+      "nombre_oficial_sisa": "HOSPITAL SAN ANTONIO DE LA CARLOTA"
+    },
+    {
+      "sucursal_lis": "27",
+      "descripcion_lis": "LA CUMBRE",
+      "tipo": "asistencial",
+      "refes": "10140912231171",
+      "sisa_corto": "14400",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL LA CUMBRE DR. OSCAR VIGNAROLI"
+    },
+    {
+      "sucursal_lis": "66",
+      "descripcion_lis": "LA FALDA",
+      "tipo": "asistencial",
+      "refes": "10140912231213",
+      "sisa_corto": "14405",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL LA FALDA"
+    },
+    {
+      "sucursal_lis": "295",
+      "descripcion_lis": "LA PAQUITA",
+      "tipo": "asistencial",
+      "refes": "50141402232255",
+      "sisa_corto": "100611",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL LA PAQUITA"
+    },
+    {
+      "sucursal_lis": "229",
+      "descripcion_lis": "LA PARA",
+      "tipo": "asistencial",
+      "refes": "10141052231214",
+      "sisa_corto": "14506",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL LA PARA"
+    },
+    {
+      "sucursal_lis": "77",
+      "descripcion_lis": "LABOULAYE",
+      "tipo": "asistencial",
+      "refes": "10140842131252",
+      "sisa_corto": "14375",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL RAMON JOSE CARCANO"
+    },
+    {
+      "sucursal_lis": "224",
+      "descripcion_lis": "LAS VARILLAS",
+      "tipo": "asistencial",
+      "refes": "50141402232259",
+      "sisa_corto": "100613",
+      "nombre_oficial_sisa": "CENTRO DE SALUD PERIFERICO Nº 1 DE LAS VARILLAS"
+    },
+    {
+      "sucursal_lis": "217",
+      "descripcion_lis": "LEONES",
+      "tipo": "asistencial",
+      "refes": "10140632231230",
+      "sisa_corto": "92442",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN ROQUE DE LEONES"
+    },
+    {
+      "sucursal_lis": "47",
+      "descripcion_lis": "MALVINAS ARGENTINAS",
+      "tipo": "asistencial",
+      "refes": "50140212231442",
+      "sisa_corto": "96281",
+      "nombre_oficial_sisa": "CENTRO DE SALUD EVITA DE MALVINAS ARGENTINAS"
+    },
+    {
+      "sucursal_lis": "233",
+      "descripcion_lis": "MATERNIDAD KOWALK",
+      "tipo": "asistencial",
+      "refes": "12140982231344",
+      "sisa_corto": "96094",
+      "nombre_oficial_sisa": "FUNDACION MATERNIDAD HORTENSIA GARDEY DE KOWALK"
+    },
+    {
+      "sucursal_lis": "234",
+      "descripcion_lis": "MATERNIDAD NACIONAL",
+      "tipo": "asistencial",
+      "refes": "12140142034646",
+      "sisa_corto": "129640",
+      "nombre_oficial_sisa": "HOSPITAL UNIVERSITARIO DE MATERNIDAD Y NEONATOLOGIA (H.U.M.N.)"
+    },
+    {
+      "sucursal_lis": "35",
+      "descripcion_lis": "MATERNIDAD PROVINCIAL (LOCAL)",
+      "tipo": "asistencial",
+      "refes": "12140142136946",
+      "sisa_corto": "237562",
+      "nombre_oficial_sisa": "NUEVA MATERNIDAD PROVINCIAL BRIGADIER JUAN BAUTISTA BUSTOS"
+    },
+    {
+      "sucursal_lis": "43",
+      "descripcion_lis": "MATERNO NEONATAL",
+      "tipo": "asistencial",
+      "refes": "12140142131345",
+      "sisa_corto": "96091",
+      "nombre_oficial_sisa": "HOSPITAL MATERNO NEONATAL"
+    },
+    {
+      "sucursal_lis": "193",
+      "descripcion_lis": "MONTE BUEY",
+      "tipo": "asistencial",
+      "refes": "10140632331331",
+      "sisa_corto": "15002",
+      "nombre_oficial_sisa": "SOCIEDAD DE BENEFICENCIA HOSPITAL ITALIANO MONTE BUEY"
+    },
+    {
+      "sucursal_lis": "40",
+      "descripcion_lis": "MONTE CRISTO",
+      "tipo": "asistencial",
+      "refes": "50141052231446",
+      "sisa_corto": "25443",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MUNICIPAL MONTE CRISTO"
+    },
+    {
+      "sucursal_lis": "257",
+      "descripcion_lis": "MUNICIPALIDAD EPIDEMIOLOGIA",
+      "tipo": "asistencial",
+      "refes": "53140142236013",
+      "sisa_corto": "148811",
+      "nombre_oficial_sisa": "DIRECCION DE EPIDEMIOLOGIA DE LA MUNICIPALIDAD DE CORDOBA"
+    },
+    {
+      "sucursal_lis": "277",
+      "descripcion_lis": "NOETINGER",
+      "tipo": "asistencial",
+      "refes": "50141822232080",
+      "sisa_corto": "100493",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DE NOETINGER"
+    },
+    {
+      "sucursal_lis": "78",
+      "descripcion_lis": "OBISPO TREJO (MUNICIPAL)",
+      "tipo": "asistencial",
+      "refes": "10141052231219",
+      "sisa_corto": "14514",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL OBISPO TREJO"
+    },
+    {
+      "sucursal_lis": "54",
+      "descripcion_lis": "OLIVA (H. ZONAL)",
+      "tipo": "asistencial",
+      "refes": "10141612131268",
+      "sisa_corto": "14743",
+      "nombre_oficial_sisa": "HOSPITAL ZONAL OLIVA"
+    },
+    {
+      "sucursal_lis": "34",
+      "descripcion_lis": "ONCATIVO",
+      "tipo": "asistencial",
+      "refes": "10141192231225",
+      "sisa_corto": "14551",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN ISIDRO"
+    },
+    {
+      "sucursal_lis": "56",
+      "descripcion_lis": "PILAR",
+      "tipo": "asistencial",
+      "refes": "50141192231404",
+      "sisa_corto": "30080",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MADRE TERESA DE CALCUTA DE PILAR"
+    },
+    {
+      "sucursal_lis": "121",
+      "descripcion_lis": "POLICLINICO POLICIAL",
+      "tipo": "asistencial",
+      "refes": "10140142431276",
+      "sisa_corto": "14082",
+      "nombre_oficial_sisa": "POLICLINICO POLICIAL SAN RAFAEL"
+    },
+    {
+      "sucursal_lis": "238",
+      "descripcion_lis": "PORTEnA",
+      "tipo": "asistencial",
+      "refes": "50141402231516",
+      "sisa_corto": "30079",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL PORTEÑA"
+    },
+    {
+      "sucursal_lis": "30",
+      "descripcion_lis": "RIO CEBALLOS",
+      "tipo": "asistencial",
+      "refes": "50140212232535",
+      "sisa_corto": "100762",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MUNICIPAL DR. NORCELO CARDOZO"
+    },
+    {
+      "sucursal_lis": "18",
+      "descripcion_lis": "RIO SEGUNDO",
+      "tipo": "asistencial",
+      "refes": "50141192231404",
+      "sisa_corto": "30080",
+      "nombre_oficial_sisa": "CENTRO DE SALUD MADRE TERESA DE CALCUTA DE PILAR"
+    },
+    {
+      "sucursal_lis": "55",
+      "descripcion_lis": "RIO TERCERO (MUNICIPAL)",
+      "tipo": "asistencial",
+      "refes": "50140142236981",
+      "sisa_corto": "237991",
+      "nombre_oficial_sisa": "CENTRO DE SALUD N° 42 - BARRIO COMERCIAL"
+    },
+    {
+      "sucursal_lis": "4",
+      "descripcion_lis": "SALDAN",
+      "tipo": "asistencial",
+      "refes": "50140212236728",
+      "sisa_corto": "108586",
+      "nombre_oficial_sisa": "CENTRO DE ATENCION PRIMARIA DE LA SALUD GUILLERMINA BLANCA VERON"
+    },
+    {
+      "sucursal_lis": "242",
+      "descripcion_lis": "SALSIPUEDES",
+      "tipo": "asistencial",
+      "refes": "50140212231393",
+      "sisa_corto": "30027",
+      "nombre_oficial_sisa": "CAPS DR. OSTROVSKY"
+    },
+    {
+      "sucursal_lis": "243",
+      "descripcion_lis": "SAN CARLOS MINA",
+      "tipo": "asistencial",
+      "refes": "10140702231244",
+      "sisa_corto": "14354",
+      "nombre_oficial_sisa": "HOSPITAL RAMON PERALTA DE SAN CARLOS MINAS"
+    },
+    {
+      "sucursal_lis": "244",
+      "descripcion_lis": "SAN FRANCISCO DEL CHANAR",
+      "tipo": "asistencial",
+      "refes": "10141542231224",
+      "sisa_corto": "14713",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SAN FRANCISCO DEL CHAÑAR"
+    },
+    {
+      "sucursal_lis": "246",
+      "descripcion_lis": "SAN JOSE DE LA DORMIDA",
+      "tipo": "asistencial",
+      "refes": "10141752131263",
+      "sisa_corto": "14787",
+      "nombre_oficial_sisa": "HOSPITAL VECINAL SAN JOSE DE LA DORMIDA"
+    },
+    {
+      "sucursal_lis": "123",
+      "descripcion_lis": "SAN MARCOS SIERRAS MUNICIPAL",
+      "tipo": "asistencial",
+      "refes": "51140282335589",
+      "sisa_corto": "146657",
+      "nombre_oficial_sisa": "LABORATORIO SAN MARCOS SIERRAS"
+    },
+    {
+      "sucursal_lis": "100",
+      "descripcion_lis": "SANATORIO ACONCAGUA",
+      "tipo": "asistencial",
+      "refes": "10140142331292",
+      "sisa_corto": "15023",
+      "nombre_oficial_sisa": "ACONCAGUA SANATORIO PRIVADO"
+    },
+    {
+      "sucursal_lis": "64",
+      "descripcion_lis": "SANATORIO ALLENDE",
+      "tipo": "asistencial",
+      "refes": "10140142331284",
+      "sisa_corto": "15019",
+      "nombre_oficial_sisa": "SANATORIO ALLENDE"
+    },
+    {
+      "sucursal_lis": "20",
+      "descripcion_lis": "SANTA ROSA CALAMUCHITA",
+      "tipo": "asistencial",
+      "refes": "10140072131249",
+      "sisa_corto": "14844",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL EVA PERON DE SANTA ROSA DE CALAMUCHITA"
+    },
+    {
+      "sucursal_lis": "270",
+      "descripcion_lis": "SANTIAGO TEMPLE",
+      "tipo": "asistencial",
+      "refes": "50141192231538",
+      "sisa_corto": "30019",
+      "nombre_oficial_sisa": "DISPENSARIO MUNICIPAL DR. JOSE CARLOS ALDERETE"
+    },
+    {
+      "sucursal_lis": "253",
+      "descripcion_lis": "SEBASTIAN EL CANO",
+      "tipo": "asistencial",
+      "refes": "10141122231233",
+      "sisa_corto": "14999",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL SANTA RITA DE SEBASTIAN ELCANO"
+    },
+    {
+      "sucursal_lis": "39",
+      "descripcion_lis": "UNIDAD CARCELARIA 3",
+      "tipo": "asistencial",
+      "refes": "10140142135177",
+      "sisa_corto": "138207",
+      "nombre_oficial_sisa": "CENTRO MEDICO COMPLEJO CARCELARIO N°1 REVERENDO PADRE LUCHESSE"
+    },
+    {
+      "sucursal_lis": "290",
+      "descripcion_lis": "VALLE HERMOSO",
+      "tipo": "asistencial",
+      "refes": "50140912232010",
+      "sisa_corto": "100446",
+      "nombre_oficial_sisa": "CENTRO DE ATENCION PRIMARIA DE LA SALUD RENE FAVALORO"
+    },
+    {
+      "sucursal_lis": "41",
+      "descripcion_lis": "VILLA ALLENDE",
+      "tipo": "asistencial",
+      "refes": "10140212231210",
+      "sisa_corto": "14154",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL JOSEFINA PRIEUR"
+    },
+    {
+      "sucursal_lis": "53",
+      "descripcion_lis": "VILLA DE MARIA DE RIO SECO",
+      "tipo": "asistencial",
+      "refes": "10141122231183",
+      "sisa_corto": "14530",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DEL NORTE"
+    },
+    {
+      "sucursal_lis": "291",
+      "descripcion_lis": "VILLA DE SOTO",
+      "tipo": "asistencial",
+      "refes": "10140282231237",
+      "sisa_corto": "14187",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL VILLA DE SOTO"
+    },
+    {
+      "sucursal_lis": "26",
+      "descripcion_lis": "VILLA DEL ROSARIO",
+      "tipo": "asistencial",
+      "refes": "10141192131257",
+      "sisa_corto": "14571",
+      "nombre_oficial_sisa": "HOSPITAL SAN VICENTE DE PAUL"
+    },
+    {
+      "sucursal_lis": "292",
+      "descripcion_lis": "VILLA DEL TOTORAL",
+      "tipo": "asistencial",
+      "refes": "10141682231182",
+      "sisa_corto": "14778",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DE VILLA DEL TOTORAL"
+    },
+    {
+      "sucursal_lis": "51",
+      "descripcion_lis": "VILLA DOLORES",
+      "tipo": "asistencial",
+      "refes": "10141332131254",
+      "sisa_corto": "14595",
+      "nombre_oficial_sisa": "HOSPITAL REGIONAL VILLA DOLORES"
+    },
+    {
+      "sucursal_lis": "52",
+      "descripcion_lis": "VILLA GRAL. BELGRANO",
+      "tipo": "asistencial",
+      "refes": "50140772232068",
+      "sisa_corto": "100487",
+      "nombre_oficial_sisa": "DISPENSARIO ARTURO ILLIA"
+    },
+    {
+      "sucursal_lis": "36",
+      "descripcion_lis": "VILLA HUIDOBRO",
+      "tipo": "asistencial",
+      "refes": "10140352231186",
+      "sisa_corto": "24887",
+      "nombre_oficial_sisa": "HOSPITAL MUNICIPAL DR. ARNALDO GAROFALO"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+# Catálogo oficial SISA — Departamentos de Córdoba
+# Fuente: listado_sisa_departamentos_1777312226935.csv (27-04-2026, Fernando Canna)
+# Encoding: utf-8
+# idProvincia SISA Córdoba: 6
+provincia_codigo_sisa: '6'
+provincia_nombre: Córdoba
+departamentos:
+  - codigo_sisa: '192'
+    nombre: Calamuchita
+    codigo_indec: '14007'
+  - codigo_sisa: '193'
+    nombre: Capital
+    codigo_indec: '14014'
+  - codigo_sisa: '194'
+    nombre: Colón
+    codigo_indec: '14021'
+  - codigo_sisa: '195'
+    nombre: Cruz del Eje
+    codigo_indec: '14028'
+  - codigo_sisa: '196'
+    nombre: General Roca
+    codigo_indec: '14035'
+  - codigo_sisa: '197'
+    nombre: General San Martín
+    codigo_indec: '14042'
+  - codigo_sisa: '198'
+    nombre: Ischilín
+    codigo_indec: '14049'
+  - codigo_sisa: '199'
+    nombre: Juárez Celman
+    codigo_indec: '14056'
+  - codigo_sisa: '200'
+    nombre: Marcos Juárez
+    codigo_indec: '14063'
+  - codigo_sisa: '201'
+    nombre: Minas
+    codigo_indec: '14070'
+  - codigo_sisa: '202'
+    nombre: Pocho
+    codigo_indec: '14077'
+  - codigo_sisa: '203'
+    nombre: Presidente Roque Sáenz Peña
+    codigo_indec: '14084'
+  - codigo_sisa: '204'
+    nombre: Punilla
+    codigo_indec: '14091'
+  - codigo_sisa: '205'
+    nombre: Río Cuarto
+    codigo_indec: '14098'
+  - codigo_sisa: '206'
+    nombre: Río Primero
+    codigo_indec: '14105'
+  - codigo_sisa: '207'
+    nombre: Río Seco
+    codigo_indec: '14112'
+  - codigo_sisa: '208'
+    nombre: Río Segundo
+    codigo_indec: '14119'
+  - codigo_sisa: '209'
+    nombre: San Alberto
+    codigo_indec: '14126'
+  - codigo_sisa: '210'
+    nombre: San Javier
+    codigo_indec: '14133'
+  - codigo_sisa: '211'
+    nombre: San Justo
+    codigo_indec: '14140'
+  - codigo_sisa: '212'
+    nombre: Santa María
+    codigo_indec: '14147'
+  - codigo_sisa: '213'
+    nombre: Sobremonte
+    codigo_indec: '14154'
+  - codigo_sisa: '214'
+    nombre: Tercero Arriba
+    codigo_indec: '14161'
+  - codigo_sisa: '215'
+    nombre: Totoral
+    codigo_indec: '14168'
+  - codigo_sisa: '216'
+    nombre: Tulumba
+    codigo_indec: '14175'
+  - codigo_sisa: '217'
+    nombre: Unión
+    codigo_indec: '14182'

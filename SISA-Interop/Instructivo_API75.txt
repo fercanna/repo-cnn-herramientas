@@ -1,0 +1,104 @@
+Ayuda en línea > Módulo 5. - Registros Federales > Módulo 5.2. - Registros Federales asociados al ciudadano > Capítulo 5.2.16. - SNVS. Sistema Nacional de Vigilancia de la Salud > Servicios Web y APIs
+API 75
+Muestra Laboratorio
+API REST destinada a realizar carga de muestras a un EVENTO_CASO previamente registrado. Esta API equivale al segundo paso del circuito completo de Servicios de SNVS, continuación del WS400 – Alta de Evento Nominal.
+
+Para su uso en el entorno operativo, es necesario contar con un usuario SISA y los permisos de gestión específicos.
+
+Para solicitarlos, es necesario contactarse con el equipo del SNVS 2.0, vía mail, a: interoperabilidadsnvs@gmail.com.
+
+Información general (Versión 1.0):
+Construcción del Request:
+Campos vía JSON
+Código JSON	Descripción
+adecuada	true/false. Informa si la muestra enviada es adecuada o no.
+aislamiento	true/false. Informa si se está enviado un aislamiento. Si se envía una muestra, el valor debe ser: “false”.
+fechaToma	Fecha de toma de la muestra
+Formato: AAAA-MM-DD
+idEstablecimientoToma	ID del establecimiento de toma de la muestra.
+(ID_ORIGEN)*
+idEventoCaso	ID del EVENTO_CASO previamente cargado
+(consultar por WS400 – Alta de Evento nominal)
+idMuestra	ID de la muestra.
+idtipoMuestra	ID del tipo de muestra.
+muestra	true/false. Informa si se está enviando una muestra o no. Si se envía una muestra el valor debe ser: “true”.
+Para determinados parámetros de entrada se deben utilizar las Codificaciones auxiliares del SNVS.
+
+
+
+
+Campos vía Headers:
+Content-Type: application/json
+APP_ID: ID otorgado junto con el alta del Usuario SISA.
+APP_KEY: Clave correspondiente al ID.
+
+Enlace de llamado:
+EndPoint o URL: https://apisalud.msal.gob.ar/snvsLaboratoriosMuestra/v1/eventoMuestras
+Método: POST.
+
+* El ID_ORIGEN de un establecimiento se puede obtener accediendo al SISA. Esta información está disponible (y es de acceso público), en el apartado “Agenda Sanitaria REFES y REFEPS”, ubicado en el carrusel móvil de la página de inicio. El dato en cuestión se muestra como “Código interno SISA”.
+
+Entornos Bajos (de prueba):
+Content-Type: application/json
+APP_ID: PruebasWSQA_API75_ID
+APP_KEY: PruebasWSQA_API75_KEY
+
+Enlace de llamado (Prueba):
+EndPoint o URL: https://laboratoriomuestrasqa.sisa.msal.gov.ar/snvsLaboratoriosMuestra/v1/eventoMuestras
+Método: POST.
+
+Ejemplo de llamada:
+
+
+{
+    "adecuada": true,
+    "aislamiento": false,
+    "fechaToma": "2020-07-06",
+    "idEstablecimientoToma": 11364,
+    "idEventoCaso": 2061503,
+    "idMuestra": 103,
+    "idtipoMuestra": 4,
+    "muestra": true
+}
+
+
+EndPoint de consulta para Codificaciones auxiliares específicas del registro (entorno PRODUCTIVO):
+EndPoint o URL: https://apisalud.msal.gob.ar/snvsLaboratoriosMuestra/v1/eventoMuestras/datosAuxiliares/
+Método: GET.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: usuario_3SCALE
+APP_KEY: clave_3SCALE
+
+EndPoint de consulta para Codificaciones auxiliares específicas del registro (entorno de PRUEBAS):
+EndPoint o URL: https://laboratoriomuestrasqa.sisa.msal.gov.ar/snvsLaboratoriosMuestra/v1/eventoMuestras/datosAuxiliares/
+Método: GET.
+Autenticación: vía Encabezados (HEADERS), de la siguiente manera:
+APP_ID: PruebasWSQA_API75_ID
+APP_KEY: PruebasWSQA_API75_KEY
+
+Ejemplo de respuesta:
+
+[
+    {
+        "idEvento": 106,
+        "evento": "Aborto o muerte fetal asociado a la infección por ZIKV",
+        "idMuestra": 109,
+        "muestra": "Cordón umbilical",
+        "idTipoMuestra": 3,
+        "tipoMuestra": "Humano - espacios estériles"
+    },
+    {
+        "idEvento": 106,
+        "evento": "Aborto o muerte fetal asociado a la infección por ZIKV",
+        "idMuestra": 166,
+        "muestra": "Fluídos vaginales",
+        "idTipoMuestra": 4,
+        "tipoMuestra": "Humano - espacios no estériles"
+    }
+]
+
+
+Sugerencia: Una buena App para realizar pruebas, es el Postman de Google. Es gratuita y se puede descargar en el siguiente enlace: https://www.getpostman.com/downloads/.
+
+Para consultas administrativas en relación a usuarios y/o permisos, comunicarse con el equipo del SNVS 2.0: interoperabilidadsnvs@gmail.com
+Por consultas técnicas y de uso, comunicarse con el equipo de Soporte técnico del SISA: soporte@sisa.msal.gov.ar

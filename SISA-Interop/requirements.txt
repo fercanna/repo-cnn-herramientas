@@ -1,0 +1,10 @@
+# SISA Interop — dependencias mínimas
+#
+# Instalación en una máquina nueva:
+#   python -m pip install -r requirements.txt
+#
+# Probado con Python 3.10+ en Windows.
+
+requests>=2.31         # HTTP a SISA (WS400, API75, API76)
+pandas>=2.0            # Lectura del TXT del LIS (TAB-separado, latin1)
+PyYAML>=6.0            # Catálogos geográficos (departamentos / localidades)

@@ -1,0 +1,764 @@
+{
+  "mapeo": [
+    {
+      "estudio_codigo": 67,
+      "estudio_nombre": "AC ANTI TRYPANOSOMA CRUZI ELISA",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 89,
+        "idEvento": 188,
+        "idGrupoEvento": 120
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 569,
+        "idTipoPrueba": 468
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 67,
+      "estudio_nombre": "AC ANTI TRYPANOSOMA CRUZI ELISA",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 82,
+        "idEvento": 108,
+        "idGrupoEvento": 120
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 569,
+        "idTipoPrueba": 468
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 49,
+      "estudio_nombre": "DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 104,
+        "idEvento": 109,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 583,
+        "idTipoPrueba": 383
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 49,
+      "estudio_nombre": "DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 174,
+        "idEvento": 109,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 583,
+        "idTipoPrueba": 383
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 522,
+      "estudio_nombre": "DETECCION CUALITATIVA PCR RNA",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 895,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 3
+    },
+    {
+      "estudio_codigo": 522,
+      "estudio_nombre": "DETECCION CUALITATIVA PCR RNA",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 903,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 4
+    },
+    {
+      "estudio_codigo": 452,
+      "estudio_nombre": "FLUA-FLUB-SARSCOV2 (COBAS 5800)",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 895,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 3
+    },
+    {
+      "estudio_codigo": 452,
+      "estudio_nombre": "FLUA-FLUB-SARSCOV2 (COBAS 5800)",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 903,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 4
+    },
+    {
+      "estudio_codigo": 3,
+      "estudio_nombre": "HEPATITIS A",
+      "poblacion": "NO_GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 815,
+        "idEvento": 1,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 4,
+        "idTipoPrueba": 2
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 3,
+      "estudio_nombre": "HEPATITIS A",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 274,
+        "idEvento": 1,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 4,
+        "idTipoPrueba": 2
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 202,
+      "estudio_nombre": "HEPATITIS B GENERAL",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 278,
+        "idEvento": 2,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 714,
+        "idTipoPrueba": 10
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 142,
+      "estudio_nombre": "AG HBS CUALITATIVO",
+      "poblacion": "NO_GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 278,
+        "idEvento": 2,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 19,
+        "idTipoPrueba": 10
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 142,
+      "estudio_nombre": "AG HBS CUALITATIVO",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 278,
+        "idEvento": 286,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 238,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 19,
+        "idTipoPrueba": 10
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 479,
+      "estudio_nombre": "HEPATITIS C POSITIVO",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 286,
+        "idEvento": 3,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 715,
+        "idTipoPrueba": 14
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 4,
+      "estudio_nombre": "ANTI VHC",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 286,
+        "idEvento": 3,
+        "idGrupoEvento": 1
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 28,
+        "idTipoPrueba": 14
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 18,
+      "estudio_nombre": "IGM DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 104,
+        "idEvento": 109,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 577,
+        "idTipoPrueba": 484
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 18,
+      "estudio_nombre": "IGM DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 174,
+        "idEvento": 109,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 577,
+        "idTipoPrueba": 484
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 35,
+      "estudio_nombre": "INFLUENZA A IF",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NEGATIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 903,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 103,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 1192,
+        "idTipoPrueba": 792
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 35,
+      "estudio_nombre": "INFLUENZA A IF",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 895,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 103,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 235,
+        "idTipoPrueba": 195
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 203,
+      "estudio_nombre": "MODULAR INFLUENZA A",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 895,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 3
+    },
+    {
+      "estudio_codigo": 203,
+      "estudio_nombre": "MODULAR INFLUENZA A",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 903,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 294,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 247,
+        "idTipoPrueba": 228
+      },
+      "idResultado": 4
+    },
+    {
+      "estudio_codigo": 236,
+      "estudio_nombre": "MOLECULAR DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 104,
+        "idEvento": 109,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 958,
+        "idTipoPrueba": 471
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 236,
+      "estudio_nombre": "MOLECULAR DENGUE",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NO DETECTABLE",
+      "ws400": {
+        "idClasificacionManualCaso": 104,
+        "idEvento": 100,
+        "idGrupoEvento": 107
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 958,
+        "idTipoPrueba": 471
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 194,
+      "estudio_nombre": "RUBEOLA",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NEGATIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 815,
+        "idEvento": 164,
+        "idGrupoEvento": 115
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 515,
+        "idTipoPrueba": 440
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 194,
+      "estudio_nombre": "RUBEOLA",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 197,
+        "idEvento": 164,
+        "idGrupoEvento": 115
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 515,
+        "idTipoPrueba": 440
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 175,
+      "estudio_nombre": "SARAMPION",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NEGATIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 815,
+        "idEvento": 164,
+        "idGrupoEvento": 115
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 521,
+        "idTipoPrueba": 441
+      },
+      "idResultado": 2
+    },
+    {
+      "estudio_codigo": 175,
+      "estudio_nombre": "SARAMPION",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 198,
+        "idEvento": 164,
+        "idGrupoEvento": 115
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 521,
+        "idTipoPrueba": 441
+      },
+      "idResultado": 1
+    },
+    {
+      "estudio_codigo": 201,
+      "estudio_nombre": "SIFILIS GENERAL",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 153,
+        "idEvento": 115,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 143,
+        "idTipoPrueba": 143
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 201,
+      "estudio_nombre": "SIFILIS GENERAL",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 743,
+        "idEvento": 193,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 1010,
+        "idTipoPrueba": 143
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 72,
+      "estudio_nombre": "SIFILIS VDRL",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 743,
+        "idEvento": 193,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 153,
+        "idTipoPrueba": 145
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 72,
+      "estudio_nombre": "SIFILIS VDRL",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 153,
+        "idEvento": 115,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 153,
+        "idTipoPrueba": 145
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 7101,
+      "estudio_nombre": "SIFILIS",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 743,
+        "idEvento": 193,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 876,
+        "idTipoPrueba": 634
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 14,
+      "estudio_nombre": "SIFILIS BCO",
+      "poblacion": "NO_GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 743,
+        "idEvento": 193,
+        "idGrupoEvento": 135
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 876,
+        "idTipoPrueba": 634
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 7101,
+      "estudio_nombre": "SIFILIS",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "REACTIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 153,
+        "idEvento": 115,
+        "idGrupoEvento": 109
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 876,
+        "idTipoPrueba": 634
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 5,
+      "estudio_nombre": "ANTI VIH COMBO AG_AC",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 5,
+        "idEvento": 105,
+        "idGrupoEvento": 103
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 114,
+        "idTipoPrueba": 123
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 5,
+      "estudio_nombre": "ANTI VIH COMBO AG_AC",
+      "poblacion": "GESTANTE",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 5,
+        "idEvento": 117,
+        "idGrupoEvento": 103
+      },
+      "api75": {
+        "idMuestra": 1,
+        "idTipoMuestra": 3
+      },
+      "api76": {
+        "idPrueba": 114,
+        "idTipoPrueba": 123
+      },
+      "idResultado": 109
+    },
+    {
+      "estudio_codigo": 37,
+      "estudio_nombre": "VIRUS RESPIRATORIO SINCITIAL",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "NEGATIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 903,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 103,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 1192,
+        "idTipoPrueba": 792
+      },
+      "idResultado": 508
+    },
+    {
+      "estudio_codigo": 37,
+      "estudio_nombre": "VIRUS RESPIRATORIO SINCITIAL",
+      "poblacion": "GENERAL",
+      "condicion_vigilancia": "POSITIVO",
+      "ws400": {
+        "idClasificacionManualCaso": 339,
+        "idEvento": 330,
+        "idGrupoEvento": 113
+      },
+      "api75": {
+        "idMuestra": 103,
+        "idTipoMuestra": 4
+      },
+      "api76": {
+        "idPrueba": 238,
+        "idTipoPrueba": 193
+      },
+      "idResultado": 109
+    }
+  ]
+}

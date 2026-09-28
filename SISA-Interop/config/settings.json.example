@@ -1,0 +1,13 @@
+{
+  "_descripcion": "Plantilla pública. Copialá como settings.json y completá los valores reales del laboratorio. NO subir settings.json al repo.",
+  "entorno": "prod",
+  "refes_laboratorio": "REFES_DE_TU_LABORATORIO_14_DIGITOS",
+  "id_interno_sisa": "ID_INTERNO_SISA_DE_TU_LAB_6_DIGITOS",
+  "domicilio_default": {
+    "_descripcion": "Domicilio que se usa cuando RENAPER no devuelve domicilio del paciente. Usar nomenclador propio SISA (NO INDEC) para idProvincia/idDepartamento. idLocalidad usa INDEC.",
+    "idProvincia": 6,
+    "idDepartamento": 194,
+    "idLocalidad": 14021230,
+    "idPais": 200
+  }
+}
