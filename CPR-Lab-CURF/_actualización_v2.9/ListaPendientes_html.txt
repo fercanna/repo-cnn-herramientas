@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; color: #333; }
+    
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; background: white; table-layout: auto; }
+    th { background-color: #f8f9fa; text-align: left; padding: 10px 12px; border-bottom: 2px solid #dee2e6; color: #495057; font-weight: 600; white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:hover { background-color: #f1f3f4; }
+    
+    /* Expandible de items */
+    .items-detalle { 
+      display: none; 
+      margin-top: 8px; 
+      padding: 10px; 
+      background: #f8f9fa; 
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .items-detalle.visible { display: block; }
+    .item-pendiente { 
+      padding: 4px 0; 
+      border-bottom: 1px dashed #dee2e6;
+    }
+    .item-pendiente:last-child { border-bottom: none; }
+    
+    /* Botón expandir */
+    .btn-expand { 
+      cursor: pointer; 
+      color: #1967d2; 
+      font-size: 11px;
+      text-decoration: underline;
+      border: none;
+      background: none;
+      padding: 0;
+    }
+
+    /* Estado badges */
+    .status-badge { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status-pendiente { background-color: #fff3cd; color: #856404; }
+    .status-parcial { background-color: #d1e7dd; color: #0f5132; }
+
+    /* ✅ NUEVO: Badge de progreso de items */
+    .progreso-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+    .progreso-ok { background: #d1e7dd; color: #0f5132; }
+    .progreso-parcial { background: #fff3cd; color: #856404; }
+    .progreso-sin { background: #f8f9fa; color: #6c757d; border: 1px solid #dee2e6; }
+
+    /* ✅ NUEVO: Fechas de entrega con alertas */
+    .fecha-normal { color: #333; }
+    .fecha-vencida { 
+      color: #d93025; 
+      font-weight: bold;
+    }
+    .fecha-vencida::before { content: '🔴 '; }
+    .fecha-proxima { color: #856404; font-weight: bold; }
+    .fecha-proxima::before { content: '🟡 '; }
+
+    /* Barra resumen de alertas */
+    .alerta-bar {
+      display: none;
+      background: #fce8e6;
+      border: 1px solid #f28b82;
+      border-radius: 6px;
+      padding: 10px 15px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #c62828;
+    }
+    
+    /* Botonera */
+    .toolbar { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; }
+    .btn { padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px; transition: background 0.2s; }
+    .btn-print { background: #4285f4; color: white; }
+    .btn-copy { background: #e8f0fe; color: #1967d2; }
+
+    /* ✅ NUEVO (v2.7): acciones de envío por orden */
+    /* ✅ v2.8.1: más aire — en 820px quedaban 3 botones apretados/wrapeados */
+    th:last-child, td:last-child { white-space: nowrap; } /* columna Acciones no debe partir en 2 líneas */
+    .btn-accion {
+      border: none; background: #f1f3f4; cursor: pointer;
+      padding: 7px 10px; border-radius: 4px; font-size: 15px; margin-right: 4px;
+      line-height: 1;
+    }
+    .btn-accion:hover { background: #e0e0e0; }
+    .btn-accion:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-enviar:not(:disabled) { background: #fce8e6; }
+    .sin-email-tag { font-size: 10px; color: #d93025; display: block; margin-top: 4px; white-space: normal; }
+
+    /* ✅ NUEVO (v2.8): aviso de devolución pendiente */
+    .devolucion-badge { background: #fce8e6; color: #c62828; margin-left: 4px; }
+    
+    /* v2.9.3: anular pendiente + líneas cerradas */
+    .btn-anular { border: 1px solid #f1b0ab; background: #fff; color: #c62828; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; margin-top: 4px; }
+    .btn-anular:hover { background: #fce8e6; }
+    .item-cerrado { font-size: 12px; color: #5f6368; padding: 5px 0; border-top: 1px dashed #dadce0; }
+    .item-cerrado .tag-cerrado { background: #e8eaed; color: #3c4043; border-radius: 10px; padding: 1px 7px; font-size: 10px; font-weight: bold; }
+    .anular-panel { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.35); align-items: center; justify-content: center; z-index: 50; }
+    .anular-panel.visible { display: flex; }
+    .anular-box { background: #fff; padding: 18px 20px; border-radius: 8px; width: 360px; box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
+    .anular-box h3 { margin: 0 0 6px; font-size: 14px; }
+    .anular-box label { font-size: 12px; font-weight: bold; display: block; margin-top: 8px; }
+    .anular-box input, .anular-box textarea { width: 100%; box-sizing: border-box; padding: 7px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+    .anular-box .botones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    .anular-box button { padding: 7px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .anular-aviso { font-size: 11px; color: #5f6368; background: #f8f9fa; padding: 7px 9px; border-radius: 4px; margin-top: 6px; }
+
+    /* Filtros */
+    .filtros { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+    .filtros label { font-weight: bold; font-size: 12px; color: #555; margin: 0; }
+    .filtros select { width: auto; padding: 6px 10px; font-size: 12px; }
+    
+    .empty-state { text-align: center; color: #666; margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 8px; }
+    .loader { text-align: center; margin-top: 20px; color: #4285f4; }
+    
+    @media print {
+      .toolbar, .loader, .btn-expand, .filtros, .alerta-bar { display: none !important; }
+      .items-detalle { display: block !important; }
+      body { padding: 0; }
+      table { border: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- ✅ NUEVO: Barra de alerta de demoras -->
+  <div class="alerta-bar" id="alertaBar"></div>
+
+  <div class="toolbar" id="toolbar" style="display:none;">
+    <button class="btn btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
+    <button class="btn btn-copy" onclick="copiarTabla()">📋 Copiar a Excel</button>
+  </div>
+
+  <!-- ✅ NUEVO: Filtros rápidos -->
+  <div class="filtros" id="filtros" style="display:none;">
+    <label>Filtrar:</label>
+    <select id="filtroEstado" onchange="aplicarFiltros()">
+      <option value="">Todos los estados</option>
+      <option value="Pendiente">Solo Pendientes</option>
+      <option value="Recepción Parcial">Solo Parciales</option>
+    </select>
+    <select id="filtroAlerta" onchange="aplicarFiltros()">
+      <option value="">Todas las fechas</option>
+      <option value="vencida">Entrega vencida</option>
+      <option value="proxima">Vence en 3 días</option>
+    </select>
+    <span id="contadorFiltro" style="font-size: 12px; color: #666;"></span>
+  </div>
+
+  <div id="loader" class="loader">
+    <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+    Buscando órdenes pendientes...
+  </div>
+  
+  <div id="content">
+    <div id="tablaContainer"></div>
+  </div>
+  
+  <div class="anular-panel" id="anularPanel">
+    <div class="anular-box">
+      <h3 id="anularTitulo">Anular pendiente</h3>
+      <div id="anularItem" style="font-size:12px;color:#3c4043;"></div>
+      <div class="anular-aviso">Usalo cuando el proveedor ya no entregará este ítem o ya no lo querés recibir. Si más adelante lo necesitás, se pide con una orden nueva. Queda registrado quién y cuándo.</div>
+      <label>Cantidad a anular</label>
+      <input type="number" id="anularCant" min="1" step="1">
+      <label>Motivo *</label>
+      <textarea id="anularMotivo" rows="3" placeholder="Ej: el proveedor no tiene el vencimiento solicitado; se pedirá cuando haya"></textarea>
+      <div class="botones">
+        <button style="background:#f1f3f4;" onclick="cerrarAnular()">Cancelar</button>
+        <button style="background:#c62828;color:#fff;" onclick="confirmarAnular()">Anular pendiente</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mensajeCopia" style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: white; padding: 8px 16px; border-radius: 4px; font-size: 12px; opacity: 0; transition: opacity 0.3s;">
+    ✅ Tabla copiada al portapapeles
+  </div>
+
+<div style="font-size:10px;color:#aaa;text-align:right;margin-top:8px;">CURF v2.9.3</div>
+  <script>
+    let ordenesGlobal = [];
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(dibujarTabla)
+        .withFailureHandler(mostrarError)
+        .getOrdenesPendientes();
+    };
+
+    // ✅ NUEVO: Analiza si una fecha de entrega está vencida o próxima
+    function estadoFecha(fechaStr) {
+      if (!fechaStr || fechaStr === '-') return 'normal';
+      // fechaStr viene como dd/MM/yyyy
+      const partes = fechaStr.split('/');
+      if (partes.length !== 3) return 'normal';
+      const fecha = new Date(partes[2], partes[1]-1, partes[0]);
+      const diffDias = Math.floor((fecha - hoy) / (1000*60*60*24));
+      if (diffDias < 0) return 'vencida';
+      if (diffDias <= 3) return 'proxima';
+      return 'normal';
+    }
+
+    function dibujarTabla(ordenes) {
+      document.getElementById('loader').style.display = 'none';
+      const container = document.getElementById('tablaContainer');
+      ordenesGlobal = ordenes;
+
+      if (!ordenes || ordenes.length === 0) {
+        container.innerHTML = '<div class="empty-state">✅ <strong>Todo al día</strong><br>No hay órdenes pendientes de recepción.</div>';
+        return;
+      }
+
+      document.getElementById('toolbar').style.display = 'flex';
+      document.getElementById('filtros').style.display = 'flex';
+
+      // ✅ Barra de alertas de demora
+      const vencidas = ordenes.filter(o => estadoFecha(o.fecha_entrega_estimada) === 'vencida');
+      if (vencidas.length > 0) {
+        const bar = document.getElementById('alertaBar');
+        bar.style.display = 'block';
+        bar.innerHTML = `🔴 <strong>${vencidas.length} orden(es) con fecha de entrega vencida</strong>: ${vencidas.map(o => o.numero_orden).join(', ')} — Considerá hacer seguimiento con el proveedor.`;
+      }
+
+      renderTabla(ordenes);
+    }
+
+    function renderTabla(ordenes) {
+      const container = document.getElementById('tablaContainer');
+      
+      // ✅ NUEVO: columna Entrega Estimada
+      let html = '<table id="tablaDatos"><thead><tr>';
+      html += '<th>Orden</th><th>Proveedor</th><th>Emitida</th><th>Entrega Est.</th><th>Estado</th><th>Progreso</th><th>Items Pendientes</th><th>Acciones</th>';
+      html += '</tr></thead><tbody>';
+      
+      ordenes.forEach((orden, idx) => {
+        const cssClass = orden.estado === 'Recepción Parcial' ? 'status-parcial' : 'status-pendiente';
+        const total = orden.total_orden ? '$' + parseFloat(orden.total_orden).toFixed(2) : '-';
+        const cantPendientes = orden.items_pendientes ? orden.items_pendientes.length : 0;
+        
+        // ✅ Badge de progreso
+        let progresoBadge = '';
+        if (orden.estado === 'Recepción Parcial') {
+          const totalItems = (orden.items_pendientes || []).length; // pendientes restantes
+          progresoBadge = `<span class="progreso-badge progreso-parcial">⚠️ parcial</span>`;
+        } else {
+          progresoBadge = `<span class="progreso-badge progreso-sin">nuevo</span>`;
+        }
+
+        // ✅ Fecha de entrega con color
+        const efEstado = estadoFecha(orden.fecha_entrega_estimada);
+        const fechaEntrega = orden.fecha_entrega_estimada || '—';
+        const fechaClass = 'fecha-' + efEstado;
+
+        const devolucionBadge = orden.tiene_devolucion_pendiente
+          ? '<span class="progreso-badge devolucion-badge" title="Hay un ítem No Conforme de esta orden pendiente de devolución/reemplazo">↩️ Devolución pendiente</span>'
+          : '';
+
+        html += `<tr data-estado="${orden.estado}" data-fecha-estado="${efEstado}">
+          <td><strong>${orden.numero_orden}</strong></td>
+          <td>${orden.proveedor}</td>
+          <td>${orden.fecha_emision}</td>
+          <td><span class="${fechaClass}">${fechaEntrega}</span></td>
+          <td><span class="status-badge ${cssClass}">${orden.estado}</span></td>
+          <td>${progresoBadge}${devolucionBadge}</td>
+          <td>
+            <button class="btn-expand" onclick="toggleItems(${idx})">
+              ${cantPendientes} producto(s) ▼
+            </button>
+            <div class="items-detalle" id="items-${idx}">
+              ${dibujarItemsPendientes(orden.items_pendientes, orden.numero_orden, orden.items_cerrados)}
+            </div>
+          </td>
+          <td>
+            <button class="btn-accion" onclick="verPdf('${orden.numero_orden}')" title="Ver PDF">📄</button>
+            <button class="btn-accion" onclick="revisarPedido('${orden.numero_orden}')" title="Revisar pedido (borrador de mail)" ${orden.tiene_email ? '' : 'disabled'}>📧</button>
+            <button class="btn-accion btn-enviar" onclick="enviarMail('${orden.numero_orden}', '${orden.proveedor}')" title="Enviar mail al proveedor" ${orden.tiene_email ? '' : 'disabled'}>✉️</button>
+            ${orden.tiene_email ? '' : '<span class="sin-email-tag">Proveedor sin email</span>'}
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+      actualizarContador(ordenes.length);
+    }
+
+    function dibujarItemsPendientes(items, numeroOrden, cerrados) {
+      let html = '';
+      if (!items || items.length === 0) {
+        html += '<em>Sin items pendientes</em>';
+      } else {
+        html += '<div style="font-weight: bold; margin-bottom: 5px; color: #202124;">Detalle pendiente:</div>';
+        items.forEach((item, k) => {
+          const pct = item.solicitado > 0 ? Math.round((item.recibido / item.solicitado) * 100) : 0;
+          html += `<div class="item-pendiente">
+            <strong>${item.descripcion}</strong> (${item.codigo})<br>
+            <span style="color: #5f6368;">
+              Pedido: ${item.solicitado} | Recibido: <span style="color:#1e7e34;font-weight:bold;">${item.recibido}</span> (${pct}%) | 
+              <strong style="color: #d93025;">Pendiente: ${item.pendiente}</strong>
+            </span><br>
+            <button class="btn-anular" onclick="abrirAnular('${numeroOrden}', ${k})" title="El proveedor ya no lo entregará / ya no se quiere recibir">✖ Anular pendiente</button>
+          </div>`;
+        });
+      }
+      // v2.9.3: líneas cerradas sin recibir, con su motivo (trazabilidad)
+      (cerrados || []).forEach(c => {
+        html += `<div class="item-cerrado">
+          <span class="tag-cerrado">Cerrado</span> <strong>${c.descripcion}</strong> (${c.codigo}) — ${c.anulada} u. sin recibir<br>
+          <span style="font-size:11px;">${c.motivo || ''}</span>
+        </div>`;
+      });
+      return html;
+    }
+
+    // ✅ v2.9.3: anular un pendiente (motivo obligatorio)
+    let anulando = null;
+    function abrirAnular(numeroOrden, k) {
+      const orden = ordenesGlobal.find(o => o.numero_orden === numeroOrden);
+      if (!orden || !orden.items_pendientes[k]) return;
+      const it = orden.items_pendientes[k];
+      anulando = { numero_orden: numeroOrden, codigo: it.codigo, pendiente: it.pendiente };
+      document.getElementById('anularTitulo').textContent = 'Anular pendiente — ' + numeroOrden;
+      document.getElementById('anularItem').textContent = it.descripcion + ' (' + it.codigo + ') — pendiente: ' + it.pendiente;
+      document.getElementById('anularCant').value = it.pendiente;
+      document.getElementById('anularCant').max = it.pendiente;
+      document.getElementById('anularMotivo').value = '';
+      document.getElementById('anularPanel').classList.add('visible');
+    }
+    function cerrarAnular() {
+      anulando = null;
+      document.getElementById('anularPanel').classList.remove('visible');
+    }
+    function confirmarAnular() {
+      if (!anulando) return;
+      const cant = parseFloat(document.getElementById('anularCant').value) || 0;
+      const motivo = document.getElementById('anularMotivo').value.trim();
+      if (cant <= 0 || cant > anulando.pendiente) return alert('La cantidad debe estar entre 1 y ' + anulando.pendiente + '.');
+      if (!motivo) return alert('Indicá el motivo de la anulación (queda registrado para auditoría).');
+      const a = anulando;
+      google.script.run
+        .withSuccessHandler(function(res) {
+          cerrarAnular();
+          alert('✅ ' + res.mensaje);
+          document.getElementById('loader').style.display = 'block';
+          google.script.run.withSuccessHandler(dibujarTabla).withFailureHandler(mostrarError).getOrdenesPendientes();
+        })
+        .withFailureHandler(function(e) { alert('❌ ' + e.message); })
+        .anularPendienteOC(a.numero_orden, a.codigo, cant, motivo);
+    }
+
+    // ✅ NUEVO: Filtros aplicados sin recargar del servidor
+    function aplicarFiltros() {
+      const filtroEstado = document.getElementById('filtroEstado').value;
+      const filtroAlerta = document.getElementById('filtroAlerta').value;
+      
+      let filtradas = ordenesGlobal;
+      
+      if (filtroEstado) {
+        filtradas = filtradas.filter(o => o.estado === filtroEstado);
+      }
+      if (filtroAlerta) {
+        filtradas = filtradas.filter(o => estadoFecha(o.fecha_entrega_estimada) === filtroAlerta);
+      }
+      
+      renderTabla(filtradas);
+    }
+
+    function actualizarContador(n) {
+      document.getElementById('contadorFiltro').textContent = n + ' orden(es) mostradas';
+    }
+
+    function toggleItems(idx) {
+      const div = document.getElementById(`items-${idx}`);
+      div.classList.toggle('visible');
+    }
+
+    function copiarTabla() {
+      document.querySelectorAll('.items-detalle').forEach(div => div.classList.add('visible'));
+      const tabla = document.getElementById('tablaDatos');
+      if (!tabla) return;
+      const range = document.createRange();
+      range.selectNode(tabla);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      try {
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        mostrarNotificacion();
+      } catch (err) {
+        alert('No se pudo copiar automáticamente. Seleccioná la tabla y presioná Ctrl+C');
+      }
+    }
+
+    function mostrarNotificacion() {
+      const msg = document.getElementById('mensajeCopia');
+      msg.style.opacity = '1';
+      setTimeout(() => { msg.style.opacity = '0'; }, 2000);
+    }
+
+    // ✅ NUEVO (v2.7): Ver PDF / Revisar pedido / Enviar mail
+    function verPdf(numeroOrden) {
+      // Abre el PDF en una pestaña nueva via Blob URL, disparado directamente
+      // por el click del usuario (Chrome bloquea la navegación de iframes con
+      // data:/blob: URLs dentro de dialogos, pero permite window.open() en
+      // una pestaña nueva cuando se origina en un gesto del usuario).
+      const ventana = window.open('', '_blank');
+      if (ventana) {
+        ventana.document.write('<!DOCTYPE html><html><head><title>Generando PDF...</title></head><body style="font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#555;"><p>Generando PDF, un momento...</p></body></html>');
+      }
+      google.script.run
+        .withSuccessHandler(function(base64) {
+          try {
+            const byteChars = atob(base64);
+            const byteNumbers = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            if (ventana) {
+              ventana.location.href = url;
+            } else {
+              window.open(url, '_blank');
+            }
+          } catch (e) {
+            if (ventana) ventana.close();
+            alert('❌ Error al mostrar el PDF: ' + e.message);
+          }
+        })
+        .withFailureHandler(function(e) {
+          if (ventana) ventana.close();
+          alert('❌ Error al generar el PDF: ' + e.message);
+        })
+        .previsualizarPdfOrden(numeroOrden);
+    }
+
+    function revisarPedido(numeroOrden) {
+      google.script.run
+        .withSuccessHandler(function(res) { alert('✅ Borrador de mail creado (' + res.destinatario + ')'); })
+        .withFailureHandler(function(e) { alert('❌ ' + e.message); })
+        .revisarPedidoOC(numeroOrden);
+    }
+
+    function enviarMail(numeroOrden, proveedor) {
+      const ok = confirm('¿Confirmás el envío de la orden ' + numeroOrden + ' a ' + proveedor + '?\n\nEsta acción envía el mail directo al proveedor y no tiene vuelta atrás.');
+      if (!ok) return;
+      google.script.run
+        .withSuccessHandler(function(res) { alert('✅ Mail enviado (' + res.destinatario + ')'); })
+        .withFailureHandler(function(e) { alert('❌ ' + e.message); })
+        .enviarPedidoOC(numeroOrden);
+    }
+
+    function mostrarError(e) {
+      document.getElementById('loader').innerHTML = '<div style="color:#d93025">❌ Error: ' + e.message + '</div>';
+    }
+  </script>
+</body>
+</html>

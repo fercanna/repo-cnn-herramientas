@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 15px; margin: 0; background-color: #f8f9fa; }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; font-weight: bold; margin-bottom: 5px; color: #333; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+
+    .orden-info { background: #e8f0fe; padding: 15px; border-radius: 4px; margin-bottom: 12px; border-left: 5px solid #1967d2; }
+
+    .historial-banner {
+      background: #fff8e1;
+      border: 1px solid #f9a825;
+      border-left: 5px solid #f9a825;
+      border-radius: 4px;
+      padding: 12px 15px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .historial-banner .historial-titulo { font-weight: bold; color: #6d4c00; margin-bottom: 8px; font-size: 14px; }
+    .historial-item {
+      display: grid; grid-template-columns: 1fr 80px 80px;
+      gap: 8px; padding: 4px 0;
+      border-bottom: 1px dashed #f0c040; font-size: 12px; color: #555;
+    }
+    .historial-item:last-child { border-bottom: none; }
+    .historial-header {
+      display: grid; grid-template-columns: 1fr 80px 80px;
+      gap: 8px; font-weight: bold; color: #6d4c00;
+      font-size: 11px; text-transform: uppercase;
+      padding-bottom: 4px; margin-bottom: 4px;
+      border-bottom: 1px solid #f9a825;
+    }
+
+    .item-row { background: white; padding: 15px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #ddd; }
+    .item-header { font-weight: bold; margin-bottom: 10px; color: #202124; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+
+    .progreso-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 11px; font-weight: normal; margin-left: 8px;
+    }
+    .progreso-nuevo   { background: #e8f5e9; color: #1b5e20; }
+    .progreso-parcial { background: #fff3cd; color: #856404; }
+
+    .item-grid {
+      display: grid;
+      grid-template-columns: 75px 80px 100px 1fr 150px 190px 120px;
+      gap: 10px; align-items: end;
+    }
+    .item-obs { grid-column: 1 / -1; }
+    .item-obs textarea { min-height: 70px; resize: vertical; font-family: inherit; }
+    .conf-msg { font-size: 11px; margin-top: 4px; padding: 4px 6px; border-radius: 3px; display: none; line-height: 1.3; }
+    .conf-msg.parcial { display: block; background: #fff8e1; color: #6d4c00; }
+    .conf-msg.noconf  { display: block; background: #fdecea; color: #a50e0e; }
+    textarea.falta-obs { border-color: #d93025; background: #fff5f5; }
+    #observacionesRecepcion { min-height: 110px; resize: vertical; font-family: inherit; }
+
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+    .btn-primary { background: #4285f4; color: white; }
+    .btn-success { background: #34a853; color: white; width: 100%; font-weight: bold; margin-top: 10px; }
+    .message { padding: 10px; margin: 10px 0; border-radius: 4px; display: none; }
+    .message.success { background: #d4edda; color: #155724; }
+    .message.error   { background: #f8d7da; color: #721c24; }
+    .loading { display: none; text-align: center; padding: 20px; font-weight: bold; color: #1967d2; }
+
+    #resultadoPanel {
+      display: none; background: #f0f8f0; border: 2px solid #34a853;
+      border-radius: 8px; padding: 20px; text-align: center;
+    }
+    .resultado-titulo { font-size: 20px; font-weight: bold; color: #1e7e34; margin-bottom: 12px; }
+    .resultado-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px; margin: 15px 0; text-align: left;
+    }
+    .resultado-item { background: white; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
+    .resultado-item .ri-label { font-size: 11px; color: #666; text-transform: uppercase; }
+    .resultado-item .ri-valor { font-size: 16px; font-weight: bold; color: #333; }
+    .estado-completa { color: #1e7e34; }
+    .estado-parcial  { color: #856404; }
+    .btn-cerrar { background: #1967d2; color: white; padding: 10px 30px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>📦 Recepción de Pedido — CURF Microbiología</h2>
+
+  <div id="message" class="message"></div>
+
+  <div id="seleccionOrden">
+    <div class="form-group">
+      <label for="ordenSelect">Seleccionar Orden de Compra *</label>
+      <select id="ordenSelect" onchange="cargarDetalleOrden()">
+        <option value="">Cargando órdenes...</option>
+      </select>
+      <button type="button" class="btn btn-primary" onclick="cargarOrdenesManual()" style="margin-top: 10px;">🔄 Recargar Órdenes</button>
+    </div>
+  </div>
+
+  <div id="recepcionForm" style="display: none;">
+
+    <div class="orden-info">
+      <div id="ordenDetalle"></div>
+    </div>
+
+    <div id="historialBanner" class="historial-banner" style="display:none;">
+      <div class="historial-titulo">⚠️ Esta orden ya tuvo recepciones anteriores — revisá el acumulado antes de continuar</div>
+      <div class="historial-header">
+        <span>Insumo</span><span>Recibido</span><span>Pendiente</span>
+      </div>
+      <div id="historialItems"></div>
+    </div>
+
+    <div class="form-group">
+      <label for="recibidoPor">Recibido por *</label>
+      <select id="recibidoPor" required>
+        <option value="">-- Seleccionar --</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="observacionesRecepcion">Observaciones Generales de Recepción</label>
+      <textarea id="observacionesRecepcion" rows="5" placeholder="Ej: Transporte refrigerado, caja dañada, temperatura de llegada, etc."></textarea>
+    </div>
+
+    <div id="itemsContainer"></div>
+
+    <div class="actions">
+      <button class="btn btn-success" onclick="guardarRecepcion()">✅ Confirmar Ingreso a Stock</button>
+      <button class="btn" onclick="google.script.host.close()">Cancelar</button>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">⏳ Procesando ingreso a inventario y actualizando stock...</div>
+
+  <div id="resultadoPanel">
+    <div class="resultado-titulo">✅ Recepción registrada exitosamente</div>
+    <div class="resultado-grid">
+      <div class="resultado-item">
+        <div class="ri-label">Nro. Recepción</div>
+        <div class="ri-valor" id="res-id">—</div>
+      </div>
+      <div class="resultado-item">
+        <div class="ri-label">Orden</div>
+        <div class="ri-valor" id="res-orden">—</div>
+      </div>
+      <div class="resultado-item">
+        <div class="ri-label">Estado de la Orden</div>
+        <div class="ri-valor" id="res-estado">—</div>
+      </div>
+    </div>
+    <div id="res-mensaje" style="font-size: 13px; color: #555; margin-bottom: 10px;"></div>
+    <button class="btn-cerrar" onclick="google.script.host.close()">Cerrar</button>
+  </div>
+
+  <script>
+    let itemsOrden  = [];
+    let ordenActual = null;
+    let conversionesPendientes = {}; // ✅ NUEVO (v2.7): codigo_insumo → info de conversión sin confirmar
+
+
+    // v2.9.4 — lista de personas desde la hoja Config_Area (clave "personal")
+    function cargarPersonal(selectId, valorInicial) {
+      google.script.run
+        .withSuccessHandler(function(lista) { llenarPersonal_(selectId, lista, valorInicial); })
+        .withFailureHandler(function() {
+          const s = document.getElementById(selectId);
+          if (s) s.options[0].textContent = '⚠️ No se pudo cargar la lista (ver hoja Config_Area)';
+        })
+        .getPersonalArea();
+    }
+    function llenarPersonal_(selectId, lista, valorInicial) {
+      const sel = document.getElementById(selectId);
+      const actual = (valorInicial !== undefined && valorInicial !== null) ? valorInicial : sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      lista.forEach(function(n) {
+        const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
+      });
+      asegurarOpcionPersonal_(sel, actual);
+      sel.value = actual || '';
+    }
+    // Si el valor guardado ya no está en la lista (persona dada de baja o escrita distinto), se conserva como histórico
+    function asegurarOpcionPersonal_(sel, valor) {
+      if (!valor) return;
+      for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === valor) return;
+      const o = document.createElement('option'); o.value = valor; o.textContent = valor + ' (histórico)'; sel.appendChild(o);
+    }
+
+    window.onload = function() { cargarPersonal('recibidoPor'); cargarOrdenesManual(); };
+
+    function cargarOrdenesManual() {
+      google.script.run
+        .withSuccessHandler(function(ordenes) {
+          const select = document.getElementById('ordenSelect');
+          select.innerHTML = '<option value="">-- Seleccione una orden --</option>';
+          ordenes.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.numero_orden;
+            const esParcial = o.estado === 'Recepción Parcial';
+            opt.textContent = o.numero_orden + ' — ' + o.proveedor + (esParcial ? ' [PARCIAL]' : '');
+            if (esParcial) opt.style.color = '#856404';
+            select.appendChild(opt);
+          });
+        })
+        .getOrdenesPendientes();
+    }
+
+    function cargarDetalleOrden() {
+      const num = document.getElementById('ordenSelect').value;
+      if (!num) return;
+      google.script.run
+        .withSuccessHandler(mostrarDetalle)
+        .getDetalleOrden(num);
+    }
+
+    function mostrarDetalle(data) {
+      ordenActual = data.orden;
+      itemsOrden  = data.items;
+
+      // ✅ NUEVO (v2.7): aviso preventivo de conversión (punto 2.3)
+      conversionesPendientes = {};
+      const codigos = itemsOrden.map(it => it.codigo_insumo);
+      google.script.run
+        .withSuccessHandler(function(pendientes) {
+          pendientes.forEach(function(p) { conversionesPendientes[p.codigo] = p; });
+          pendientes.forEach(function(p) {
+            const badge = document.getElementById('conv-badge-' + p.codigo);
+            if (badge) badge.style.display = 'inline-block';
+          });
+        })
+        .getConversionesPendientesConfirmar(codigos);
+
+      const esParcial = ordenActual.estado === 'Recepción Parcial';
+
+      document.getElementById('ordenDetalle').innerHTML =
+        '<strong>Orden:</strong> ' + ordenActual.numero_orden +
+        ' | <strong>Proveedor:</strong> ' + ordenActual.proveedor +
+        ' | <strong>Estado:</strong> <span style="color:' + (esParcial ? '#856404' : '#1967d2') + ';font-weight:bold;">' + ordenActual.estado + '</span>';
+
+      const banner       = document.getElementById('historialBanner');
+      const historialEl  = document.getElementById('historialItems');
+
+      if (esParcial) {
+        let html = '';
+        itemsOrden.forEach(item => {
+          const solicitado = parseFloat(item.cantidad) || 0;
+          const yaRecibido = parseFloat(item.cantidad_recepcionada) || 0;
+          const anuladaH   = parseFloat(item.cantidad_anulada) || 0;   // v2.9.3
+          const pendiente  = solicitado - yaRecibido - anuladaH;
+          if (yaRecibido > 0) {
+            html += `<div class="historial-item">
+              <span>${item.descripcion}</span>
+              <span style="color:#1e7e34;font-weight:bold;">${yaRecibido} recib.</span>
+              <span style="color:#d93025;font-weight:bold;">${pendiente} pend.</span>
+            </div>`;
+          }
+        });
+        historialEl.innerHTML = html || '<em>Sin historial previo</em>';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      const container = document.getElementById('itemsContainer');
+      container.innerHTML = '<h3>Items a Recepcionar</h3>';
+
+      itemsOrden.forEach((item, i) => {
+        const solicitado = parseFloat(item.cantidad) || 0;
+        const yaRecibido = parseFloat(item.cantidad_recepcionada) || 0;
+        const anulada    = parseFloat(item.cantidad_anulada) || 0;      // v2.9.3: cerrado por nota de crédito / anulación
+        const pendiente  = solicitado - yaRecibido - anulada;
+        const lineaCerrada = anulada > 0 && pendiente <= 0;
+
+        let badgeHtml = '';
+        if (yaRecibido > 0) {
+          badgeHtml = `<span class="progreso-badge progreso-parcial">⚠️ ${yaRecibido}/${solicitado} ya recibidos</span>`;
+        } else {
+          badgeHtml = `<span class="progreso-badge progreso-nuevo">✨ Sin recepciones previas</span>`;
+        }
+
+        const div = document.createElement('div');
+        div.className = 'item-row';
+        // v2.9.3: una línea cerrada no se recepciona; se deja en el DOM (oculta, con cantidad 0)
+        // para no desalinear los índices con itemsOrden.
+        if (lineaCerrada) div.style.display = 'none';
+        div.innerHTML = `
+  <div class="item-header">${item.descripcion} (${item.codigo_insumo}) ${badgeHtml}
+    <span id="conv-badge-${item.codigo_insumo}" class="progreso-badge" style="display:none; background:#fff3cd; color:#856404;" title="Este insumo tiene una conversión configurada — se va a pedir confirmar la equivalencia al guardar">⚖️ Conversión sin confirmar</span>
+  </div>
+  <div class="item-grid">
+    <div><label>Pedido</label><input type="number" value="${solicitado}" disabled></div>
+    <div><label>Pendiente</label><input type="number" value="${pendiente}" disabled style="font-weight:bold; color:#d93025;"></div>
+    <div><label>A recibir *</label><input type="number" class="cant-rec" value="${Math.max(pendiente, 0)}" data-idx="${i}" onchange="validarCantidad(this, ${pendiente})"></div>
+    <div><label>Lote *</label><input type="text" class="lote-rec" placeholder="Lote/Partida" data-idx="${i}"></div>
+    <div><label>Vence</label><input type="date" class="vence-rec" data-idx="${i}"></div>
+    <div>
+      <label>Conformidad *</label>
+      <select class="conf-rec" data-idx="${i}" onchange="actualizarAvisoConformidad(this)">
+        <option value="Conforme">Conforme</option>
+        <option value="Conforme Parcial">Conforme parcial</option>
+        <option value="No Conforme">No conforme</option>
+      </select>
+      <div class="conf-msg"></div>
+    </div>
+    <div>
+      <label>Precio unit. <span style="font-weight:normal;color:#888;font-size:11px;">(si difiere)</span></label>
+      <input type="number" class="precio-rec" step="0.01" min="0"
+             placeholder="Opcional" data-idx="${i}"
+             style="border-color: #fbbc04;">
+    </div>
+    <div class="item-obs"><label>Observaciones <span class="obs-req" style="color:#d93025;display:none;">* obligatoria si no es Conforme</span></label>
+      <textarea class="obs-rec" rows="3" placeholder="Temperatura, estado del envase, lote, motivo de la no conformidad..." data-idx="${i}"></textarea></div>
+  </div>`;
+        container.appendChild(div);
+      });
+
+      document.getElementById('recepcionForm').style.display = 'block';
+    }
+
+    // v2.9.4: mensaje según la conformidad elegida + observación obligatoria si no es "Conforme"
+    function actualizarAvisoConformidad(select) {
+      const cont = select.parentElement;
+      const msg  = cont.querySelector('.conf-msg');
+      const row  = select.closest('.item-row');
+      const req  = row.querySelector('.obs-req');
+      msg.className = 'conf-msg';
+      if (select.value === 'Conforme Parcial') {
+        msg.classList.add('parcial');
+        msg.textContent = 'Ingresa a stock con una salvedad (ej. envase dañado pero producto utilizable). Detallala en Observaciones.';
+      } else if (select.value === 'No Conforme') {
+        msg.classList.add('noconf');
+        msg.textContent = 'NO ingresa a stock: queda pendiente de devolución al proveedor. Cargá igual la cantidad que llegó físicamente y el motivo en Observaciones.';
+      } else {
+        msg.textContent = '';
+      }
+      req.style.display = (select.value === 'Conforme') ? 'none' : 'inline';
+      if (select.value === 'Conforme') row.querySelector('.obs-rec').classList.remove('falta-obs');
+    }
+
+    function validarCantidad(input, max) {
+      if (parseFloat(input.value) > max) {
+        alert('La cantidad ingresada (' + input.value + ') es mayor a la pendiente (' + max + ').');
+        input.value = max;
+      }
+    }
+
+    function guardarRecepcion() {
+      const cants  = document.querySelectorAll('.cant-rec');
+      const lotes  = document.querySelectorAll('.lote-rec');
+      const vence  = document.querySelectorAll('.vence-rec');
+      const confs  = document.querySelectorAll('.conf-rec');
+      const obss   = document.querySelectorAll('.obs-rec');
+      const precios = document.querySelectorAll('.precio-rec');
+
+      const itemsEnviar = [];
+      let errorLote = false;
+
+      cants.forEach((input, i) => {
+        const cant = parseFloat(input.value) || 0;
+        if (cant > 0) {
+          const loteVal = lotes[i].value.trim();
+          if (!loteVal) errorLote = true;
+          itemsEnviar.push({
+            item:              i + 1,
+            codigo_insumo:     itemsOrden[i].codigo_insumo,
+            cantidad_recibida: cant,
+            cantidad_esperada: itemsOrden[i].cantidad - (itemsOrden[i].cantidad_recepcionada || 0) - (itemsOrden[i].cantidad_anulada || 0),
+            estado_conformidad: confs[i].value,
+            lote:              loteVal,
+            vencimiento:       vence[i].value,
+            observaciones:     obss[i].value,
+            precio_recepcion:  parseFloat(precios[i].value) || 0
+          });
+        }
+      });
+
+      if (itemsEnviar.length === 0) return alert('Debe ingresar al menos una cantidad.');
+      // v2.9.4: observación obligatoria si el ítem no es "Conforme"
+      let sinObs = null;
+      cants.forEach((input, i) => {
+        const ta = obss[i];
+        ta.classList.remove('falta-obs');
+        if ((parseFloat(input.value) || 0) > 0 && confs[i].value !== 'Conforme' && !ta.value.trim()) {
+          ta.classList.add('falta-obs');
+          if (!sinObs) sinObs = ta;
+        }
+      });
+      if (sinObs) {
+        sinObs.scrollIntoView({behavior: 'smooth', block: 'center'});
+        sinObs.focus();
+        return alert('Los ítems "Conforme parcial" o "No conforme" requieren una observación que explique el motivo (marcados en rojo).');
+      }
+      if (errorLote) return alert('Por trazabilidad ISO 9001, debe ingresar el LOTE de cada insumo recibido.');
+
+      const recibidoPor = document.getElementById('recibidoPor').value;
+      if (!recibidoPor) return alert('Debe seleccionar quién recibe los insumos.');
+
+      // ✅ NUEVO (v2.7): aviso preventivo de conversión (punto 2.3) — antes de guardar,
+      // confirmar la equivalencia de cada insumo con conversión sin confirmar.
+      const codigosAConfirmar = [];
+      for (const it of itemsEnviar) {
+        const conv = conversionesPendientes[it.codigo_insumo];
+        if (!conv) continue;
+        const equivalencia = it.cantidad_recibida + ' ' + (conv.unidad_compra || 'caja(s)') +
+          ' = ' + (it.cantidad_recibida * conv.factor) + ' ' + conv.unidad_destino;
+        const ok = confirm('El insumo "' + it.codigo_insumo + '" tiene una conversión configurada:\n\n' +
+          'Vas a ingresar ' + equivalencia + '.\n\n¿Confirmás la equivalencia?');
+        if (!ok) return; // se cancela todo el guardado, no se registra nada parcial
+        codigosAConfirmar.push(it.codigo_insumo);
+      }
+
+      document.getElementById('recepcionForm').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+
+      const continuarGuardado = function() {
+        google.script.run
+          .withSuccessHandler(function(resultado) {          document.getElementById('loading').style.display = 'none';
+
+          let recId, estadoOrden;
+          if (typeof resultado === 'object' && resultado !== null) {
+            recId      = resultado.id || resultado;
+            estadoOrden = resultado.estado_orden || 'Recepcionada';
+          } else {
+            recId = resultado;
+            const todoRecibido = itemsEnviar.every((it, i) => {
+              const pedido = itemsOrden[i] ? (itemsOrden[i].cantidad - (itemsOrden[i].cantidad_recepcionada || 0) - (itemsOrden[i].cantidad_anulada || 0)) : 0;
+              return it.cantidad_recibida >= pedido;
+            });
+            estadoOrden = todoRecibido ? 'Recepcionada ✅' : 'Recepción Parcial ⚠️';
+          }
+
+          document.getElementById('res-id').textContent    = recId;
+          document.getElementById('res-orden').textContent = ordenActual.numero_orden;
+
+          const esCompleta = estadoOrden.includes('Recepcionada') && !estadoOrden.includes('Parcial');
+          const estadoEl   = document.getElementById('res-estado');
+          estadoEl.textContent = estadoOrden;
+          estadoEl.className   = 'ri-valor ' + (esCompleta ? 'estado-completa' : 'estado-parcial');
+
+          document.getElementById('res-mensaje').textContent = esCompleta
+            ? 'La orden quedó completamente recepcionada y se actualizó el stock.'
+            : 'Quedan ítems pendientes. La orden permanecerá activa para recepciones futuras.';
+
+          document.getElementById('resultadoPanel').style.display = 'block';
+          })
+          .withFailureHandler(function(err) {
+            alert('Error: ' + err.message);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('recepcionForm').style.display = 'block';
+          })
+          .registrarRecepcion({
+            numero_orden:  ordenActual.numero_orden,
+            observaciones: document.getElementById('observacionesRecepcion').value,
+            recibido_por:  recibidoPor,
+            items:         itemsEnviar
+          });
+      };
+
+      if (codigosAConfirmar.length > 0) {
+        google.script.run
+          .withSuccessHandler(continuarGuardado)
+          .withFailureHandler(function(err) {
+            alert('Error al registrar la confirmación de conversión: ' + err.message);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('recepcionForm').style.display = 'block';
+          })
+          .marcarConversionesConfirmadas(codigosAConfirmar);
+      } else {
+        continuarGuardado();
+      }
+    }
+
+
+  </script>
+<div style="font-size:10px;color:#aaa;text-align:right;margin-top:8px;">CURF v2.9.4</div>
+</body>
+</html>
