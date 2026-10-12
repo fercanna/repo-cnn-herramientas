@@ -14,6 +14,7 @@
     .st-devuelto    { background: #d1e7dd; color: #0f5132; }
     .st-reemplazado { background: #d1e7dd; color: #0f5132; }
     .st-credito     { background: #e8f0fe; color: #1967d2; }
+    .badge-uso { display: inline-block; background: #fff3cd; color: #856404; border-radius: 10px; padding: 2px 7px; font-size: 10px; font-weight: bold; margin-top: 3px; white-space: nowrap; }
 
     .btn-resolver { border: none; background: #4285f4; color: white; padding: 5px 9px; border-radius: 4px; cursor: pointer; font-size: 11px; }
     .btn-resolver:hover { background: #3367d6; }
@@ -79,10 +80,11 @@
     </div>
   </div>
 
-<div style="font-size:10px;color:#aaa;text-align:right;margin-top:8px;">CURF v2.9.3</div>
+<div style="font-size:10px;color:#aaa;text-align:right;margin-top:8px;">CURF v2.9.6</div>
   <script>
     let devolucionesGlobal = [];
     let filaEnResolucion = null;
+    let devEnResolucion = null;
 
     window.onload = function() {
       google.script.run
@@ -90,6 +92,8 @@
         .withFailureHandler(mostrarError)
         .getTodasLasDevoluciones();
     };
+
+    function esUsoDev(d) { return d && d.origen === 'Detectado en uso'; }
 
     function badgeClase(estado) {
       if (estado === 'Pendiente devolución') return 'st-pendiente';
@@ -110,13 +114,13 @@
       }
 
       let html = '<table><thead><tr>';
-      html += '<th>Fecha</th><th>Orden</th><th>Proveedor</th><th>Insumo</th><th>Cant.</th><th>Motivo</th><th>Estado</th><th></th>';
+      html += '<th>Fecha</th><th>Orden / origen</th><th>Proveedor</th><th>Insumo</th><th>Cant.</th><th>Motivo</th><th>Estado</th><th></th>';
       html += '</tr></thead><tbody>';
 
       devoluciones.forEach(function(d, idx) {
         html += '<tr>' +
           '<td>' + d.fecha + '</td>' +
-          '<td>' + d.numero_orden + '</td>' +
+          '<td>' + d.numero_orden + (esUsoDev(d) ? '<div><span class="badge-uso">⚠️ Detectado en uso</span></div>' : '') + '</td>' +
           '<td>' + d.proveedor + '</td>' +
           '<td>' + d.descripcion + ' (' + d.codigo_insumo + ')</td>' +
           '<td>' + d.cantidad + '</td>' +
@@ -137,6 +141,7 @@
 
     function abrirResolver(idx) {
       filaEnResolucion = devolucionesGlobal[idx].fila;
+      devEnResolucion = devolucionesGlobal[idx];
       document.getElementById('resolverTitulo').textContent =
         'Resolver: ' + devolucionesGlobal[idx].descripcion + ' — Orden ' + devolucionesGlobal[idx].numero_orden;
       document.getElementById('resolverObs').value = '';
@@ -150,6 +155,13 @@
       const est = document.getElementById('resolverEstado').value;
       const ayuda = document.getElementById('ayudaEstado');
       const chk = document.getElementById('lblNoEsperar');
+      if (esUsoDev(devEnResolucion)) {
+        // v2.9.5: detectado en uso → la OC original ya estaba recepcionada, no se toca
+        ayuda.textContent = 'Detectado en uso: este lote ya se dio de baja del stock. Registrá cómo se resolvió el reclamo; no modifica ninguna orden de compra. Si llega un reemplazo, ingresalo con una recepción normal.';
+        chk.style.display = 'none';
+        document.getElementById('chkNoEsperar').checked = false;
+        return;
+      }
       if (est === 'Nota de crédito') {
         ayuda.textContent = 'La línea pendiente de la OC se cierra automáticamente: ya no va a aparecer para recepcionar.';
         chk.style.display = 'none';

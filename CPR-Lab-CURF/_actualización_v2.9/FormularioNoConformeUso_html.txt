@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 15px; margin: 0; background-color: #f8f9fa; color: #333; }
+    h2 { margin: 0 0 6px; font-size: 18px; }
+    .intro { font-size: 12px; color: #5f6368; background: #fff8e1; border: 1px solid #ffe082; border-radius: 4px; padding: 8px 10px; margin-bottom: 14px; line-height: 1.4; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 13px; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 14px; font-family: inherit; }
+    textarea { min-height: 90px; resize: vertical; }
+    select[size] { padding: 2px; }
+    .info-lote { font-size: 12px; background: #e8f0fe; border-left: 4px solid #1967d2; border-radius: 4px; padding: 8px 10px; margin-top: 6px; display: none; line-height: 1.5; }
+    .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .aviso-baja { font-size: 12px; background: #fdecea; color: #a50e0e; border-radius: 4px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.4; }
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+    .btn-danger { background: #d93025; color: white; font-weight: bold; }
+    .btn-sec { background: #e8eaed; }
+    .message { padding: 10px; margin: 10px 0; border-radius: 4px; display: none; font-size: 13px; }
+    .message.error { background: #f8d7da; color: #721c24; }
+    .loading { display: none; text-align: center; padding: 20px; font-weight: bold; color: #1967d2; }
+    #resultado { display: none; background: #f0f8f0; border: 2px solid #34a853; border-radius: 8px; padding: 18px; }
+    #resultado h3 { margin: 0 0 10px; color: #1e7e34; }
+    #resultado .alerta { background: #fff3cd; color: #6d4c00; border-radius: 4px; padding: 8px 10px; margin-top: 10px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h2>⚠️ No Conforme detectado en uso</h2>
+  <div class="intro">
+    Para reactivos que ya ingresaron a stock y se detectó el problema <strong>al usarlos</strong>
+    (no disolvió bien, el control falla, etc.). Se da de baja del stock la cantidad afectada
+    y queda registrado en <strong>Devoluciones a Proveedores</strong> como “Detectado en uso”,
+    para el seguimiento del reclamo y la evaluación del proveedor.
+  </div>
+
+  <div id="message" class="message"></div>
+
+  <div id="formSection">
+    <div class="form-group">
+      <label for="buscar">Insumo (solo con stock)</label>
+      <input type="text" id="buscar" placeholder="Escribí para filtrar por nombre o código..." oninput="filtrarInsumos()">
+      <select id="insumo" size="5" onchange="cargarLotes()" style="margin-top:6px;"></select>
+    </div>
+
+    <div class="form-group">
+      <label for="lote">Lote afectado *</label>
+      <select id="lote" onchange="mostrarInfoLote()"><option value="">— Elegí primero un insumo —</option></select>
+      <div class="info-lote" id="infoLote"></div>
+    </div>
+
+    <div class="fila">
+      <div class="form-group">
+        <label for="cantidad">Cantidad afectada *</label>
+        <input type="number" id="cantidad" min="0" step="any" placeholder="Unidades a dar de baja">
+      </div>
+      <div class="form-group" id="grpProveedor" style="display:none;">
+        <label for="proveedorManual">Proveedor <span style="font-weight:normal;color:#888;">(no se detectó)</span></label>
+        <input type="text" id="proveedorManual" placeholder="Nombre del proveedor">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="motivo">¿Qué se detectó? *</label>
+      <textarea id="motivo" placeholder="Ej: el estándar quedó coagulado y no disolvió; el control de la corrida falla con esta caja..."></textarea>
+    </div>
+
+    <div class="aviso-baja">
+      Al confirmar, la cantidad se <strong>resta del stock</strong> del lote (movimiento “Ajuste” con referencia NC-USO)
+      y no se puede deshacer desde acá. Si fue un error, corregilo con <em>Ajuste de Stock</em>.
+    </div>
+
+    <button class="btn btn-danger" onclick="guardar()">⚠️ Registrar No Conforme y dar de baja</button>
+    <button class="btn btn-sec" onclick="google.script.host.close()">Cancelar</button>
+  </div>
+
+  <div class="loading" id="loading">⏳ Registrando...</div>
+
+  <div id="resultado">
+    <h3>✅ No conforme registrado</h3>
+    <div id="resMensaje"></div>
+    <div id="resAlerta" class="alerta" style="display:none;"></div>
+    <button class="btn btn-sec" style="margin-top:14px;" onclick="google.script.host.close()">Cerrar</button>
+  </div>
+
+<div style="font-size:10px;color:#aaa;text-align:right;margin-top:8px;">CURF v2.9.6</div>
+  <script>
+    let insumos = [];
+    let lotes   = [];
+    let origenLote = null;
+
+    window.onload = function() {
+      google.script.run
+        .withSuccessHandler(function(lista) {
+          insumos = (lista || []).filter(function(i) { return i.stock_total > 0; });
+          filtrarInsumos();
+        })
+        .withFailureHandler(function(e) { mostrarMensaje('Error al cargar insumos: ' + e.message); })
+        .getInsumosConStockYSinStock();
+    };
+
+    function filtrarInsumos() {
+      const q = document.getElementById('buscar').value.trim().toLowerCase();
+      const sel = document.getElementById('insumo');
+      sel.innerHTML = '';
+      insumos.filter(function(i) {
+        return !q || i.descripcion.toLowerCase().indexOf(q) !== -1 || i.codigo.toLowerCase().indexOf(q) !== -1;
+      }).forEach(function(i) {
+        const o = document.createElement('option');
+        o.value = i.codigo;
+        o.textContent = i.descripcion + ' (' + i.codigo + ') — stock: ' + i.stock_total;
+        sel.appendChild(o);
+      });
+    }
+
+    function cargarLotes() {
+      const cod = document.getElementById('insumo').value;
+      const selLote = document.getElementById('lote');
+      selLote.innerHTML = '<option value="">Cargando lotes...</option>';
+      document.getElementById('infoLote').style.display = 'none';
+      if (!cod) return;
+      google.script.run
+        .withSuccessHandler(function(l) {
+          lotes = (l || []).filter(function(x) { return x.stock_actual > 0; });
+          selLote.innerHTML = '<option value="">— Elegí el lote —</option>';
+          lotes.forEach(function(x, idx) {
+            const o = document.createElement('option');
+            o.value = x.lote;
+            o.textContent = x.lote + ' — stock: ' + x.stock_actual + (x.vencimiento ? ' — vence ' + x.vencimiento : '');
+            selLote.appendChild(o);
+          });
+          if (lotes.length === 1) { selLote.value = lotes[0].lote; mostrarInfoLote(); }
+        })
+        .withFailureHandler(function(e) { mostrarMensaje('Error al cargar lotes: ' + e.message); })
+        .getLotesParaAjuste(cod);
+    }
+
+    function mostrarInfoLote() {
+      const cod  = document.getElementById('insumo').value;
+      const lote = document.getElementById('lote').value;
+      const info = document.getElementById('infoLote');
+      origenLote = null;
+      if (!lote) { info.style.display = 'none'; return; }
+      const l = lotes.filter(function(x) { return x.lote === lote; })[0];
+      if (l) document.getElementById('cantidad').value = l.stock_actual;   // por defecto, todo el lote
+      info.style.display = 'block';
+      info.textContent = 'Buscando origen del lote...';
+      google.script.run
+        .withSuccessHandler(function(o) {
+          origenLote = o;
+          const partes = [];
+          partes.push('Stock del lote: ' + (l ? l.stock_actual : '?'));
+          partes.push('Orden: ' + (o.numero_orden || 'no se pudo determinar'));
+          partes.push('Proveedor: ' + (o.proveedor || 'no se pudo determinar'));
+          info.textContent = partes.join('  |  ');
+          document.getElementById('grpProveedor').style.display = o.proveedor ? 'none' : 'block';
+        })
+        .withFailureHandler(function() {
+          info.textContent = 'No se pudo determinar el origen del lote.';
+          document.getElementById('grpProveedor').style.display = 'block';
+        })
+        .getOrigenLote(cod, lote);
+    }
+
+    function mostrarMensaje(txt) {
+      const m = document.getElementById('message');
+      m.textContent = txt; m.className = 'message error'; m.style.display = 'block';
+    }
+
+    function guardar() {
+      document.getElementById('message').style.display = 'none';
+      const cod   = document.getElementById('insumo').value;
+      const lote  = document.getElementById('lote').value;
+      const cant  = parseFloat(document.getElementById('cantidad').value);
+      const motivo = document.getElementById('motivo').value.trim();
+      if (!cod)  return mostrarMensaje('Elegí el insumo.');
+      if (!lote) return mostrarMensaje('Elegí el lote afectado.');
+      if (!(cant > 0)) return mostrarMensaje('Ingresá la cantidad afectada (mayor a 0).');
+      const l = lotes.filter(function(x) { return x.lote === lote; })[0];
+      if (l && cant > l.stock_actual) return mostrarMensaje('La cantidad supera el stock del lote (' + l.stock_actual + ').');
+      if (!motivo) return mostrarMensaje('Describí qué se detectó (obligatorio, queda como evidencia).');
+
+      if (!confirm('Se van a dar de baja ' + cant + ' unidad(es) del lote ' + lote + ' y se registrará el no conforme. ¿Confirmás?')) return;
+
+      document.getElementById('formSection').style.display = 'none';
+      document.getElementById('loading').style.display = 'block';
+      google.script.run
+        .withSuccessHandler(function(r) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('resultado').style.display = 'block';
+          document.getElementById('resMensaje').textContent = r.mensaje;
+          if (r.aviso) {
+            const a = document.getElementById('resAlerta');
+            a.textContent = r.aviso; a.style.display = 'block';
+          }
+        })
+        .withFailureHandler(function(e) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('formSection').style.display = 'block';
+          mostrarMensaje(e.message);
+        })
+        .registrarNoConformeEnUso({
+          codigo_insumo: cod,
+          lote: lote,
+          cantidad: cant,
+          motivo: motivo,
+          proveedor_manual: document.getElementById('proveedorManual').value.trim()
+        });
+    }
+  </script>
+</body>
+</html>
