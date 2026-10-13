@@ -52,24 +52,17 @@ sisa-interop/
 
 ## 4. CREDENCIALES Y ENDPOINTS
 
-### Credenciales de PRODUCCIÓN (ya verificadas y funcionales)
+### Credenciales de PRODUCCIÓN
 
-```json
-{
-  "WS400": {
-    "APP_ID": "049fedb8",
-    "APP_KEY": "a48ee247b7f45c54d56576d18825e5ac"
-  },
-  "API75": {
-    "APP_ID": "58d0467b",
-    "APP_KEY": "0052e382de8ac55469a5b17d78d68d39"
-  },
-  "API76": {
-    "APP_ID": "a7bb9a90",
-    "APP_KEY": "e82a937f5be5050ed05f48d26acda636"
-  }
-}
-```
+**Las credenciales reales NUNCA van en este documento ni en ningún archivo
+versionado** — viven solo en `config/credentials.json` (gitignored; usar
+`config/credentials.json.example` como plantilla). Si necesitás las
+credenciales vigentes, pedíselas a quien las tenga o consultá ese archivo
+directamente en la máquina donde corre el sistema.
+
+> Nota (oct-2026): las credenciales que antes estaban hardcodeadas en esta
+> sección quedaron commiteadas al repo. Ya fueron dadas de baja por SISA
+> tras un incidente de seguridad y reemplazadas; no se repite el patrón acá.
 
 ### Endpoints
 

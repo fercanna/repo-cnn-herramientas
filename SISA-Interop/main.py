@@ -29,10 +29,15 @@ ENDPOINTS = {
     },
 }
 
+# NUNCA poner credenciales reales acá — este archivo se versiona en git.
+# Las credenciales reales viven SOLO en config/credentials.json (gitignored).
+# Ver incidente oct-2026: las credenciales viejas que estaban hardcodeadas
+# acá quedaron commiteadas al repo público; ya fueron dadas de baja por
+# SISA, pero no hay que repetir el patrón con las nuevas.
 CREDS_FALLBACK = {
-    "WS400": {"APP_ID": "049fedb8", "APP_KEY": "a48ee247b7f45c54d56576d18825e5ac"},
-    "API75": {"APP_ID": "58d0467b", "APP_KEY": "0052e382de8ac55469a5b17d78d68d39"},
-    "API76": {"APP_ID": "a7bb9a90", "APP_KEY": "e82a937f5be5050ed05f48d26acda636"},
+    "WS400": {"APP_ID": "", "APP_KEY": ""},
+    "API75": {"APP_ID": "", "APP_KEY": ""},
+    "API76": {"APP_ID": "", "APP_KEY": ""},
     "API81": {"APP_ID": "", "APP_KEY": ""},
 }
 
@@ -77,7 +82,10 @@ def _cargar_settings() -> dict:
 
 def _cargar_credenciales() -> dict:
     if not CREDS_PATH.exists():
-        return CREDS_FALLBACK
+        print(f"ERROR: no se encuentra {CREDS_PATH}.")
+        print("Copiá config/credentials.json.example a config/credentials.json "
+              "y completá con las credenciales reales (nunca hardcodeadas en el codigo).")
+        raise SystemExit(1)
     with open(CREDS_PATH, encoding="utf-8") as fh:
         data = json.load(fh)
     return data.get("produccion", data)

@@ -48,12 +48,12 @@ ENDPOINTS = {
     "API76": "https://apisalud.msal.gob.ar/snvsLaboratorios/v1/pruebaMuestras",
 }
 
-# Credenciales de respaldo (publicadas en CONTEXTO_CLAUDE_CODE.md).
-# Si existe config/credentials.json, se prefiere ese archivo.
+# NUNCA poner credenciales reales acá — este archivo se versiona en git.
+# Las credenciales reales viven SOLO en config/credentials.json (gitignored).
 CREDS_FALLBACK = {
-    "WS400": {"app_id": "049fedb8", "app_key": "a48ee247b7f45c54d56576d18825e5ac"},
-    "API75": {"app_id": "58d0467b", "app_key": "0052e382de8ac55469a5b17d78d68d39"},
-    "API76": {"app_id": "a7bb9a90", "app_key": "e82a937f5be5050ed05f48d26acda636"},
+    "WS400": {"app_id": "", "app_key": ""},
+    "API75": {"app_id": "", "app_key": ""},
+    "API76": {"app_id": "", "app_key": ""},
 }
 
 # Codigos del Laboratorio Central de Virologia Cordoba.
